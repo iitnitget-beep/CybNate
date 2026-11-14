@@ -9,6 +9,8 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.util.Base64;
+import android.util.Log;
+import android.webkit.ConsoleMessage;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -21,9 +23,12 @@ import android.widget.Toast;
 
 import androidx.webkit.WebViewAssetLoader;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.ByteArrayOutputStream;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -32,6 +37,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class MainActivity extends Activity {
@@ -57,7 +63,16 @@ public class MainActivity extends Activity {
         s.setTextZoom(100);
 
         final WebViewAssetLoader loader = new WebViewAssetLoader.Builder()
-                .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
+                .addPathHandler("/assets/", new WebViewAssetLoader.PathHandler() {
+                    @Override
+                    public WebResourceResponse handle(String path) {
+                        try {
+                            return new WebResourceResponse(mimeOf(path), null, getAssets().open(path));
+                        } catch (Exception e) {
+                            return new WebResourceResponse("text/plain", "utf-8", 404, "Not Found", null, null);
+                        }
+                    }
+                })
                 .build();
 
         web.setWebViewClient(new WebViewClient() {
@@ -80,6 +95,12 @@ public class MainActivity extends Activity {
 
         web.setWebChromeClient(new WebChromeClient() {
             @Override
+            public boolean onConsoleMessage(ConsoleMessage m) {
+                Log.i("CybNateJS", m.message() + " (" + m.sourceId() + ":" + m.lineNumber() + ")");
+                return true;
+            }
+
+            @Override
             public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> cb, FileChooserParams params) {
                 if (fileCallback != null) fileCallback.onReceiveValue(null);
                 fileCallback = cb;
@@ -100,7 +121,7 @@ public class MainActivity extends Activity {
         web.addJavascriptInterface(new Bridge(), "Native");
 
         if (savedInstanceState != null) web.restoreState(savedInstanceState);
-        else web.loadUrl(HOME);
+        else web.loadUrl(getIntent() != null && getIntent().getBooleanExtra("selftest", false) ? HOME + "?selftest=1" : HOME);
     }
 
     @Override
@@ -137,6 +158,36 @@ public class MainActivity extends Activity {
         });
     }
 
+    private static String mimeOf(String path) {
+        String p = path.toLowerCase();
+        if (p.endsWith(".html")) return "text/html";
+        if (p.endsWith(".js") || p.endsWith(".mjs")) return "text/javascript";
+        if (p.endsWith(".css")) return "text/css";
+        if (p.endsWith(".wasm")) return "application/wasm";
+        if (p.endsWith(".json")) return "application/json";
+        if (p.endsWith(".zip")) return "application/zip";
+        if (p.endsWith(".svg")) return "image/svg+xml";
+        if (p.endsWith(".png")) return "image/png";
+        return "application/octet-stream";
+    }
+
+    private File wsRoot() {
+        File f = new File(getFilesDir(), "workspace");
+        //noinspection ResultOfMethodCallIgnored
+        f.mkdirs();
+        return f;
+    }
+
+    private static byte[] readAll(File f) throws Exception {
+        try (FileInputStream in = new FileInputStream(f)) {
+            ByteArrayOutputStream bo = new ByteArrayOutputStream((int) Math.max(32, f.length()));
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) != -1) bo.write(buf, 0, n);
+            return bo.toByteArray();
+        }
+    }
+
     private void js(final String code) {
         runOnUiThread(new Runnable() {
             @Override
@@ -163,6 +214,7 @@ public class MainActivity extends Activity {
                         c = (HttpURLConnection) new URL(url).openConnection();
                         requests.put(id, c);
                         c.setRequestMethod(method == null ? "GET" : method);
+                        c.setInstanceFollowRedirects(true);
                         c.setConnectTimeout(30000);
                         c.setReadTimeout(180000);
                         if (headersJson != null && headersJson.length() > 0) {
@@ -213,6 +265,93 @@ public class MainActivity extends Activity {
                         c.disconnect();
                     } catch (Exception ignored) {
                     }
+                }
+            }).start();
+        }
+
+        // ---- workspace mirror on disk, so shell commands see the same files as the agent
+
+        @JavascriptInterface
+        public String wsWrite(String path, String base64) {
+            try {
+                File f = ShellRunner.resolve(wsRoot(), path);
+                File parent = f.getParentFile();
+                if (parent != null) //noinspection ResultOfMethodCallIgnored
+                    parent.mkdirs();
+                try (FileOutputStream os = new FileOutputStream(f)) {
+                    os.write(Base64.decode(base64, Base64.DEFAULT));
+                }
+                return "";
+            } catch (Exception e) {
+                return "ERR:" + e.getMessage();
+            }
+        }
+
+        @JavascriptInterface
+        public void wsDelete(String path) {
+            try {
+                File root = wsRoot();
+                File f = ShellRunner.resolve(root, path);
+                //noinspection ResultOfMethodCallIgnored
+                f.delete();
+                for (File d = f.getParentFile(); d != null && !d.equals(root); d = d.getParentFile()) {
+                    String[] kids = d.list();
+                    if (kids == null || kids.length > 0 || !d.delete()) break;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+
+        /** JSON object: relative path to fingerprint, used to bring the disk mirror in line at startup. */
+        @JavascriptInterface
+        public String wsList() {
+            JSONObject o = new JSONObject();
+            try {
+                for (Map.Entry<String, String> e : ShellRunner.snapshot(wsRoot()).entrySet()) {
+                    String v = e.getValue();
+                    o.put(e.getKey(), Long.parseLong(v.substring(0, v.indexOf(':'))));
+                }
+            } catch (Exception ignored) {
+            }
+            return o.toString();
+        }
+
+        /** Runs a shell command in the workspace folder. Result arrives at window.__nx(id, json). */
+        @JavascriptInterface
+        public void exec(final String id, final String command, final int timeoutSec) {
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    JSONObject o = new JSONObject();
+                    try {
+                        File root = wsRoot();
+                        ShellRunner.Result r = ShellRunner.run(root, command, timeoutSec, getFilesDir());
+                        o.put("code", r.code);
+                        o.put("out", r.output);
+                        o.put("timedOut", r.timedOut);
+                        JSONArray changed = new JSONArray();
+                        long budget = 24L * 1024 * 1024;
+                        for (String p : r.changed) {
+                            JSONObject c = new JSONObject();
+                            c.put("path", p);
+                            File f = new File(root, p);
+                            if (f.length() > 8L * 1024 * 1024 || f.length() > budget) c.put("tooBig", true);
+                            else {
+                                budget -= f.length();
+                                c.put("b64", Base64.encodeToString(readAll(f), Base64.NO_WRAP));
+                            }
+                            changed.put(c);
+                        }
+                        o.put("changed", changed);
+                        o.put("deleted", new JSONArray(r.deleted));
+                    } catch (Exception e) {
+                        try {
+                            o.put("code", 127);
+                            o.put("out", "exec failed: " + e.getMessage());
+                        } catch (Exception ignored) {
+                        }
+                    }
+                    js("window.__nx && window.__nx(" + JSONObject.quote(id) + "," + o.toString() + ")");
                 }
             }).start();
         }

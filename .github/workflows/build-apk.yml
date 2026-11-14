@@ -37,8 +37,11 @@ jobs:
               -dname "CN=CybNate, O=CybNate, C=IN"
           fi
 
-      - name: Build release APK
-        run: gradle --no-daemon :app:assembleRelease
+      - name: Fetch bundled Python runtime (Pyodide)
+        run: bash scripts/fetch-vendor.sh
+
+      - name: Unit tests and release APK
+        run: gradle --no-daemon :app:testReleaseUnitTest :app:assembleRelease
 
       - name: Publish APK to the branch
         run: |
