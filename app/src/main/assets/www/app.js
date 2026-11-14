@@ -516,6 +516,7 @@
       const agent = C.AGENTS[current.agent];
       const maxSteps = agent.tools.length ? Math.max(1, settings.maxSteps | 0) : 1;
       const oldChips = box.querySelector('.followups'); if (oldChips) oldChips.remove();
+      let badCalls = 0;
       for (let step = 0; step < maxSteps; step++) {
         const sys = C.buildSystemPrompt(current.agent, ws.summary(), settings.extra, caps());
         const msg = { role: 'assistant', content: '', agent: current.agent, model: settings.model };
@@ -554,6 +555,8 @@
           toolMsg = { role: 'user', tool: true, parts, content: C.formatToolResults(parts) };
         } else if (new RegExp('<(' + C.BODY_TOOLS.join('|') + ')\\b[^>]*>(?![\\s\\S]*<\\/\\1\\s*>)').test(C.stripThink(full))) {
           toolMsg = { role: 'user', tool: true, parts: [], content: 'Your last reply was cut off before a closing tool tag, so that tool did not run. Send it again; if a file is long, split the work into smaller files or use edit_file.' };
+        } else if (/\(The model (tried to call an unknown tool|sent a malformed call)/.test(full) && ++badCalls <= 3) {
+          toolMsg = { role: 'user', tool: true, parts: [], content: 'That tool does not exist or the call was malformed, so nothing ran. Use only these tools, written as the XML tags described in your instructions: ' + agent.tools.join(', ') + '.' };
         } else break;
         current.messages.push(toolMsg); box.appendChild(msgNode(toolMsg));
         box.scrollTop = box.scrollHeight; saveSessions(); updateBadge();

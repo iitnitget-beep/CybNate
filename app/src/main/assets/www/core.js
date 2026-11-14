@@ -274,6 +274,8 @@
     read_files: 'read_file', str_replace: 'edit_file', replace_in_file: 'edit_file', apply_patch: 'edit_file', code_search: 'search_files', grep: 'search_files',
     glob: 'find_files', list_directory: 'list_files', ls: 'list_files', run_command: 'run_terminal_command', run_terminal_cmd: 'run_terminal_command',
     shell: 'run_terminal_command', bash: 'run_terminal_command', terminal: 'run_terminal_command', execute_command: 'run_terminal_command',
+    print_tree: 'list_files', list_dir: 'list_files', tree: 'list_files', open_file: 'read_file', cat: 'read_file', view_file: 'read_file', find: 'find_files',
+    exec: 'run_terminal_command', run: 'run_terminal_command', python: 'run_terminal_command', write: 'write_file', save_file: 'write_file', edit: 'edit_file', remove_file: 'delete_file',
     spawn_agents: 'spawn_agent', create_file: 'write_file', search: 'web_search', fetch_url: 'read_url', open_url: 'read_url',
   };
   const attrEsc = (v) => String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -281,7 +283,10 @@
   const attrsOf = (o, skip) => Object.keys(o).filter((k) => skip.indexOf(k) < 0 && o[k] != null && typeof o[k] !== 'object').map((k) => ' ' + k + '="' + attrEsc(o[k]) + '"').join('');
 
   function nativeCallToText(name, args) {
-    name = String(name || '').replace(/^functions?[.:]/, '').trim();
+    name = String(name || '').trim();
+    const ns = /[.:\/]/.test(name);
+    name = name.split(/[.:\/]/).pop();
+    if (ns && name === 'search') name = 'search_files';
     name = TOOL_ALIASES[name] || name;
     if (typeof args === 'string') { try { args = JSON.parse(args || '{}'); } catch (e) { return '\n(The model sent a malformed call to ' + name + '.)\n'; } }
     args = args && typeof args === 'object' ? args : {};
