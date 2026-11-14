@@ -1,1 +1,2 @@
---------- beginning of main
+CYBUI ready agents=5 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:880)
+CybNateJS: CYBUI ready agents=5 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:880)
