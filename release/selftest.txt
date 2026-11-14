@@ -1,4 +1,4 @@
-CybNate on-device self test (2026-11-14T17:53Z, Android 14, versionName=113.0.5672.136)
+CybNate on-device self test (2026-11-14T18:02Z, Android 14, versionName=113.0.5672.136)
 CYBTEST START ua=Mozilla/5.0 (Linux; Android 14; sdk_gphone64_x86_64 Build/UE1A.230829.050; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/113.0.5672.136 Mobile Safari/537.36
 CYBTEST PASS shell echo + workspace mirror :: hello.py lib main.js 34 done 
 CYBTEST PASS shell writes file back into workspace :: main.js,gen/a.txt,lib/add.js (deleted)
@@ -9,15 +9,12 @@ CYBTEST PASS python error exit code :: traceback ok
 CYBTEST PASS python numpy from CDN :: 15 
 CYBTEST PASS pip install pure package :: cowsay ok
 CYBTEST PASS node runs + require + fs :: node says 5 
-CYBTEST PASS timeout kills runaway python :: 8453 ms incl. restart
+CYBTEST PASS timeout kills runaway python :: 7813 ms incl. restart
 CYBTEST PASS pollinations model list :: 1 models: openai-fast
 CYBTEST PASS pollinations chat (keyless) :: model=openai-fast reply=CYB-OK
-CYBTEST INFO A system+user: HTTP 200 len=539 finish=tool_calls keys=role,reasoning,tool_calls content="" reasoning="We need to create ping.txt with \"pong\". Use write_file." tool_calls=[{"id":"chatcmpl-tool-912060afb9c04f4f","type":"function","function":{"name":"write_file","arguments":"{\"path\": \"ping.txt\", \"content\": \"pong\"}"}}]
-CYBTEST INFO B merged: HTTP 200 len=614 finish=tool_calls keys=role,reasoning,tool_calls content="" reasoning="The user wants to create a file named ping.txt containing \"pong\". In the workspace, we need to add ping.txt. We'll use write_file." tool_calls=[{"id":"chatcmpl-tool-9d94e49fb1dcef99","type":"function","function":{"name":"write_file","arguments":"{\"path\": \"ping.txt\", \"content\": \"pong\"}"}}]
-CYBTEST PASS diagnose long system prompt (raw) :: sys chars=5409
-CYBTEST FAIL agent tool call from real model :: The model returned an empty reply. Try again or pick another model. Raw: data: {"id":"chatcmpl-a8c99c5dc47f3e7a","choices":[{"index":0,"delta":{"role":"assistant","content":""}}],"created":1794678661,"model":"gpt-oss-20b","object":"c
-CYBTEST FAIL full agent run through the UI :: fizz.py was not created. errors=⚠ The model returned an empty reply. Try again or pick another model. Raw: data: {"id":"chatcmpl-a92d4429eb7585a5","choices":[{"index":0,"delta":{"role":"assistant","content":""}}],"created":1794678803,"model":"gpt-oss-20b","obj
+CYBTEST PASS agent tool call from real model :: variant=0 write_file:ping.txt
+CYBTEST FAIL full agent run through the UI :: fizz.py was not created. errors= tools= last=⌨ coder · openai-fast (The model tried to call an unknown tool "repo_browser.list_files".)
 CYBTEST PASS web search :: 8 results; first: Pyodide — Version 314.0.8 https://pyodide.org/
 CYBTEST PASS read url :: # Example Domain https://example.com This domain is for use in documentation ex
 CYBTEST PASS github api reachable (CORS) :: CodebuffAI/freebuff
-CYBTEST DONE pass=16 fail=2
+CYBTEST DONE pass=16 fail=1

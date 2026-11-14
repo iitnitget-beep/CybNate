@@ -1,3 +1,3 @@
-CYBUI ready agents=5 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:890)
-CYBUI ready agents=5 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:890)
-CybNateJS: CYBUI ready agents=5 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:890)
+CYBUI ready agents=5 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:895)
+CYBUI ready agents=5 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:895)
+CybNateJS: CYBUI ready agents=5 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:895)
