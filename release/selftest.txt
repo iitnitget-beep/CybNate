@@ -1,4 +1,4 @@
-CybNate on-device self test (2026-11-14T17:41Z, Android 14, versionName=113.0.5672.136)
+CybNate on-device self test (2026-11-14T17:53Z, Android 14, versionName=113.0.5672.136)
 CYBTEST START ua=Mozilla/5.0 (Linux; Android 14; sdk_gphone64_x86_64 Build/UE1A.230829.050; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/113.0.5672.136 Mobile Safari/537.36
 CYBTEST PASS shell echo + workspace mirror :: hello.py lib main.js 34 done 
 CYBTEST PASS shell writes file back into workspace :: main.js,gen/a.txt,lib/add.js (deleted)
@@ -9,14 +9,14 @@ CYBTEST PASS python error exit code :: traceback ok
 CYBTEST PASS python numpy from CDN :: 15 
 CYBTEST PASS pip install pure package :: cowsay ok
 CYBTEST PASS node runs + require + fs :: node says 5 
-CYBTEST PASS timeout kills runaway python :: 8756 ms incl. restart
+CYBTEST PASS timeout kills runaway python :: 8453 ms incl. restart
 CYBTEST PASS pollinations model list :: 1 models: openai-fast
 CYBTEST PASS pollinations chat (keyless) :: model=openai-fast reply=CYB-OK
-CYBTEST INFO stream HTTP 200 len=7456 head=data: {"id":"chatcmpl-8784f46d03a7dbd8","choices":[{"index":0,"delta":{"role":"assistant","content":""}}],"created":1794677584,"model":"gpt-oss-20b","object":"chat.completion.chunk"} data: {"id":"chatcmpl-8784f46d03a7db tail=ject":"chat.completion.chunk","usage":{"prompt_tokens":1347,"completion_tokens":47,"total_tokens":1394}} data: [DONE] 
-CYBTEST INFO plain HTTP 402 len=324 head={"status":402,"success":false,"error":{"code":"FREE_LIMIT","message":"Free limit reached: 1 reply every 45 seconds per IP. Retry after 45s, or get unlimited replies with a pollen key at https://enter.pollinations.ai/?ref tail=inations.ai/?ref=classic","timestamp":"2026-11-14T17:40:58.502Z","fixUrl":"https://enter.pollinations.ai/?ref=classic"}}
+CYBTEST INFO A system+user: HTTP 200 len=539 finish=tool_calls keys=role,reasoning,tool_calls content="" reasoning="We need to create ping.txt with \"pong\". Use write_file." tool_calls=[{"id":"chatcmpl-tool-912060afb9c04f4f","type":"function","function":{"name":"write_file","arguments":"{\"path\": \"ping.txt\", \"content\": \"pong\"}"}}]
+CYBTEST INFO B merged: HTTP 200 len=614 finish=tool_calls keys=role,reasoning,tool_calls content="" reasoning="The user wants to create a file named ping.txt containing \"pong\". In the workspace, we need to add ping.txt. We'll use write_file." tool_calls=[{"id":"chatcmpl-tool-9d94e49fb1dcef99","type":"function","function":{"name":"write_file","arguments":"{\"path\": \"ping.txt\", \"content\": \"pong\"}"}}]
 CYBTEST PASS diagnose long system prompt (raw) :: sys chars=5409
-CYBTEST FAIL agent tool call from real model :: HTTP 402: Free limit reached: 1 reply every 45 seconds per IP. Retry after 44s, or get unlimited replies with a pollen key at https://enter.pollinations.ai/?ref=classic
-CYBTEST FAIL full agent run through the UI :: fizz.py was not created. errors=⚠ HTTP 402: Free limit reached: 1 reply every 45 seconds per IP. Retry after 43s, or get unlimited replies with a pollen key at https://enter.pollinations.ai/?ref=classic tools= last=
+CYBTEST FAIL agent tool call from real model :: The model returned an empty reply. Try again or pick another model. Raw: data: {"id":"chatcmpl-a8c99c5dc47f3e7a","choices":[{"index":0,"delta":{"role":"assistant","content":""}}],"created":1794678661,"model":"gpt-oss-20b","object":"c
+CYBTEST FAIL full agent run through the UI :: fizz.py was not created. errors=⚠ The model returned an empty reply. Try again or pick another model. Raw: data: {"id":"chatcmpl-a92d4429eb7585a5","choices":[{"index":0,"delta":{"role":"assistant","content":""}}],"created":1794678803,"model":"gpt-oss-20b","obj
 CYBTEST PASS web search :: 8 results; first: Pyodide — Version 314.0.8 https://pyodide.org/
 CYBTEST PASS read url :: # Example Domain https://example.com This domain is for use in documentation ex
 CYBTEST PASS github api reachable (CORS) :: CodebuffAI/freebuff
