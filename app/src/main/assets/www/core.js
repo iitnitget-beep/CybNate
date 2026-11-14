@@ -267,6 +267,72 @@
   }
   function stripEdge(s) { return s.replace(/^\r?\n/, '').replace(/\r?\n$/, ''); }
 
+  // ---- native function calls
+  // Some models answer with OpenAI-style tool_calls even though the tools are described in text.
+  // Convert those into the same tags, so there is a single execution path.
+  const TOOL_ALIASES = {
+    read_files: 'read_file', str_replace: 'edit_file', replace_in_file: 'edit_file', apply_patch: 'edit_file', code_search: 'search_files', grep: 'search_files',
+    glob: 'find_files', list_directory: 'list_files', ls: 'list_files', run_command: 'run_terminal_command', run_terminal_cmd: 'run_terminal_command',
+    shell: 'run_terminal_command', bash: 'run_terminal_command', terminal: 'run_terminal_command', execute_command: 'run_terminal_command',
+    spawn_agents: 'spawn_agent', create_file: 'write_file', search: 'web_search', fetch_url: 'read_url', open_url: 'read_url',
+  };
+  const attrEsc = (v) => String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const pick = (o, keys) => { for (const k of keys) if (o[k] != null) return o[k]; return undefined; };
+  const attrsOf = (o, skip) => Object.keys(o).filter((k) => skip.indexOf(k) < 0 && o[k] != null && typeof o[k] !== 'object').map((k) => ' ' + k + '="' + attrEsc(o[k]) + '"').join('');
+
+  function nativeCallToText(name, args) {
+    name = String(name || '').replace(/^functions?[.:]/, '').trim();
+    name = TOOL_ALIASES[name] || name;
+    if (typeof args === 'string') { try { args = JSON.parse(args || '{}'); } catch (e) { return '\n(The model sent a malformed call to ' + name + '.)\n'; } }
+    args = args && typeof args === 'object' ? args : {};
+    if (args.file_path != null && args.path == null) args.path = args.file_path;
+    if (args.filename != null && args.path == null) args.path = args.filename;
+    const listOf = (v) => (Array.isArray(v) ? v : v == null ? [] : String(v).split('\n')).filter((x) => x != null && x !== '');
+    switch (name) {
+      case 'write_file': return '<write_file path="' + attrEsc(args.path || '') + '">\n' + String(pick(args, ['content', 'contents', 'text', 'body', 'file_content', 'data']) || '') + '\n</write_file>';
+      case 'edit_file': {
+        let edits = pick(args, ['edits', 'replacements', 'changes']);
+        if (!Array.isArray(edits)) edits = [args];
+        const body = edits.map((e) => '<search>' + String(pick(e, ['search', 'old_string', 'old_str', 'old', 'find', 'old_text']) || '') + '</search>\n<replace>' + String(pick(e, ['replace', 'new_string', 'new_str', 'new', 'replacement', 'new_text']) || '') + '</replace>').join('\n');
+        return '<edit_file path="' + attrEsc(args.path || '') + '">\n' + body + '\n</edit_file>';
+      }
+      case 'run_terminal_command': {
+        const cmd = pick(args, ['command', 'cmd', 'script', 'input']);
+        return '<run_terminal_command' + (args.timeout != null ? ' timeout="' + attrEsc(pick(args, ['timeout', 'timeout_seconds'])) + '"' : '') + '>\n' + (Array.isArray(cmd) ? cmd.join(' ') : String(cmd || '')) + '\n</run_terminal_command>';
+      }
+      case 'spawn_agent': {
+        const list = Array.isArray(args.agents) ? args.agents : [args];
+        return list.map((a) => '<spawn_agent type="' + attrEsc(pick(a, ['type', 'agent_type', 'agent', 'name']) || '') + '">\n' + String(pick(a, ['prompt', 'instructions', 'task', 'message', 'input']) || '') + '\n</spawn_agent>').join('\n');
+      }
+      case 'write_todos': {
+        const items = listOf(pick(args, ['todos', 'items', 'tasks', 'content', 'list']));
+        return '<write_todos>\n' + items.map((t) => {
+          if (typeof t === 'string') return /^\s*[-*]\s*\[/.test(t) ? t : '- [ ] ' + t.replace(/^\s*[-*]\s*/, '');
+          const done = t.done === true || t.completed === true || /^(done|completed|complete)$/i.test(t.status || '');
+          return '- [' + (done ? 'x' : ' ') + '] ' + String(pick(t, ['task', 'content', 'text', 'title', 'description']) || '');
+        }).join('\n') + '\n</write_todos>';
+      }
+      case 'suggest_followups': {
+        const items = listOf(pick(args, ['followups', 'suggestions', 'items', 'prompts', 'content']));
+        return '<suggest_followups>\n' + items.map((t) => (typeof t === 'string' ? t : String(pick(t, ['prompt', 'label', 'text', 'title']) || ''))).join('\n') + '\n</suggest_followups>';
+      }
+      case 'read_file': {
+        const paths = Array.isArray(args.paths) ? args.paths : Array.isArray(args.path) ? args.path : [args.path];
+        const rest = attrsOf(args, ['path', 'paths', 'file_path', 'filename']);
+        return paths.map((p) => '<read_file path="' + attrEsc(p || '') + '"' + rest + '/>').join('\n');
+      }
+      case 'search_files': if (args.query == null) args.query = pick(args, ['pattern', 'regex', 'text', 'q']); return '<search_files' + attrsOf(args, ['pattern', 'regex', 'text', 'q']) + '/>';
+      case 'find_files': if (args.pattern == null) args.pattern = pick(args, ['glob', 'query', 'name']); return '<find_files' + attrsOf(args, ['glob', 'query', 'name']) + '/>';
+      case 'web_search': if (args.query == null) args.query = pick(args, ['q', 'search', 'text']); return '<web_search' + attrsOf(args, ['q', 'search', 'text']) + '/>';
+      default:
+        if (ALL_TOOLS.indexOf(name) >= 0) return '<' + name + attrsOf(args, ['file_path', 'filename']) + '/>';
+        return '\n(The model tried to call an unknown tool "' + name + '".)\n';
+    }
+  }
+  function nativeCallsToText(calls) {
+    return (calls || []).filter((c) => c && (c.name || (c.function && c.function.name))).map((c) => nativeCallToText(c.name || c.function.name, c.arguments != null ? c.arguments : c.function && c.function.arguments)).join('\n');
+  }
+
   function followupsOf(text) {
     const m = /<suggest_followups\b[^>]*>([\s\S]*?)<\/suggest_followups\s*>/.exec(stripThink(text));
     if (!m) return [];
@@ -891,8 +957,10 @@
   // --------------------------------------------------------------------- SSE
   /** Incremental parser for OpenAI-style server-sent events. feed() returns text deltas. */
   function createSseParser() {
-    let buf = '';
+    let buf = ''; const tools = [];
     return {
+      /** Native function calls collected so far, as [{name, arguments}]. */
+      toolCalls() { return tools.filter(Boolean); },
       feed(chunk) {
         buf += chunk;
         const out = []; let i;
@@ -907,6 +975,15 @@
             const d = j.choices && j.choices[0] && (j.choices[0].delta || j.choices[0].message);
             if (d && typeof d.content === 'string' && d.content) out.push({ text: d.content });
             else if (d && (d.reasoning_content || d.reasoning)) out.push({ thinking: true });
+            if (d && Array.isArray(d.tool_calls)) {
+              d.tool_calls.forEach((tc, k) => {
+                const i = tc.index != null ? tc.index : k, f = tc.function || {};
+                const cur = tools[i] || (tools[i] = { name: '', arguments: '' });
+                if (f.name) cur.name = f.name;
+                if (typeof f.arguments === 'string') cur.arguments += f.arguments; else if (f.arguments) cur.arguments = JSON.stringify(f.arguments);
+              });
+              out.push({ thinking: true });
+            }
           } catch (e) { /* partial or non-JSON keep-alive line */ }
         }
         return out;
@@ -928,7 +1005,7 @@
 
   return {
     PROVIDERS, AGENTS, TOOL_DOCS, PASSIVE, SUBAGENT_TYPES, BODY_TOOLS, parseModelList, buildSystemPrompt, parseToolCalls, displayText, Workspace,
-    stripThink, followupsOf, tokenize, parseCommand, matchGlob, callLabel,
+    stripThink, followupsOf, nativeCallToText, nativeCallsToText, tokenize, parseCommand, matchGlob, callLabel,
     runTool, runTools, formatToolResults, fileInfo, detectType, extractStrings, hexdump, zipEntries, zipRead, zipCreate,
     decodeAxml, decodeIfText, createSseParser, trimHistory, fmtSize, crc32, utf8,
   };

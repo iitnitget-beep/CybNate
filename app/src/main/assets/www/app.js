@@ -147,13 +147,18 @@
       for (const ev of sse.feed(chunk)) { if (ev.error) err = ev.error; else if (ev.thinking) { if (!full) setStatus('thinking…'); } else { full += ev.text; onText(full); } }
     });
     if (stream) for (const ev of sse.feed('\n')) if (ev.text) { full += ev.text; onText(full); }
-    if (!full && res.status < 400) {
+    let native = sse.toolCalls();
+    if (!full && !native.length && res.status < 400) {
       try {
         const j = JSON.parse(raw); const m = j.choices && j.choices[0] && j.choices[0].message;
-        if (m && typeof m.content === 'string' && m.content) { full = m.content; onText(full); }
-        else if (j.error) err = j.error.message || String(j.error);
+        if (m && typeof m.content === 'string' && m.content) full = m.content;
+        if (m && Array.isArray(m.tool_calls)) native = m.tool_calls;
+        if (!m && j.error) err = j.error.message || String(j.error);
       } catch (e) { /* not a plain JSON body */ }
     }
+    // models that answer with native function calls: turn them into our tool tags
+    if (native.length) full = (full ? full.replace(/\s+$/, '') + '\n' : '') + C.nativeCallsToText(native);
+    if (full) onText(full);
     return { full, status: res.status, raw, err };
   }
 
@@ -476,7 +481,7 @@
     });
     $('input').placeholder = placeholder();
   }
-  const placeholder = () => ({ coder: 'Ask CybNate to build something…', planner: 'What should we plan?', reviewer: 'What should I review?', reverse: 'Import a file with ＋ and ask about it…', chat: 'Message CybNate…' })[current.agent];
+  const placeholder = () => ({ coder: 'Ask CybNate to build…', planner: 'What should we plan?', reviewer: 'What should I review?', reverse: 'Import a file, then ask…', chat: 'Message CybNate…' })[current.agent];
   function renderModelChip() { $('btnModel').textContent = C.PROVIDERS[settings.provider].name.toLowerCase() + ' / ' + settings.model + ' ▾'; }
   function setStatus(t) { $('status').textContent = t || ''; }
 

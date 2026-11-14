@@ -110,6 +110,29 @@ const C = require('../app/src/main/assets/www/core.js');
   assert.deepStrictEqual(C.followupsOf('x<suggest_followups>\n1. Add tests\n- Dark mode\n</suggest_followups>'), ['Add tests', 'Dark mode']);
   assert.ok(!/spawn_agent/.test(C.buildSystemPrompt('coder', '', '', { noSpawn: true })) && /Android system shell/.test(C.buildSystemPrompt('coder', '', '', { shell: true })));
 
+  // --- native function calls are converted to tags
+  const nat = C.nativeCallsToText([
+    { function: { name: 'write_file', arguments: '{"path": "ping.txt", "content": "pong"}' } },
+    { name: 'run_command', arguments: { command: 'python a.py && echo "x"', timeout: 5 } },
+    { name: 'read_files', arguments: { paths: ['a.py', 'b "q".py'] } },
+    { name: 'str_replace', arguments: { path: 'a.py', old_string: 'x <1', new_string: 'y' } },
+    { name: 'write_todos', arguments: { todos: [{ task: 'one', status: 'completed' }, 'two'] } },
+    { name: 'spawn_agents', arguments: { agents: [{ agent_type: 'reviewer', prompt: 'check' }] } },
+    { name: 'mystery', arguments: '{}' },
+  ]);
+  calls = C.parseToolCalls(nat, C.AGENTS.coder.tools);
+  assert.deepStrictEqual(calls.map((c) => c.name), ['write_file', 'run_terminal_command', 'read_file', 'read_file', 'edit_file', 'write_todos', 'spawn_agent'], nat);
+  assert.strictEqual(calls[0].body, 'pong'); assert.strictEqual(calls[0].attrs.path, 'ping.txt');
+  assert.strictEqual(calls[1].body, 'python a.py && echo "x"'); assert.strictEqual(calls[1].attrs.timeout, '5');
+  assert.strictEqual(calls[3].attrs.path, 'b "q".py');
+  assert.deepStrictEqual(calls[4].edits, [{ search: 'x <1', replace: 'y' }]);
+  assert.strictEqual(calls[5].body, '- [x] one\n- [ ] two'); assert.strictEqual(calls[6].attrs.type, 'reviewer');
+  assert.ok(/unknown tool "mystery"/.test(nat));
+  const sp = C.createSseParser();
+  sp.feed('data: {"choices":[{"delta":{"role":"assistant","content":""}}]}\n\ndata: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"write_file","arguments":"{\\"path\\": \\"p.txt\\","}}]}}]}\n\n');
+  sp.feed('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":" \\"content\\": \\"hi\\"}"}}]}}]}\n\n');
+  assert.deepStrictEqual(sp.toolCalls(), [{ name: 'write_file', arguments: '{"path": "p.txt", "content": "hi"}' }]);
+
   assert.ok(C.buildSystemPrompt('coder', ws.summary()).includes('<write_file'));
   assert.ok(!C.buildSystemPrompt('chat', '').includes('write_file'));
   console.log('ALL CORE TESTS PASSED');
