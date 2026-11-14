@@ -28,13 +28,39 @@
   await test('timeout kills runaway python', async () => { const t = Date.now(); const r = await T.runCommand('python -c "while True: pass"', 3); must(r.timedOut, JSON.stringify(r)); const r2 = await T.runCommand('python -c "print(7*6)"', 120); must(/42/.test(r2.out), 'python did not recover: ' + r2.out); return (Date.now() - t) + ' ms incl. restart'; });
 
   await test('pollinations model list', async () => { const l = await T.fetchModels('pollinations'); return l.length + ' models: ' + l.slice(0, 12).join(','); });
-  await test('pollinations chat (keyless)', async () => { T.settings.provider = 'pollinations'; const l = T.settings.models.pollinations || []; T.settings.model = l.indexOf('openai') >= 0 ? 'openai' : (l[0] || 'openai'); const r = await T.chatStream([{ role: 'user', content: 'Reply with exactly: CYB-OK' }], () => {}); return 'model=' + T.settings.model + ' reply=' + r; });
-  await test('agent tool call from real model', async () => { const sys = T.C.buildSystemPrompt('coder', T.ws.summary(), '', { shell: true }); const r = await T.chatStream([{ role: 'system', content: sys }, { role: 'user', content: 'Create a file named ping.txt containing the single word pong.' }], () => {}); const calls = T.C.parseToolCalls(r, T.C.AGENTS.coder.tools); must(calls.some((c) => c.name === 'write_file'), 'no write_file call in: ' + r); return calls.map((c) => c.name + ':' + (c.attrs.path || '')).join(' '); });
+  await test('pollinations chat (keyless)', async () => { T.settings.provider = 'pollinations'; const l = T.settings.models.pollinations || []; T.settings.model = l.indexOf('openai-fast') >= 0 ? 'openai-fast' : (l[0] || 'openai-fast'); const r = await T.chatStream([{ role: 'user', content: 'Reply with exactly: CYB-OK' }], () => {}); return 'model=' + T.settings.model + ' reply=' + r; });
+  await test('diagnose long system prompt (raw)', async () => {
+    const sys = T.C.buildSystemPrompt('coder', T.ws.summary(), '', { shell: true });
+    const out = [];
+    for (const [label, body] of [
+      ['stream', { model: T.settings.model, stream: true, messages: [{ role: 'system', content: sys }, { role: 'user', content: 'Create a file named ping.txt containing the single word pong.' }] }],
+      ['plain', { model: T.settings.model, messages: [{ role: 'system', content: sys }, { role: 'user', content: 'Create a file named ping.txt containing the single word pong.' }] }],
+    ]) {
+      const r = await fetch('https://text.pollinations.ai/openai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const t = await r.text(); out.push(label + ' HTTP ' + r.status + ' len=' + t.length + ' head=' + t.slice(0, 220) + ' tail=' + t.slice(-120));
+      console.log('CYBTEST INFO ' + out[out.length - 1].replace(/\s+/g, ' ').slice(0, 900));
+    }
+    return 'sys chars=' + sys.length;
+  });
+  await test('agent tool call from real model', async () => { const sys = T.C.buildSystemPrompt('coder', T.ws.summary(), '', { shell: true }); const r = await T.chatStream([{ role: 'system', content: sys }, { role: 'user', content: 'Create a file named ping.txt containing the single word pong.' }], () => {}); const calls = T.C.parseToolCalls(r, T.C.AGENTS.coder.tools); must(calls.some((c) => c.name === 'write_file'), 'no write_file call in: ' + r); return 'variant=' + T.chatStream.lastVariant + ' ' + calls.map((c) => c.name + ':' + (c.attrs.path || '')).join(' '); });
+  await test('full agent run through the UI', async () => {
+    box.style.display = 'none';
+    document.getElementById('input').value = 'Write fizz.py that prints FizzBuzz for 1 to 15, run it, and tell me the last line of the output.';
+    document.getElementById('btnSend').click();
+    const t0 = Date.now();
+    while (Date.now() - t0 < 240000) { await new Promise((r) => setTimeout(r, 1500)); if (!document.querySelector('#btnSend.stop')) break; }
+    box.style.display = '';
+    const errs = [...document.querySelectorAll('.msg.error')].map((n) => n.textContent).join(' | ');
+    const tools = [...document.querySelectorAll('.msg.tool summary')].map((n) => n.textContent).join(' | ');
+    const lastMsg = ([...document.querySelectorAll('.msg.assistant')].pop() || {}).innerText || '';
+    must(T.ws.has('fizz.py'), 'fizz.py was not created. errors=' + errs + ' tools=' + tools + ' last=' + lastMsg.slice(0, 200));
+    must(/python/.test(tools), 'the agent did not run the script. tools=' + tools);
+    return Math.round((Date.now() - t0) / 1000) + 's tools=[' + tools + '] errors=[' + errs + '] final=' + lastMsg.replace(/\s+/g, ' ').slice(-140);
+  });
   await test('web search', async () => { const r = await T.webSearch('pyodide documentation'); must(r.length > 0, 'no results'); return r.length + ' results; first: ' + r[0].title + ' ' + r[0].url; });
   await test('read url', async () => { const t = await T.readUrl('https://example.com'); must(/Example Domain/.test(t), t.slice(0, 200)); return t.slice(0, 80); });
   await test('github api reachable (CORS)', async () => { const r = await fetch('https://api.github.com/repos/CodebuffAI/freebuff'); must(r.ok, 'HTTP ' + r.status); return (await r.json()).full_name; });
 
-  T.ws.list().forEach((p) => T.ws.remove(p));
   const fails = lines.filter((l) => /FAIL/.test(l)).length;
   console.log('CYBTEST DONE pass=' + (lines.length - fails) + ' fail=' + fails);
   box.textContent = lines.join('\n') + '\n\nDONE pass=' + (lines.length - fails) + ' fail=' + fails;

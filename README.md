@@ -7,17 +7,20 @@ No account, no subscription, no ads. It talks directly to free model providers f
 
 ## What it does
 
-| Agent | Purpose |
-| --- | --- |
-| ⌨ Coder | Builds and edits projects in an on-phone workspace using file tools |
-| 🧭 Planner | Writes a step-by-step implementation plan |
-| 🔍 Reviewer | Reviews workspace code for bugs and security problems |
-| 🧬 Reverse | Analyses APKs, DEX, ELF, PE and decompiler output (Ghidra/JADX exports) |
-| 💬 Chat | Plain conversation |
+CybNate follows the same working loop as Freebuff's main agent: gather context, plan, edit, run, review, fix, summarise.
 
-- **Workspace**: the agent creates, edits and deletes files; you can edit them, run HTML projects in a built-in preview, import files and export a ZIP to `Downloads/CybNate`.
-- **Reverse-engineering tools** (run on the phone, no upload): file type and header info, SHA-256, entropy, strings (ASCII and UTF-16), hex dump, ZIP/APK listing and extraction, binary `AndroidManifest.xml` decoding.
-- **Chat history** stored on the device.
+| Capability | How it works on the phone |
+| --- | --- |
+| Read, search, write and edit files | Project workspace stored on the device |
+| Run terminal commands | Android shell for `ls`, `grep`, `sed`, `find`, `tar` and so on; real CPython 3.14 (Pyodide) for `python`, `pip install`; a JavaScript runtime for `node file.js` |
+| Helper agents | `explorer`, `thinker`, `reviewer`, `researcher`, each with its own context; several run in parallel |
+| Web search and page reading | DuckDuckGo results and readable page text |
+| GitHub | Clone a repository into the workspace, commit and push from the GitHub screen (no git binary needed) |
+| Task checklist and next-step suggestions | Shown in the chat |
+| Reverse engineering | File type and headers, SHA-256, entropy, strings, hex dump, ZIP/APK listing and extraction, `AndroidManifest.xml` decoding |
+
+Agents you can pick: ⌨ Coder (the orchestrator), 🧭 Planner, 🔍 Reviewer, 🧬 Reverse, 💬 Chat.
+There is also a Terminal screen for running commands yourself, an editor, and a preview for HTML projects.
 
 ## Free models
 
@@ -31,12 +34,15 @@ No account, no subscription, no ads. It talks directly to free model providers f
 
 Tap the model name above the message box to pick a model; **↻ Refresh** loads the provider's current list.
 Keys are stored only on the device. Free tiers have rate limits set by each provider.
+Agent quality depends heavily on the model: the keyless default is the weakest option, and a free Gemini, Groq or OpenRouter key gives much better results.
 
-## Limits
+## Differences from Freebuff
 
-- This is not a port of Freebuff's terminal agent. A phone app cannot run a shell, so there is no command execution; the agent works with files only.
-- Ghidra is a desktop Java program and does not run inside the app. Decompile on a PC, then import or paste the output for the Reverse agent to explain.
-- Freebuff's own hosted models are not used; they run on Freebuff's servers.
+- Freebuff's hosted models are not used; they run on Freebuff's ad-funded servers.
+- No `git`, `npm`, compilers or native Node.js: Android does not ship them. JavaScript runs without npm packages; Python packages must be pure Python or part of the Pyodide distribution.
+- Python and JavaScript run in their own runtimes, so they cannot be piped into shell commands.
+- Ghidra is a desktop Java program and does not run inside the app. Decompile on a PC, then import the output for the Reverse agent.
+- No browser automation and no desktop/cloud products.
 
 ## Build
 
@@ -49,13 +55,19 @@ Its password is in `app/build.gradle`; replace the key before publishing the app
 ## Tests
 
 ```
-node tests/core.test.js                              # tools, parser, ZIP, APK analysis
-NODE_PATH=<dir containing jsdom> node tests/ui.smoke.js   # UI + agent loop with a fake model
+node tests/core.test.js        # tools, parser, commands, ZIP, APK analysis
+node tests/ui.smoke.js         # UI + agent loop in jsdom (needs jsdom)
+node tests/browser.test.js     # full run in headless Chromium with real Python (needs puppeteer-core, @sparticuz/chromium)
+TOK=<token> node tests/github.test.js
+gradle :app:testReleaseUnitTest   # shell runner
 ```
+
+CI also installs the APK on an Android emulator and runs the in-app self test; results are in `release/selftest.txt`.
 
 ## Layout
 
-- `app/src/main/assets/www/` – the app (HTML/JS): `core.js` logic, `app.js` UI
-- `app/src/main/java/…/MainActivity.java` – WebView shell, file import/export, native HTTP fallback
+- `app/src/main/assets/www/` – the app: `core.js` (agents, tools), `app.js` (UI, agent loop), `pyworker.mjs`, `jsworker.js`, `github.js`
+- `app/src/main/java/…/` – WebView shell, shell runner, file import/export, native HTTP
+- `scripts/fetch-vendor.sh` – downloads the Python runtime at build time
 
-Third-party: marked, DOMPurify, highlight.js (see `vendor/`). CybNate contains no Freebuff code.
+Third-party: marked, DOMPurify, highlight.js, Pyodide. CybNate contains no Freebuff code; its agent workflow is modelled on Freebuff's (Apache-2.0).

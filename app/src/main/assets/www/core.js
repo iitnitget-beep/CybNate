@@ -16,7 +16,7 @@
       chatUrl: 'https://text.pollinations.ai/openai',
       modelsUrl: 'https://text.pollinations.ai/models',
       keyUrl: '',
-      fallbackModels: ['openai', 'openai-fast', 'mistral', 'qwen-coder'],
+      fallbackModels: ['openai-fast', 'openai'],
     },
     openrouter: {
       name: 'OpenRouter',

@@ -11,7 +11,7 @@
   const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { toast('Storage is full. Delete some old chats.'); } };
 
   const settings = Object.assign({
-    provider: 'pollinations', model: 'openai', keys: {}, customUrl: '', models: {}, extra: '', maxSteps: 25,
+    provider: 'pollinations', model: 'openai-fast', keys: {}, customUrl: '', models: {}, extra: '', maxSteps: 25,
   }, load('cyb.settings', {}));
   let sessions = load('cyb.sessions', []);
   let current = null;
@@ -133,33 +133,55 @@
     return (hint ? hint + '\n' : '') + 'HTTP ' + status + (msg ? ': ' + msg : '');
   }
 
+  /** One request to the model. Returns { full, status, raw, err }. */
+  async function requestModel(p, messages, onText, signal, stream) {
+    const sse = C.createSseParser(); let full = '', raw = '', err = '';
+    const res = await httpStream(p.chatUrl, {
+      method: 'POST', signal,
+      headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders(settings.provider)),
+      body: JSON.stringify(stream ? { model: settings.model, messages, stream: true } : { model: settings.model, messages }),
+    }, (chunk) => {
+      if (raw.length < 400000) raw += chunk;
+      if (!stream) return;
+      for (const ev of sse.feed(chunk)) { if (ev.error) err = ev.error; else if (ev.thinking) { if (!full) setStatus('thinking…'); } else { full += ev.text; onText(full); } }
+    });
+    if (stream) for (const ev of sse.feed('\n')) if (ev.text) { full += ev.text; onText(full); }
+    if (!full && res.status < 400) {
+      try {
+        const j = JSON.parse(raw); const m = j.choices && j.choices[0] && j.choices[0].message;
+        if (m && typeof m.content === 'string' && m.content) { full = m.content; onText(full); }
+        else if (j.error) err = j.error.message || String(j.error);
+      } catch (e) { /* not a plain JSON body */ }
+    }
+    return { full, status: res.status, raw, err };
+  }
+
   async function chatStream(messages, onText, signal) {
     const p = providerCfg();
     if (!p.chatUrl) throw new Error('Set the server URL for the Custom provider in Settings.');
     if (p.needsKey && !(settings.keys[settings.provider] || '').trim()) throw new Error('Add your free ' + p.name + ' key in Settings, or switch to Pollinations (no key).');
-    let sse = C.createSseParser(), full = '', raw = '', streamErr = '', res;
-    for (let attempt = 0; ; attempt++) {
-     sse = C.createSseParser(); full = ''; raw = ''; streamErr = '';
-     res = await httpStream(p.chatUrl, {
-      method: 'POST', signal,
-      headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders(settings.provider)),
-      body: JSON.stringify({ model: settings.model, messages, stream: true }),
-    }, (chunk) => {
-      if (raw.length < 200000) raw += chunk;
-      for (const ev of sse.feed(chunk)) { if (ev.error) streamErr = ev.error; else if (ev.thinking) { if (!full) setStatus('thinking…'); } else { full += ev.text; onText(full); } }
-     });
-     // free tiers rate-limit often: wait and retry a couple of times before giving up
-     if ((res.status === 429 || res.status === 503) && !full && attempt < 2) { setStatus('rate limited, retrying…'); await sleep(attempt ? 12000 : 4000, signal); continue; }
-     break;
+    // Some free endpoints answer a long prompt with an empty stream. Fall back to a plain
+    // (non-streaming) request, then to a request with the system prompt folded into the first message.
+    const merged = () => {
+      const sys = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n'), rest = messages.filter((m) => m.role !== 'system');
+      if (!sys || !rest.length) return null;
+      return [{ role: 'user', content: '<instructions>\n' + sys + '\n</instructions>\n\n' + rest[0].content }].concat(rest.slice(1));
+    };
+    const variants = [() => [messages, true], () => [messages, false], () => { const m = merged(); return m ? [m, true] : null; }];
+    let r = null, waits = 0;
+    for (let v = 0; v < variants.length; v++) {
+      const args = variants[v](); if (!args) continue;
+      r = await requestModel(p, args[0], onText, signal, args[1]);
+      // free tiers rate-limit often: wait and retry a couple of times before giving up
+      if ((r.status === 429 || r.status === 503) && !r.full && waits < 2) { setStatus('rate limited, retrying…'); await sleep(waits++ ? 12000 : 4000, signal); v--; continue; }
+      if (r.status >= 400) throw new Error(explain(r.status, r.raw, p));
+      if (r.full) { chatStream.lastVariant = v; return r.full; }
+      if (r.err) break;
+      setStatus('empty reply, retrying…');
     }
-    if (res.status >= 400) throw new Error(explain(res.status, raw, p));
-    for (const ev of sse.feed('\n')) if (ev.text) { full += ev.text; onText(full); }
-    if (!full) {
-      try { const j = JSON.parse(raw); const m = j.choices && j.choices[0] && j.choices[0].message; if (m && m.content) { full = m.content; onText(full); } else if (j.error) streamErr = j.error.message || String(j.error); } catch (e) {}
-    }
-    if (!full && streamErr) throw new Error(p.name + ': ' + streamErr);
-    if (!full) throw new Error('The model returned an empty reply. Try again or pick another model.');
-    return full;
+    if (r && r.err) throw new Error(p.name + ': ' + r.err);
+    chatStream.lastRaw = r ? r.raw.slice(0, 400) : '';
+    throw new Error('The model returned an empty reply. Try again or pick another model.' + (r && r.raw.trim() ? '\nRaw: ' + r.raw.trim().slice(0, 160) : ''));
   }
 
   function sleep(ms, signal) {
@@ -846,13 +868,27 @@
     return false;
   };
 
-  if (!C.PROVIDERS[settings.provider]) { settings.provider = 'pollinations'; settings.model = 'openai'; }
+  if (!C.PROVIDERS[settings.provider]) { settings.provider = 'pollinations'; settings.model = 'openai-fast'; }
   $('ver').textContent = Native ? 'v' + Native.version() : 'web';
   window.__cyb = { C, ws, settings, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
+  window.addEventListener('error', (e) => { console.log('CYBERR ' + e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno); });
+  window.addEventListener('unhandledrejection', (e) => { console.log('CYBERR promise ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)); });
+
+  // Draw the UI first; stored files load in the background so a slow database can never leave a blank screen.
+  current = sessions[0] || null;
+  if (!current) newSession(); else renderAll();
+  console.log('CYBUI ready agents=' + $('agents').children.length + ' model=' + settings.model);
   openDb().then(() => {
-    syncDisk();
+    syncDisk(); updateBadge();
     if (/[?&]selftest=1/.test(location.search)) { const sc = document.createElement('script'); sc.src = 'selftest.js'; document.body.appendChild(sc); }
-    current = sessions[0] || null;
-    if (!current) newSession(); else renderAll();
   });
+
+  // Keyless model names change over time: make sure the selected one still exists.
+  function ensureModel() {
+    if (settings.provider !== 'pollinations' || busy) return;
+    fetchModels('pollinations').then((list) => {
+      if (list.indexOf(settings.model) < 0) { settings.model = list.indexOf('openai-fast') >= 0 ? 'openai-fast' : list[0]; saveSettings(); renderModelChip(); }
+    }, () => {});
+  }
+  if (!settings.modelsCheckedAt || Date.now() - settings.modelsCheckedAt > 6 * 3600 * 1000) { settings.modelsCheckedAt = Date.now(); ensureModel(); }
 })();
