@@ -2,10 +2,56 @@ name: Build APK
 on:
   push:
     branches: ['**']
-    paths-ignore: ['release/**']
+    paths-ignore: ['release/**', 'keystore/**', '**.md']
   workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - run: echo probe
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      # A stable signing key is created once and kept in the repo so that
+      # every later build can be installed as an update over the previous one.
+      - name: Create signing key (first build only)
+        run: |
+          if [ ! -f keystore/cybnate.jks ]; then
+            mkdir -p keystore
+            keytool -genkeypair -v -keystore keystore/cybnate.jks -alias cybnate \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass cybnate-release -keypass cybnate-release \
+              -dname "CN=CybNate, O=CybNate, C=IN"
+          fi
+
+      - name: Build release APK
+        run: gradle --no-daemon :app:assembleRelease
+
+      - name: Publish APK to the branch
+        run: |
+          mkdir -p release
+          cp app/build/outputs/apk/release/app-release.apk release/CybNate.apk
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f release/CybNate.apk keystore/cybnate.jks
+          git commit -m "build: CybNate APK #${{ github.run_number }} [skip ci]" || exit 0
+          git pull --rebase origin "${{ github.ref_name }}"
+          git push origin "HEAD:${{ github.ref_name }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CybNate-apk
+          path: release/CybNate.apk
