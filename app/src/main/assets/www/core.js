@@ -76,58 +76,101 @@
   }
 
   // ------------------------------------------------------------------- agents
-  const FS_READ = ['list_files', 'read_file', 'search_files'];
+  const FS_READ = ['list_files', 'read_file', 'search_files', 'find_files'];
   const FS_WRITE = ['write_file', 'edit_file', 'delete_file'];
+  const EXEC = ['run_terminal_command'];
+  const WEB = ['web_search', 'read_url'];
+  const META = ['write_todos', 'suggest_followups'];
   const RE_TOOLS = ['file_info', 'strings', 'hexdump', 'zip_list', 'zip_extract', 'android_manifest'];
+  /** Tools that only update the UI; they never need another model turn by themselves. */
+  const PASSIVE = ['write_todos', 'suggest_followups'];
 
   const AGENTS = {
     coder: {
-      name: 'Coder', icon: '⌨', blurb: 'Builds and edits code in your workspace',
-      tools: FS_READ.concat(FS_WRITE),
-      prompt: 'You are CybNate, an expert AI coding agent running on the user\'s Android phone. ' +
-        'You work inside a small project workspace and complete the task end to end: look at the relevant files, ' +
-        'make the changes with your tools, then give a short summary of what you did. ' +
-        'Prefer complete, working files over fragments. Always write whole files with write_file or make exact edits with edit_file ' +
-        'instead of pasting code for the user to copy. Web projects (HTML/CSS/JS) can be previewed by the user in the app, ' +
-        'so keep them self-contained with relative paths.',
+      name: 'Coder', icon: '⌨', blurb: 'Orchestrates the whole job: reads, edits, runs, reviews',
+      tools: FS_READ.concat(FS_WRITE, EXEC, WEB, ['spawn_agent'], META),
+      prompt: 'You are CybNate, an expert AI coding agent that works like a strong senior engineer. You run on the user\'s Android phone ' +
+        'inside a project workspace and you finish tasks end to end instead of describing what could be done.\n\n' +
+        '# How you work\n' +
+        '1. Understand: gather context before changing anything. List and search the workspace and read every file you will touch. ' +
+        'For a large or unfamiliar codebase spawn an explorer agent; for questions about libraries or current facts use web_search/read_url or a researcher agent.\n' +
+        '2. Plan: for a task with more than two steps, write a short checklist with write_todos and keep it updated as you go.\n' +
+        '3. Implement: use write_file for new files and edit_file for changes to existing ones. Write complete, working code that follows the ' +
+        'conventions already in the project. Never paste code for the user to copy when you could write the file. Do not leave TODO placeholders.\n' +
+        '4. Verify: run what you wrote with run_terminal_command (run the script, run the tests, or at least a syntax check) and read the output. ' +
+        'If it fails, fix the cause and run it again. Do not claim something works unless you ran it or say clearly that it could not be run here.\n' +
+        '5. Review: after a non-trivial change spawn a reviewer agent, then fix the real problems it finds.\n' +
+        '6. Finish: reply with a very short summary of what changed and how you verified it, then offer next steps with suggest_followups.\n\n' +
+        'If the request is a question rather than a change, gather the context and answer directly with the key evidence. ' +
+        'If the request is ambiguous in a way that changes what you would build, ask one short question instead of guessing. ' +
+        'Keep messages brief: no long preambles, no repeating file contents the tools already wrote.',
     },
     planner: {
-      name: 'Planner', icon: '🧭', blurb: 'Thinks through a task and writes a step-by-step plan',
-      tools: FS_READ,
-      prompt: 'You are CybNate Planner. Understand the request, inspect the workspace if useful, and produce a concrete, ' +
-        'numbered implementation plan: files to create or change, key decisions and risks. Do not write the full implementation.',
+      name: 'Planner', icon: '🧭', blurb: 'Researches and writes an implementation plan, no edits',
+      tools: FS_READ.concat(WEB, ['suggest_followups']),
+      prompt: 'You are CybNate Planner. You are in plan mode: understand the request, inspect the workspace, research if useful, and produce a concrete ' +
+        'numbered implementation plan: the files to create or change, the key decisions with a recommendation, and the risks. ' +
+        'You do not implement anything and you make no file changes, even if asked; tell the user to switch to the Coder agent to build the plan.',
     },
     reviewer: {
-      name: 'Reviewer', icon: '🔍', blurb: 'Reviews workspace code for bugs and problems',
-      tools: FS_READ,
-      prompt: 'You are CybNate Reviewer, a strict senior code reviewer. Read the relevant files and report real problems first: ' +
-        'bugs, security issues, broken edge cases, then maintainability. Quote file and line context and propose the fix. Be specific, not generic.',
+      name: 'Reviewer', icon: '🔍', blurb: 'Finds bugs and security problems in workspace code',
+      tools: FS_READ.concat(EXEC),
+      prompt: 'You are CybNate Reviewer, a strict senior code reviewer. Read the relevant files (and run the code or tests when that helps) and report ' +
+        'real problems in order of severity: bugs, security issues, broken edge cases, then maintainability. For each one give the file, the ' +
+        'offending code and the concrete fix. Do not pad the review with praise or generic advice. If the code is fine, say so in one line. You do not edit files.',
     },
     reverse: {
       name: 'Reverse', icon: '🧬', blurb: 'Analyses APKs, binaries and decompiled code',
-      tools: FS_READ.concat(FS_WRITE, RE_TOOLS),
+      tools: FS_READ.concat(FS_WRITE, RE_TOOLS, EXEC, WEB, META),
       prompt: 'You are CybNate Reverse, a reverse-engineering analyst. The user imports files (APK, DEX, ELF, PE, firmware, ' +
-        'or decompiled/disassembled text from tools such as Ghidra or JADX) into the workspace. Use your tools to gather evidence ' +
-        'before concluding: identify the format, list archive contents, decode the Android manifest, pull strings, inspect bytes. ' +
+        'or decompiled/disassembled text from tools such as Ghidra or JADX) into the workspace. Gather evidence with your tools ' +
+        'before concluding: identify the format, list archive contents, decode the Android manifest, pull strings, inspect bytes, and write ' +
+        'small Python scripts with run_terminal_command to parse structures or decode data when that is faster. ' +
         'Explain what the code does, name functions and variables meaningfully when given decompiler output, and separate what you ' +
-        'verified from what you infer. You cannot execute or decompile binaries yourself; say so when a desktop tool like Ghidra is needed ' +
-        'and tell the user exactly what to export and paste. Support legitimate work only: security research, interoperability, malware ' +
+        'verified from what you infer. You cannot decompile native code yourself; say so when a desktop tool like Ghidra is needed ' +
+        'and tell the user exactly what to export and import. Support legitimate work only: security research, interoperability, malware ' +
         'analysis, learning and auditing software the user is authorised to examine.',
     },
     chat: {
-      name: 'Chat', icon: '💬', blurb: 'Plain conversation, no tools',
-      tools: [],
-      prompt: 'You are CybNate, a helpful and direct AI assistant. Answer clearly and concisely. Use Markdown and fenced code blocks for code.',
+      name: 'Chat', icon: '💬', blurb: 'Conversation and research',
+      tools: WEB.concat(['suggest_followups']),
+      prompt: 'You are CybNate, a helpful and direct AI assistant. Answer clearly and concisely. Use Markdown and fenced code blocks for code. ' +
+        'Search the web when the question needs current or specific facts, and cite the pages you used.',
+    },
+    // ---- sub-agents, only reachable through spawn_agent
+    explorer: {
+      name: 'Explorer', icon: '🗂', sub: true, blurb: 'Reads the codebase and reports what is relevant', tools: FS_READ,
+      prompt: 'You are a codebase explorer working for another agent. Find and read the files relevant to the request, then report: ' +
+        'which files matter and why, the important functions and data flow, and the exact snippets the caller will need. Be factual and compact. You do not edit files.',
+    },
+    thinker: {
+      name: 'Thinker', icon: '🧠', sub: true, blurb: 'Reasons deeply about a hard problem', tools: FS_READ,
+      prompt: 'You are a deep-thinking engineer consulted by another agent on a hard problem. Read what you need, reason carefully about the ' +
+        'options and edge cases, and reply with a clear recommendation and the reasoning that supports it. You do not edit files.',
+    },
+    researcher: {
+      name: 'Researcher', icon: '🌐', sub: true, blurb: 'Searches the web and documentation', tools: WEB,
+      prompt: 'You are a web researcher working for another agent. Search, open the most relevant pages, and report the specific facts, ' +
+        'API details or code examples that answer the request, with the source URL for each. Say plainly if you could not find it.',
     },
   };
+  const SUBAGENT_TYPES = ['explorer', 'thinker', 'reviewer', 'researcher'];
 
   const TOOL_DOCS = {
     list_files: '<list_files/>\n  List every file in the workspace with its size.',
-    read_file: '<read_file path="src/app.js"/>\n  Read a text file. Optional: start="1" end="200" to read a line range.',
-    search_files: '<search_files query="text or regex"/>\n  Search all text files, returns matching lines.',
+    read_file: '<read_file path="src/app.js"/>\n  Read a text file. Optional: start="1" end="200" to read a line range. Use several tags to read several files at once.',
+    search_files: '<search_files query="text or regex"/>\n  Search the content of all text files; returns matching lines. Optional: glob="src/**/*.js".',
+    find_files: '<find_files pattern="**/*.test.js"/>\n  Find files whose path matches a glob pattern.',
     write_file: '<write_file path="index.html">\nFULL FILE CONTENT\n</write_file>\n  Create or overwrite a file. Put the raw content between the tags, with no code fence and no escaping.',
-    edit_file: '<edit_file path="src/app.js">\n<search>exact existing text</search>\n<replace>new text</replace>\n</edit_file>\n  Replace an exact snippet. Several search/replace pairs are allowed. The search text must match the file exactly.',
+    edit_file: '<edit_file path="src/app.js">\n<search>exact existing text</search>\n<replace>new text</replace>\n</edit_file>\n  Replace an exact snippet. Several search/replace pairs are allowed. The search text must match the file exactly, so read the file first.',
     delete_file: '<delete_file path="old.txt"/>\n  Delete a file.',
+    run_terminal_command: '<run_terminal_command>\npython main.py\n</run_terminal_command>\n  Run a command in the workspace root and get its output and exit code. Optional attribute timeout="120" (seconds). See Environment for what can run.',
+    web_search: '<web_search query="pyodide load package from wheel"/>\n  Search the web; returns titles, URLs and snippets.',
+    read_url: '<read_url url="https://example.com/docs"/>\n  Fetch a web page and return its readable text.',
+    spawn_agent: '<spawn_agent type="reviewer">\nWhat the agent should do, with all the context it needs.\n</spawn_agent>\n  Delegate to a helper agent with a fresh context and get its report back. Types: ' +
+      'explorer (find and summarise relevant code), thinker (reason about a hard design or bug), reviewer (review the changes you made), researcher (look things up on the web).',
+    write_todos: '<write_todos>\n- [x] finished step\n- [ ] next step\n</write_todos>\n  Show the user your task checklist. Send the whole list again whenever it changes.',
+    suggest_followups: '<suggest_followups>\nAdd dark mode\nWrite tests for the parser\n</suggest_followups>\n  Offer up to three short next steps, one per line, at the very end of your final reply.',
     file_info: '<file_info path="app.apk"/>\n  Detect the file type and show size, SHA-256, entropy and header details (ELF, PE, DEX, ZIP/APK).',
     strings: '<strings path="lib.so" min="6" filter="http|key|token" limit="200"/>\n  Extract printable ASCII and UTF-16 strings. filter is an optional case-insensitive regex.',
     hexdump: '<hexdump path="lib.so" offset="0" length="256"/>\n  Hex dump of a byte range. offset may be decimal or 0x-prefixed.',
@@ -136,17 +179,35 @@
     android_manifest: '<android_manifest path="app.apk"/>\n  Decode the binary AndroidManifest.xml from an APK (or a raw binary manifest file) to readable XML.',
   };
 
-  function buildSystemPrompt(agentId, fileSummary, extra) {
+  function environmentDoc(caps) {
+    caps = caps || {};
+    return '# Environment\n' +
+      'You are on an Android phone. Commands start in the workspace root.\n' +
+      '- `python file.py`, `python -c "..."`, `python -m unittest`: real CPython 3.14 (WebAssembly) with the full standard library. ' +
+      '`pip install <package>` works for pure-Python packages, and numpy, pandas and similar load automatically on import when the phone is online. No sockets, subprocesses or threads.\n' +
+      '- `node file.js`, `node -e "..."`: a JavaScript runtime with require() between workspace files and built-in fs, path, assert, util. npm packages are not available.\n' +
+      (caps.shell
+        ? '- Anything else runs in the Android system shell (toybox): ls, cat, cp, mv, rm, mkdir, grep, sed, awk, find, wc, sort, uniq, diff, head, tail, tar, gzip, sha256sum, date and so on, with pipes and redirection.\n'
+        : '- Other shell commands are not available in this browser preview; they work in the installed Android app.\n') +
+      '- Not available: git, npm, gcc, apt, sudo. A python or node command must be the whole command (an optional `cd dir &&` prefix is fine), not part of a pipeline.\n' +
+      '- Web projects (HTML/CSS/JS) are previewed by the user with the Run button; you cannot see the rendered page, so keep them self-contained with relative paths.\n' +
+      (caps.repo ? '- The workspace is a clone of the GitHub repository ' + caps.repo + '. The user commits and pushes from the GitHub screen; you cannot push.\n' : '');
+  }
+
+  function buildSystemPrompt(agentId, fileSummary, extra, caps) {
     const a = AGENTS[agentId] || AGENTS.coder;
+    let tools = a.tools;
+    if (caps && caps.noSpawn) tools = tools.filter((t) => t !== 'spawn_agent');
     let s = a.prompt + '\n';
-    if (a.tools.length) {
+    if (tools.length) {
       s += '\n# Tools\nYou act by writing tool tags in your reply. The app runs them and sends back the results in the next message ' +
         'inside <tool_results>. Rules:\n' +
         '- Write the tags exactly as shown, as plain text, never inside a code fence.\n' +
-        '- You may use several tools in one reply. After writing tool tags, stop and wait for the results.\n' +
-        '- Never invent tool results. When the task is finished, reply without any tool tag.\n\n' +
-        a.tools.map((t) => TOOL_DOCS[t]).join('\n\n') + '\n';
-      s += '\n# Workspace\n' + (fileSummary || '(empty)') + '\n';
+        '- Use several tools in one reply whenever they do not depend on each other; it is much faster. After writing tool tags, stop and wait for the results.\n' +
+        '- Never invent tool results. When the task is finished, reply without any tool tag (suggest_followups is allowed).\n\n' +
+        tools.map((t) => TOOL_DOCS[t]).join('\n\n') + '\n';
+      if (tools.indexOf('run_terminal_command') >= 0) s += '\n' + environmentDoc(caps);
+      if (tools.some((t) => FS_READ.indexOf(t) >= 0)) s += '\n# Workspace\n' + (fileSummary || '(empty)') + '\n';
     }
     if (extra && extra.trim()) s += '\n# User instructions\n' + extra.trim() + '\n';
     return s;
@@ -154,6 +215,7 @@
 
   // ------------------------------------------------------------ tool protocol
   const ALL_TOOLS = Object.keys(TOOL_DOCS);
+  const BODY_TOOLS = ['write_file', 'edit_file', 'run_terminal_command', 'spawn_agent', 'write_todos', 'suggest_followups'];
   const TOOL_RE = new RegExp('<(' + ALL_TOOLS.join('|') + ')\\b((?:"[^"]*"|\'[^\']*\'|[^>"\'])*?)(?:\\/>|>([\\s\\S]*?)<\\/\\1\\s*>)', 'g');
 
   function parseAttrs(s) {
@@ -173,9 +235,14 @@
     const f = /^```[\w.+-]*\r?\n([\s\S]*?)\r?\n```$/.exec(s);
     return f ? f[1] : s;
   }
+  /** Remove hidden reasoning that some models emit inline. */
+  function stripThink(text) {
+    return text.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/g, '').replace(/<think(?:ing)?>[\s\S]*$/, '');
+  }
 
   /** Find every tool call in an assistant reply. `allowed` limits which tools count. */
   function parseToolCalls(text, allowed) {
+    text = stripThink(text);
     const calls = [];
     TOOL_RE.lastIndex = 0;
     let m;
@@ -184,39 +251,126 @@
       if (allowed && allowed.indexOf(name) < 0) continue;
       const call = { name, attrs: parseAttrs(m[2] || ''), index: m.index, length: m[0].length };
       if (name === 'write_file') call.body = trimBody(m[3]);
-      if (name === 'edit_file') {
+      else if (name === 'edit_file') {
         call.edits = [];
         const er = /<search>([\s\S]*?)<\/search>\s*<replace>([\s\S]*?)<\/replace>/g;
         let e;
         while ((e = er.exec(m[3] || ''))) call.edits.push({ search: stripEdge(e[1]), replace: stripEdge(e[2]) });
-      }
+      } else if (name === 'run_terminal_command') {
+        let b = trimBody(m[3]).trim() || call.attrs.command || '';
+        if (/&amp;|&lt;|&gt;/.test(b)) b = unescapeXml(b);
+        call.body = b;
+      } else if (BODY_TOOLS.indexOf(name) >= 0) call.body = trimBody(m[3]).trim();
       calls.push(call);
     }
     return calls;
   }
   function stripEdge(s) { return s.replace(/^\r?\n/, '').replace(/\r?\n$/, ''); }
 
+  function followupsOf(text) {
+    const m = /<suggest_followups\b[^>]*>([\s\S]*?)<\/suggest_followups\s*>/.exec(stripThink(text));
+    if (!m) return [];
+    return m[1].split('\n').map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim()).filter(Boolean).slice(0, 4);
+  }
+
   /** Replace tool tags with short readable markers for display (also handles a tag that is still streaming). */
   function displayText(text) {
+    text = stripThink(text);
     TOOL_RE.lastIndex = 0;
     let out = text.replace(TOOL_RE, (all, name, attrs, body) => {
       const a = parseAttrs(attrs || '');
-      const target = a.path ? ' `' + a.path + '`' : a.query ? ' `' + a.query + '`' : '';
+      if (name === 'suggest_followups') return '';
+      if (name === 'write_todos') return '\n\n**Tasks**\n\n' + trimBody(body).trim() + '\n\n';
+      if (name === 'run_terminal_command') return '\n\n> 🖥 `' + (trimBody(body).trim() || a.command || '').split('\n')[0].slice(0, 120).replace(/`/g, "'") + '`\n\n';
+      if (name === 'spawn_agent') return '\n\n> 🤖 **' + (a.type || 'agent') + '** ' + trimBody(body).trim().split('\n')[0].slice(0, 110) + '\n\n';
+      const target = a.path ? ' `' + a.path + '`' : a.query ? ' `' + a.query + '`' : a.pattern ? ' `' + a.pattern + '`' : a.url ? ' ' + a.url : '';
       let extra = '';
       if (name === 'write_file') extra = ' · ' + trimBody(body).split('\n').length + ' lines';
       if (a.entry) extra = ' · `' + a.entry + '`';
       return '\n\n> 🔧 **' + name + '**' + target + extra + '\n\n';
     });
-    // an unfinished write/edit that is still being streamed
-    const open = /<(write_file|edit_file)\b([^>]*)>(?![\s\S]*<\/\1\s*>)([\s\S]*)$/.exec(out);
+    // a body tool that is still being streamed
+    const open = new RegExp('<(' + BODY_TOOLS.join('|') + ')\\b([^>]*)>(?![\\s\\S]*<\\/\\1\\s*>)([\\s\\S]*)$').exec(out);
     if (open) {
       const a = parseAttrs(open[2]);
-      out = out.slice(0, open.index) + '\n\n> ✍️ **' + open[1] + '** `' + (a.path || '…') + '` · ' +
-        open[3].split('\n').length + ' lines…\n\n';
+      const label = open[1] === 'write_todos' ? '**Tasks**\n\n' + open[3].trim()
+        : open[1] === 'suggest_followups' ? ''
+        : '> ✍️ **' + open[1] + '**' + (a.path ? ' `' + a.path + '`' : a.type ? ' ' + a.type : '') + ' · ' + open[3].split('\n').length + ' lines…';
+      out = out.slice(0, open.index) + '\n\n' + label + '\n\n';
     } else {
-      out = out.replace(/<[a-z_]*$/, '');
+      out = out.replace(/<\/?[a-z_]*$/, '');
     }
     return out;
+  }
+
+  // -------------------------------------------------------------- commands
+  /** Split a command line the way a shell would, and note whether it uses shell operators. */
+  function tokenize(cmd) {
+    const tokens = []; let cur = '', q = null, has = false, ops = false;
+    for (let i = 0; i < cmd.length; i++) {
+      const c = cmd[i];
+      if (q) {
+        if (c === q) q = null;
+        else if (c === '\\' && q === '"' && i + 1 < cmd.length && '"\\$`'.indexOf(cmd[i + 1]) >= 0) cur += cmd[++i];
+        else cur += c;
+      } else if (c === '"' || c === "'") { q = c; has = true; }
+      else if (c === '\\' && i + 1 < cmd.length) { cur += cmd[++i]; has = true; }
+      else if (/\s/.test(c)) { if (has || cur) { tokens.push(cur); cur = ''; has = false; } }
+      else { if ('|&;<>`'.indexOf(c) >= 0 || (c === '$' && cmd[i + 1] === '(')) ops = true; cur += c; }
+    }
+    if (has || cur) tokens.push(cur);
+    return { tokens, ops, unterminated: !!q };
+  }
+
+  /** Decide which runtime handles a command: python, pip, node or the system shell. */
+  function parseCommand(cmd) {
+    cmd = String(cmd || '').trim();
+    let cwd = '';
+    const cd = /^cd\s+("[^"]+"|'[^']+'|[^\s;&|]+)\s*(?:&&|;)\s*/.exec(cmd);
+    let rest = cmd;
+    if (cd) { cwd = Workspace.norm(cd[1].replace(/^["']|["']$/g, '')); rest = cmd.slice(cd[0].length); }
+    const t = tokenize(rest);
+    const sh = { kind: 'sh', cmd };
+    if (!t.tokens.length || t.ops || t.unterminated) return sh;
+    const a = t.tokens, prog = a[0];
+    if (/^python(3(\.\d+)?)?$|^py$/.test(prog)) {
+      let i = 1;
+      while (i < a.length && /^-[uBOEsSI]+$/.test(a[i])) i++;
+      if (a[i] === '-m' && a[i + 1] === 'pip') return a[i + 2] === 'install' ? { kind: 'pip', argv: a.slice(i + 3).filter((x) => x[0] !== '-'), cwd } : { kind: 'note', text: 'Only `pip install <package>` is supported.' };
+      if (a[i] === '-c' && a[i + 1] != null) return { kind: 'python', mode: 'code', src: a[i + 1], argv: ['-c'].concat(a.slice(i + 2)), cwd };
+      if (a[i] === '-m' && a[i + 1]) return { kind: 'python', mode: 'module', argv: a.slice(i + 1), cwd };
+      if (a[i] === '--version' || a[i] === '-V') return { kind: 'python', mode: 'code', src: 'import sys; print("Python", sys.version.split()[0])', argv: ['-c'], cwd };
+      if (a[i] && a[i][0] !== '-') return { kind: 'python', mode: 'file', argv: a.slice(i), cwd };
+      return { kind: 'note', text: 'Interactive Python is not available. Run a file (`python main.py`) or code (`python -c "print(1)"`).' };
+    }
+    if (/^pip3?$/.test(prog)) return a[1] === 'install' ? { kind: 'pip', argv: a.slice(2).filter((x) => x[0] !== '-'), cwd } : { kind: 'note', text: 'Only `pip install <package>` is supported.' };
+    if (prog === 'node' || prog === 'nodejs') {
+      if ((a[1] === '-e' || a[1] === '--eval' || a[1] === '-p') && a[2] != null) return { kind: 'node', mode: 'code', src: a[1] === '-p' ? 'console.log(' + a[2] + ')' : a[2], argv: a.slice(3), cwd };
+      if (a[1] === '--version' || a[1] === '-v') return { kind: 'note', text: 'CybNate JavaScript runtime (no npm packages)' };
+      if (a[1] === '--check' && a[2]) return { kind: 'node', mode: 'check', argv: a.slice(2), cwd };
+      if (a[1] && a[1][0] !== '-') return { kind: 'node', mode: 'file', argv: a.slice(1), cwd };
+      return { kind: 'note', text: 'Interactive node is not available. Run a file: `node app.js`.' };
+    }
+    if (/^(npm|npx|yarn|pnpm|bun)$/.test(prog)) return { kind: 'note', text: prog + ' is not available on this device. JavaScript files run with `node file.js` (no npm packages); to run tests, write them as a plain script using assert.', code: 127 };
+    if (prog === 'git') return { kind: 'note', text: 'git is not available. The user commits and pushes from the GitHub screen in the app.', code: 127 };
+    return sh;
+  }
+
+  function globToRegex(glob) {
+    let re = '';
+    for (let i = 0; i < glob.length; i++) {
+      const c = glob[i];
+      if (c === '*') { if (glob[i + 1] === '*') { re += '.*'; i++; if (glob[i + 1] === '/') i++; } else re += '[^/]*'; }
+      else if (c === '?') re += '[^/]';
+      else if (c === '{') { const j = glob.indexOf('}', i); if (j > i) { re += '(?:' + glob.slice(i + 1, j).split(',').map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')'; i = j; } else re += '\\{'; }
+      else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+    }
+    return new RegExp('^' + re + '$', 'i');
+  }
+  function matchGlob(glob, path) {
+    glob = String(glob || '').replace(/^\.?\//, '');
+    if (!glob) return true;
+    return globToRegex(glob).test(path) || (glob.indexOf('/') < 0 && globToRegex(glob).test(path.split('/').pop()));
   }
 
   // ---------------------------------------------------------------- workspace
@@ -253,7 +407,7 @@
   function decodeIfText(bytes) {
     const n = Math.min(bytes.length, 8192);
     for (let i = 0; i < n; i++) if (bytes[i] === 0) return null;
-    try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch (e) { return null; }
+    try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); } catch (e) { return null; }
   }
 
   // ------------------------------------------------------------------- tools
@@ -268,8 +422,9 @@
     return isNaN(n) ? d : n;
   }
 
-  async function runTool(call, ws) {
+  async function runTool(call, ws, env) {
     const a = call.attrs || {};
+    env = env || {};
     const need = (p) => {
       if (!p) throw new Error('missing path attribute');
       if (!ws.has(p)) throw new Error('file not found: ' + p + '. Existing files:\n' + ws.summary(40));
@@ -291,11 +446,45 @@
         try { re = new RegExp(a.query, 'i'); } catch (e) { re = new RegExp(a.query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'); }
         const hits = [];
         for (const p of ws.list()) {
-          if (ws.isBinary(p)) continue;
+          if (ws.isBinary(p) || (a.glob && !matchGlob(a.glob, p))) continue;
           ws.get(p).split('\n').forEach((line, i) => { if (hits.length < 200 && re.test(line)) hits.push(p + ':' + (i + 1) + ': ' + line.trim().slice(0, 200)); });
         }
         return hits.length ? clip(hits.join('\n')) : 'No matches.';
       }
+      case 'find_files': {
+        const pat = a.pattern || a.query || a.glob;
+        if (!pat) throw new Error('missing pattern attribute');
+        const hits = ws.list().filter((p) => matchGlob(pat, p) || p.toLowerCase().indexOf(pat.toLowerCase()) >= 0);
+        return hits.length ? clip(hits.map((p) => p + ' (' + fmtSize(ws.size(p)) + ')').join('\n')) : 'No files match ' + pat + '.';
+      }
+      case 'run_terminal_command': {
+        if (!call.body) throw new Error('empty command');
+        if (!env.exec) throw new Error('commands cannot run in this context');
+        const r = await env.exec(call.body, Math.min(Math.max(num(a.timeout, 60), 1), 600));
+        const out = (r.out || '').replace(/\s+$/, '');
+        return '$ ' + call.body + '\n' + (out ? clip(tailClip(out, 9000)) + '\n' : '') + '[exit code ' + r.code + (r.timedOut ? ', timed out' : '') + ']' +
+          (r.files && r.files.length ? '\n[files changed: ' + r.files.slice(0, 20).join(', ') + ']' : '');
+      }
+      case 'web_search': {
+        if (!a.query) throw new Error('missing query attribute');
+        if (!env.search) throw new Error('web search is not available in this context');
+        const res = await env.search(a.query);
+        return res.length ? clip(res.map((r, i) => (i + 1) + '. ' + r.title + '\n   ' + r.url + (r.snippet ? '\n   ' + r.snippet : '')).join('\n')) : 'No results.';
+      }
+      case 'read_url': {
+        if (!a.url) throw new Error('missing url attribute');
+        if (!env.readUrl) throw new Error('web access is not available in this context');
+        return clip(await env.readUrl(a.url), 12000);
+      }
+      case 'spawn_agent': {
+        const type = (a.type || '').toLowerCase();
+        if (SUBAGENT_TYPES.indexOf(type) < 0) throw new Error('unknown agent type "' + a.type + '". Use one of: ' + SUBAGENT_TYPES.join(', '));
+        if (!call.body) throw new Error('spawn_agent needs instructions between the tags');
+        if (!env.spawn) throw new Error('helper agents cannot spawn further agents');
+        return clip(await env.spawn(type, call.body), 9000);
+      }
+      case 'write_todos': { if (env.todos) env.todos(call.body || ''); return 'Checklist updated.'; }
+      case 'suggest_followups': return 'Shown to the user.';
       case 'write_file': {
         if (!a.path) throw new Error('missing path attribute');
         const existed = ws.has(a.path);
@@ -382,13 +571,35 @@
     return null;
   }
 
-  async function runTools(calls, ws) {
-    const parts = [];
-    for (const c of calls) {
+  function tailClip(s, max) {
+    if (s.length <= max) return s;
+    const head = Math.floor(max * 0.3);
+    return s.slice(0, head) + '\n… [' + (s.length - max) + ' characters omitted] …\n' + s.slice(s.length - (max - head));
+  }
+  function callLabel(c) {
+    const a = c.attrs || {};
+    if (c.name === 'run_terminal_command') return '$ ' + (c.body || '').split('\n')[0].slice(0, 70);
+    if (c.name === 'spawn_agent') return 'agent ' + (a.type || '');
+    return c.name + (a.path ? ' ' + a.path : a.query ? ' ' + a.query : a.pattern ? ' ' + a.pattern : a.url ? ' ' + a.url : '');
+  }
+  /** Run calls in order. Independent helper agents run in parallel, like Freebuff's spawn_agents. */
+  async function runTools(calls, ws, env, onProgress) {
+    const parts = new Array(calls.length);
+    const one = async (c, i) => {
       let res, ok = true;
-      try { res = await runTool(c, ws); } catch (e) { ok = false; res = 'ERROR: ' + (e && e.message ? e.message : e); }
-      const label = c.name + (c.attrs.path ? ' ' + c.attrs.path : c.attrs.query ? ' ' + c.attrs.query : '');
-      parts.push({ label, ok, text: res });
+      if (onProgress) onProgress(callLabel(c));
+      try { res = await runTool(c, ws, env); if (c.name === 'run_terminal_command' && !/\[exit code 0\]/.test(res)) ok = false; }
+      catch (e) { if (e && e.name === 'AbortError') throw e; ok = false; res = 'ERROR: ' + (e && e.message ? e.message : e); }
+      parts[i] = { label: callLabel(c), ok, text: res };
+    };
+    let i = 0;
+    while (i < calls.length) {
+      if (calls[i].name === 'spawn_agent' || calls[i].name === 'web_search' || calls[i].name === 'read_url') {
+        const batch = [];
+        const kind = calls[i].name === 'spawn_agent';
+        while (i < calls.length && ((calls[i].name === 'spawn_agent') === kind) && ['spawn_agent', 'web_search', 'read_url'].indexOf(calls[i].name) >= 0) { batch.push(one(calls[i], i)); i++; }
+        await Promise.all(batch);
+      } else { await one(calls[i], i); i++; }
     }
     return parts;
   }
@@ -695,6 +906,7 @@
             if (j.error) { out.push({ error: typeof j.error === 'string' ? j.error : (j.error.message || JSON.stringify(j.error)) }); continue; }
             const d = j.choices && j.choices[0] && (j.choices[0].delta || j.choices[0].message);
             if (d && typeof d.content === 'string' && d.content) out.push({ text: d.content });
+            else if (d && (d.reasoning_content || d.reasoning)) out.push({ thinking: true });
           } catch (e) { /* partial or non-JSON keep-alive line */ }
         }
         return out;
@@ -715,7 +927,8 @@
   }
 
   return {
-    PROVIDERS, AGENTS, TOOL_DOCS, parseModelList, buildSystemPrompt, parseToolCalls, displayText, Workspace,
+    PROVIDERS, AGENTS, TOOL_DOCS, PASSIVE, SUBAGENT_TYPES, BODY_TOOLS, parseModelList, buildSystemPrompt, parseToolCalls, displayText, Workspace,
+    stripThink, followupsOf, tokenize, parseCommand, matchGlob, callLabel,
     runTool, runTools, formatToolResults, fileInfo, detectType, extractStrings, hexdump, zipEntries, zipRead, zipCreate,
     decodeAxml, decodeIfText, createSseParser, trimHistory, fmtSize, crc32, utf8,
   };

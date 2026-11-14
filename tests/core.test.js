@@ -22,6 +22,7 @@ const C = require('../app/src/main/assets/www/core.js');
 
   // tools not allowed for an agent are ignored
   assert.strictEqual(C.parseToolCalls(reply, C.AGENTS.planner.tools).length, 2);
+  assert.strictEqual(C.parseToolCalls('<think><delete_file path="index.html"/></think>ok', allowed).length, 0, 'tool tags inside hidden reasoning are ignored');
   assert.strictEqual(C.parseToolCalls(reply, C.AGENTS.chat.tools).length, 0);
 
   // --- edit_file exact + whitespace tolerant + failure
@@ -90,7 +91,26 @@ const C = require('../app/src/main/assets/www/core.js');
     console.log(res[0].text + '\n' + res[1].text.split('\n').slice(0, 6).join('\n'));
   } else console.log('(APK not present, skipped APK analysis test)');
 
+  // --- commands, globs, new tools
+  assert.deepStrictEqual(C.parseCommand('cd src && python3 -m unittest -v'), { kind: 'python', mode: 'module', argv: ['unittest', '-v'], cwd: 'src' });
+  assert.deepStrictEqual(C.parseCommand('python -c "print(1 > 0)"'), { kind: 'python', mode: 'code', src: 'print(1 > 0)', argv: ['-c'], cwd: '' });
+  assert.strictEqual(C.parseCommand('python a.py | head').kind, 'sh');
+  assert.strictEqual(C.parseCommand('ls -la').kind, 'sh');
+  assert.deepStrictEqual(C.parseCommand('pip install -U requests rich').argv, ['requests', 'rich']);
+  assert.strictEqual(C.parseCommand('git push').code, 127);
+  assert.ok(C.matchGlob('**/*.js', 'a/b/c.js') && C.matchGlob('*.js', 'a/c.js') && !C.matchGlob('src/*.js', 'src/a/b.js') && C.matchGlob('src/**/*.{ts,js}', 'src/a/b.ts'));
+  const env = { exec: async (c, t) => ({ code: c === 'false' ? 1 : 0, out: 'ran ' + c + ' ' + t, files: ['x.txt'] }), search: async (q) => [{ title: 'T', url: 'https://u', snippet: q }], readUrl: async (u) => 'page ' + u, spawn: async (t, p) => t + ' report: ' + p };
+  calls = C.parseToolCalls('<run_terminal_command timeout="5">\nls &amp;&amp; echo hi\n</run_terminal_command><run_terminal_command>false</run_terminal_command><web_search query="q1"/><read_url url="https://a"/><spawn_agent type="thinker">why</spawn_agent><spawn_agent type="nope">x</spawn_agent><find_files pattern="*.html"/><write_todos>\n- [ ] a\n</write_todos>', C.AGENTS.coder.tools);
+  res = await C.runTools(calls, ws, env);
+  assert.ok(/^\$ ls && echo hi\nran ls && echo hi 5\n\[exit code 0\]\n\[files changed: x\.txt\]$/.test(res[0].text) && res[0].ok, res[0].text);
+  assert.ok(!res[1].ok && /exit code 1/.test(res[1].text));
+  assert.ok(/1\. T\n   https:\/\/u\n   q1/.test(res[2].text) && res[3].text === 'page https://a');
+  assert.ok(res[4].text === 'thinker report: why' && !res[5].ok && /unknown agent type/.test(res[5].text));
+  assert.ok(/index\.html/.test(res[6].text) && res[7].ok);
+  assert.deepStrictEqual(C.followupsOf('x<suggest_followups>\n1. Add tests\n- Dark mode\n</suggest_followups>'), ['Add tests', 'Dark mode']);
+  assert.ok(!/spawn_agent/.test(C.buildSystemPrompt('coder', '', '', { noSpawn: true })) && /Android system shell/.test(C.buildSystemPrompt('coder', '', '', { shell: true })));
+
   assert.ok(C.buildSystemPrompt('coder', ws.summary()).includes('<write_file'));
-  assert.ok(!C.buildSystemPrompt('chat', '').includes('# Tools'));
+  assert.ok(!C.buildSystemPrompt('chat', '').includes('write_file'));
   console.log('ALL CORE TESTS PASSED');
 })().catch((e) => { console.error(e); process.exit(1); });

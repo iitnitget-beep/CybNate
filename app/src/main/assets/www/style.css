@@ -87,3 +87,11 @@ pre code{background:none;padding:0;font-size:inherit;white-space:pre}
 iframe.preview{flex:1;width:100%;border:0;background:#fff;border-radius:8px;min-height:300px}
 #toast{position:fixed;left:50%;bottom:110px;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--acc2);color:var(--text);padding:8px 14px;border-radius:10px;font-size:13px;z-index:50;max-width:86%;text-align:center}
 .empty{color:var(--dim);text-align:center;padding:30px 10px;font-size:14px}
+.icon.mono{font:700 14px var(--mono);color:var(--acc)}
+.followups{margin:-4px 0 10px}.followups .sugg{color:var(--acc);border-color:#1c3a2a;background:#0e1a14;font-size:13.5px;padding:8px 12px}
+.term{flex:1;margin:0 0 8px;white-space:pre-wrap;word-break:break-word;min-height:200px;background:#070a09;color:#cfe9db}
+.termrow{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;padding:4px 8px;background:var(--panel);flex:none}
+.termrow input{flex:1;font:13px var(--mono);padding:8px 0;min-width:0}.termrow button{color:var(--acc);font-size:18px;padding:4px 8px}
+.changes{max-height:180px;font-size:12px;margin:6px 0}
+.md input[type=checkbox]{accent-color:var(--acc);margin-right:6px}
+.md li:has(> input[type=checkbox]){list-style:none;margin-left:-1.2em}

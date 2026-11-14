@@ -25,7 +25,7 @@ const requests = [];
       w.fetch = async (url, opt) => {
         requests.push({ url, body: opt.body && JSON.parse(opt.body), headers: opt.headers });
         if (/\/models$/.test(url)) return { status: 200, headers: { get: () => 'application/json' }, body: stream(JSON.stringify([{ name: 'openai' }, { name: 'qwen-coder' }])) };
-        if (requests.filter((r) => r.body).length > replies.length) return { status: 429, headers: { get: () => '' }, body: stream('{"error":{"message":"slow down"}}') };
+        if (requests.filter((r) => r.body).length > replies.length) return { status: 401, headers: { get: () => '' }, body: stream('{"error":{"message":"slow down"}}') };
         return { status: 200, headers: { get: () => 'text/event-stream' }, body: stream(sse(replies[requests.filter((r) => r.body).length - 1])) };
       };
       function stream(s) { const chunks = Buffer.from(s).toString().match(/[\s\S]{1,23}/g).map((c) => new TextEncoder().encode(c)); return { getReader: () => ({ read: async () => (chunks.length ? { done: false, value: chunks.shift() } : { done: true }) }) }; }
@@ -78,7 +78,7 @@ const requests = [];
   d.getElementById('input').value = 'again';
   d.getElementById('btnSend').click();
   await new Promise((r) => setTimeout(r, 400));
-  assert.ok(/rate limit[\s\S]*slow down/i.test(d.querySelector('.msg.error').textContent), d.querySelector('.msg.error').textContent);
+  assert.ok(/refused the request[\s\S]*slow down/i.test(d.querySelector('.msg.error').textContent), d.querySelector('.msg.error').textContent);
   assert.strictEqual(requests.at(-1).body.model, 'qwen-coder');
 
   // key-required provider without key
@@ -92,6 +92,8 @@ const requests = [];
   // settings sheet renders, persistence survived
   d.getElementById('dSettings').click();
   assert.strictEqual(d.querySelectorAll('#sheetBody .card').length, 7);
+  w.onNativeBack(); d.getElementById('dGit').click();
+  assert.ok(/Access token/.test(d.getElementById('sheetBody').textContent));
   assert.ok(JSON.parse(w.localStorage.getItem('cyb.sessions'))[0].messages.length >= 6);
   assert.deepStrictEqual(errors, []);
   console.log('UI SMOKE TEST PASSED');

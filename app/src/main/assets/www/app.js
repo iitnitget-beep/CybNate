@@ -11,7 +11,7 @@
   const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { toast('Storage is full. Delete some old chats.'); } };
 
   const settings = Object.assign({
-    provider: 'pollinations', model: 'openai', keys: {}, customUrl: '', models: {}, extra: '', maxSteps: 12,
+    provider: 'pollinations', model: 'openai', keys: {}, customUrl: '', models: {}, extra: '', maxSteps: 25,
   }, load('cyb.settings', {}));
   let sessions = load('cyb.sessions', []);
   let current = null;
@@ -26,14 +26,32 @@
 
   // ------------------------------------------------- workspace (IndexedDB)
   let db = null;
+  let mirror = true; // false while applying changes that already exist on disk
+  const canShell = !!(Native && Native.exec);
   const ws = new C.Workspace((path, value) => {
-    if (!db) return;
-    try {
-      const st = db.transaction('files', 'readwrite').objectStore('files');
-      if (value === null) st.delete(path); else st.put(value, path);
-    } catch (e) { /* persistence is best effort */ }
+    if (db) {
+      try {
+        const st = db.transaction('files', 'readwrite').objectStore('files');
+        if (value === null) st.delete(path); else st.put(value, path);
+      } catch (e) { /* persistence is best effort */ }
+    }
+    if (canShell && mirror) {
+      try {
+        if (value === null) Native.wsDelete(path);
+        else { const b = value instanceof Uint8Array ? value : C.utf8(value); if (b.length <= 20 * 1048576) Native.wsWrite(path, b64(b)); }
+      } catch (e) { /* the shell will simply not see this file */ }
+    }
     updateBadge();
   });
+  /** Bring the on-disk copy used by shell commands in line with the workspace. */
+  function syncDisk() {
+    if (!canShell) return;
+    try {
+      const disk = JSON.parse(Native.wsList() || '{}');
+      ws.list().forEach((p) => { const b = ws.bytes(p); if (disk[p] !== b.length && b.length <= 20 * 1048576) Native.wsWrite(p, b64(b)); });
+      Object.keys(disk).forEach((p) => { if (!ws.has(p)) Native.wsDelete(p); });
+    } catch (e) { /* ignore */ }
+  }
   function openDb() {
     return new Promise((resolve) => {
       if (!window.indexedDB) return resolve();
@@ -119,15 +137,21 @@
     const p = providerCfg();
     if (!p.chatUrl) throw new Error('Set the server URL for the Custom provider in Settings.');
     if (p.needsKey && !(settings.keys[settings.provider] || '').trim()) throw new Error('Add your free ' + p.name + ' key in Settings, or switch to Pollinations (no key).');
-    const sse = C.createSseParser(); let full = '', raw = '', streamErr = '';
-    const res = await httpStream(p.chatUrl, {
+    let sse = C.createSseParser(), full = '', raw = '', streamErr = '', res;
+    for (let attempt = 0; ; attempt++) {
+     sse = C.createSseParser(); full = ''; raw = ''; streamErr = '';
+     res = await httpStream(p.chatUrl, {
       method: 'POST', signal,
       headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders(settings.provider)),
       body: JSON.stringify({ model: settings.model, messages, stream: true }),
     }, (chunk) => {
       if (raw.length < 200000) raw += chunk;
-      for (const ev of sse.feed(chunk)) { if (ev.error) streamErr = ev.error; else { full += ev.text; onText(full); } }
-    });
+      for (const ev of sse.feed(chunk)) { if (ev.error) streamErr = ev.error; else if (ev.thinking) { if (!full) setStatus('thinking…'); } else { full += ev.text; onText(full); } }
+     });
+     // free tiers rate-limit often: wait and retry a couple of times before giving up
+     if ((res.status === 429 || res.status === 503) && !full && attempt < 2) { setStatus('rate limited, retrying…'); await sleep(attempt ? 12000 : 4000, signal); continue; }
+     break;
+    }
     if (res.status >= 400) throw new Error(explain(res.status, raw, p));
     for (const ev of sse.feed('\n')) if (ev.text) { full += ev.text; onText(full); }
     if (!full) {
@@ -136,6 +160,13 @@
     if (!full && streamErr) throw new Error(p.name + ': ' + streamErr);
     if (!full) throw new Error('The model returned an empty reply. Try again or pick another model.');
     return full;
+  }
+
+  function sleep(ms, signal) {
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(resolve, ms);
+      if (signal) signal.addEventListener('abort', () => { clearTimeout(t); reject(abortError()); }, { once: true });
+    });
   }
 
   async function fetchModels(id) {
@@ -151,10 +182,183 @@
   }
   const modelsFor = (id) => (settings.models[id] && settings.models[id].length ? settings.models[id] : C.PROVIDERS[id].fallbackModels);
 
+  // ------------------------------------------------------------- execution
+  let nxSeq = 0; const nxReqs = {};
+  window.__nx = (id, res) => { const r = nxReqs[id]; if (r) { delete nxReqs[id]; r(res); } };
+  function nativeExec(cmd, timeoutSec) {
+    return new Promise((resolve) => { const id = 'x' + (++nxSeq); nxReqs[id] = resolve; Native.exec(id, cmd, timeoutSec | 0); });
+  }
+
+  let pyWorker = null, pyLoaded = false;
+  function workerRun(kind, msg, timeoutSec, signal) {
+    return new Promise((resolve, reject) => {
+      let w;
+      try {
+        if (kind === 'py') { if (!pyWorker) { pyWorker = new Worker('pyworker.mjs', { type: 'module' }); pyLoaded = false; } w = pyWorker; }
+        else w = new Worker('jsworker.js');
+      } catch (e) { return resolve({ code: 1, out: 'Could not start the ' + (kind === 'py' ? 'Python' : 'JavaScript') + ' runtime: ' + e.message, changed: [], deleted: [] }); }
+      const kill = () => { try { w.terminate(); } catch (e) {} if (kind === 'py') { pyWorker = null; pyLoaded = false; } };
+      const finish = (fn, v) => { clearTimeout(timer); if (signal) signal.removeEventListener('abort', onAbort); w.onmessage = w.onerror = null; if (kind !== 'py') kill(); fn(v); };
+      const onAbort = () => { kill(); finish(reject, abortError()); };
+      // the first Python start has to load the interpreter, so it gets extra time
+      const limit = (timeoutSec + (kind === 'py' && !pyLoaded ? 60 : 0)) * 1000;
+      const timer = setTimeout(() => { kill(); finish(resolve, { code: 124, out: 'Timed out after ' + timeoutSec + ' s and was stopped.', timedOut: true, changed: [], deleted: [] }); }, limit);
+      if (signal) { if (signal.aborted) return onAbort(); signal.addEventListener('abort', onAbort); }
+      w.onmessage = (e) => { if (kind === 'py') pyLoaded = true; finish(resolve, e.data); };
+      w.onerror = (e) => { kill(); finish(resolve, { code: 1, out: 'Runtime crashed: ' + (e.message || 'unknown error'), changed: [], deleted: [] }); };
+      w.postMessage(msg);
+    });
+  }
+
+  let execQueue = Promise.resolve();
+  /** Run a terminal command: Python and JavaScript in bundled runtimes, everything else in the Android shell. */
+  function runCommand(cmd, timeoutSec, signal) {
+    const job = execQueue.then(() => runCommandNow(cmd, timeoutSec || 60, signal));
+    execQueue = job.catch(() => {});
+    return job;
+  }
+  async function runCommandNow(cmd, timeoutSec, signal) {
+    if (signal && signal.aborted) throw abortError();
+    const pc = C.parseCommand(cmd);
+    if (pc.kind === 'note') return { code: pc.code || 0, out: pc.text, files: [] };
+    let r;
+    if (pc.kind === 'sh') {
+      if (!canShell) return { code: 127, out: 'Shell commands run only in the installed Android app. In this browser preview you can run `python …` and `node …`.', files: [] };
+      r = await nativeExec(cmd, timeoutSec);
+      const changed = (r.changed || []).filter((c) => !c.tooBig);
+      mirror = false;
+      try {
+        changed.forEach((c) => { const bytes = unb64(c.b64); const t = C.decodeIfText(bytes); ws.set(c.path, t != null ? t : bytes); });
+        (r.deleted || []).forEach((p) => ws.remove(p));
+      } finally { mirror = true; }
+      r.files = (r.changed || []).map((c) => c.path).concat((r.deleted || []).map((p) => p + ' (deleted)'));
+      if (/(python3?|pip3?|node|npm|git)(: inaccessible or not found|: not found|: command not found)/.test(r.out || '')) {
+        r.out += '\nNote: python and node are separate runtimes here. Run them as the whole command (e.g. `python main.py`), not inside a pipeline, redirect or && chain.';
+      }
+      return r;
+    }
+    const files = ws.list().filter((p) => ws.size(p) <= 16 * 1048576).map((p) => ({ path: p, data: ws.bytes(p) }));
+    if (pc.kind === 'python' || pc.kind === 'pip') {
+      if (!pyLoaded) setStatus('starting Python…');
+      r = await workerRun('py', { files, mode: pc.kind === 'pip' ? 'pip' : pc.mode, argv: pc.argv, src: pc.src || '', cwd: pc.cwd }, timeoutSec, signal);
+    } else {
+      r = await workerRun('js', { files, mode: pc.mode, argv: pc.argv, src: pc.src || '', cwd: pc.cwd }, timeoutSec, signal);
+    }
+    (r.changed || []).forEach((c) => { const t = C.decodeIfText(c.data); ws.set(c.path, t != null ? t : c.data); });
+    (r.deleted || []).forEach((p) => ws.remove(p));
+    r.files = (r.changed || []).map((c) => c.path).concat((r.deleted || []).map((p) => p + ' (deleted)'));
+    return r;
+  }
+  function unb64(s) { const bin = atob(s); const out = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; }
+
+  // ------------------------------------------------------------------- web
+  const UA = 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36';
+  /** Fetch a page as text. Uses the native bridge when present because websites do not allow cross-origin browser requests. */
+  async function httpText(url, signal, extraHeaders) {
+    let text = '';
+    const opt = { signal, headers: Object.assign({ 'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9', Accept: 'text/html,application/xhtml+xml,text/plain,*/*' }, extraHeaders || {}) };
+    const onChunk = (c) => { if (text.length < 1500000) text += c; };
+    let res;
+    if (Native) res = await nativeStream(url, opt, onChunk);
+    else {
+      try { res = await httpStream(url, { signal }, onChunk); }
+      catch (e) { if (e.name === 'AbortError') throw e; throw new Error('Web access needs the installed Android app (browsers block cross-site requests).'); }
+    }
+    return { status: res.status, ctype: res.ctype || '', text };
+  }
+  function parseHtml(html) { return new DOMParser().parseFromString(html, 'text/html'); }
+  const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+
+  function parseSearchResults(html) {
+    const doc = parseHtml(html), out = [];
+    const realUrl = (href) => {
+      if (!href) return '';
+      const m = /[?&]uddg=([^&]+)/.exec(href);
+      if (m) { try { return decodeURIComponent(m[1]); } catch (e) { return ''; } }
+      if (href.startsWith('//')) return 'https:' + href;
+      return /^https?:/.test(href) ? href : '';
+    };
+    doc.querySelectorAll('.result, .web-result').forEach((r) => {
+      const a = r.querySelector('a.result__a'); if (!a) return;
+      const url = realUrl(a.getAttribute('href')); if (!url || /duckduckgo\.com\/y\.js/.test(url)) return;
+      out.push({ title: clean(a.textContent), url, snippet: clean((r.querySelector('.result__snippet') || {}).textContent) });
+    });
+    if (!out.length) { // lite layout
+      doc.querySelectorAll('a.result-link').forEach((a) => {
+        const url = realUrl(a.getAttribute('href')); if (!url) return;
+        const row = a.closest('tr'), sn = row && row.nextElementSibling && row.nextElementSibling.querySelector('.result-snippet');
+        out.push({ title: clean(a.textContent), url, snippet: clean(sn && sn.textContent) });
+      });
+    }
+    return out.slice(0, 8);
+  }
+  async function webSearch(query, signal) {
+    let r = await httpText('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query), signal);
+    let res = parseSearchResults(r.text);
+    if (!res.length) { r = await httpText('https://lite.duckduckgo.com/lite/?q=' + encodeURIComponent(query), signal); res = parseSearchResults(r.text); }
+    if (!res.length && (r.status >= 400 || r.status === 202 || /anomaly|captcha|challenge/i.test(r.text))) throw new Error('The search engine blocked this request (HTTP ' + r.status + '). Try again later, or open a known URL with read_url.');
+    return res;
+  }
+  function htmlToText(html, baseUrl) {
+    const doc = parseHtml(html);
+    doc.querySelectorAll('script,style,noscript,svg,iframe,form,nav,footer,aside,template,button,[hidden],[aria-hidden="true"]').forEach((n) => n.remove());
+    const root = doc.querySelector('main, article, [role=main]') || doc.body || doc.documentElement;
+    const blocks = [];
+    const walk = (n) => {
+      n.childNodes.forEach((c) => {
+        if (c.nodeType === 3) { const t = c.nodeValue.replace(/\s+/g, ' '); if (t.trim()) blocks.push(t); }
+        else if (c.nodeType === 1) {
+          const tag = c.tagName.toLowerCase();
+          if (tag === 'pre') { blocks.push('\n```\n' + c.textContent.replace(/\s+$/, '') + '\n```\n'); return; }
+          const block = /^(p|div|section|h[1-6]|li|tr|br|ul|ol|table|blockquote|dt|dd|header)$/.test(tag);
+          if (block) blocks.push('\n');
+          if (/^h[1-6]$/.test(tag)) blocks.push('#'.repeat(+tag[1]) + ' ');
+          if (tag === 'li') blocks.push('- ');
+          walk(c);
+          if (tag === 'a' && c.getAttribute('href') && /^https?:/.test(c.getAttribute('href')) && c.textContent.trim().length > 2) blocks.push(' (' + c.getAttribute('href') + ')');
+          if (block) blocks.push('\n');
+        }
+      });
+    };
+    walk(root);
+    const title = clean((doc.querySelector('title') || {}).textContent);
+    return (title ? '# ' + title + '\n' + baseUrl + '\n\n' : '') + blocks.join('').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+  async function readUrl(url, signal) {
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    const r = await httpText(url, signal);
+    if (r.status >= 400) throw new Error('HTTP ' + r.status + ' from ' + url);
+    if (/json|text\/plain|javascript|xml|csv|markdown/.test(r.ctype) && !/html/.test(r.ctype)) return r.text;
+    const text = /<html|<body|<div|<p[\s>]/i.test(r.text) ? htmlToText(r.text, url) : r.text;
+    return text || '(the page has no readable text; it may need JavaScript to render)';
+  }
+
+  // ------------------------------------------------------------ sub-agents
+  let repoBase = load('cyb.repo', null);
+  const caps = (extra) => Object.assign({ shell: canShell, repo: repoBase ? repoBase.owner + '/' + repoBase.repo : '' }, extra || {});
+
+  /** Run a helper agent with its own context and return its final report. */
+  async function spawnAgent(type, prompt, signal) {
+    const agent = C.AGENTS[type], msgs = [{ role: 'user', content: prompt }];
+    const env = { exec: (c, t) => runCommand(c, t, signal), search: (q) => webSearch(q, signal), readUrl: (u) => readUrl(u, signal) };
+    let last = '';
+    for (let step = 0; step < 8; step++) {
+      const sys = C.buildSystemPrompt(type, ws.summary(), settings.extra, caps({ noSpawn: true }));
+      setStatus(agent.icon + ' ' + type + (step ? ' step ' + (step + 1) : '') + '…');
+      last = await chatStream([{ role: 'system', content: sys }].concat(C.trimHistory(msgs, 40000)), (t) => setStatus(agent.icon + ' ' + type + ' ' + t.length + ' chars'), signal);
+      msgs.push({ role: 'assistant', content: last });
+      const calls = C.parseToolCalls(last, agent.tools).filter((c) => C.PASSIVE.indexOf(c.name) < 0);
+      if (!calls.length) return C.displayText(last).trim();
+      const parts = await C.runTools(calls, ws, env, (l) => setStatus(agent.icon + ' ' + type + ': ' + l));
+      msgs.push({ role: 'user', content: C.formatToolResults(parts) });
+    }
+    return C.displayText(last).trim() + '\n(The helper agent reached its step limit.)';
+  }
+
   // ------------------------------------------------------------- rendering
   marked.setOptions({ gfm: true, breaks: true });
   function renderMd(text) {
-    const html = DOMPurify.sanitize(marked.parse(C.displayText(text)), { FORBID_TAGS: ['style', 'form', 'input', 'iframe'], FORBID_ATTR: ['style'] });
+    const html = DOMPurify.sanitize(marked.parse(C.displayText(text).replace(/^(\s*)[-*] \[[xX]\] /gm, '$1- ✅ ').replace(/^(\s*)[-*] \[ \] /gm, '$1- ⬜ ')), { FORBID_TAGS: ['style', 'form', 'input', 'iframe'], FORBID_ATTR: ['style'] });
     const box = el('div', 'md'); box.innerHTML = html;
     box.querySelectorAll('a').forEach((a) => { a.target = '_blank'; a.rel = 'noopener'; });
     box.querySelectorAll('pre code').forEach((code) => {
@@ -193,11 +397,11 @@
   }
 
   const SUGGEST = {
-    coder: ['Build a pomodoro timer as a single-page web app', 'Create a Python script that renames files by date', 'Make a landing page for a coffee shop'],
+    coder: ['Build a pomodoro timer as a single-page web app', 'Write a Python script that finds duplicate files, with unit tests, and run them', 'Review my workspace code, fix the bugs you find and verify the fix'],
     planner: ['Plan a notes app with tags and search', 'Plan how to add dark mode to my project'],
     reviewer: ['Review all files in my workspace for bugs', 'Check my code for security problems'],
     reverse: ['Analyse the APK I imported: permissions, libraries, URLs', 'Explain this decompiled function (paste it below)', 'Find hard-coded keys and endpoints in the imported file'],
-    chat: ['Explain async/await with a small example', 'What is the difference between ELF and PE files?'],
+    chat: ['Explain async/await with a small example', 'Search the web: what is new in the latest Python release?'],
   };
 
   function renderMessages() {
@@ -207,7 +411,7 @@
       const w = el('div', 'welcome');
       w.appendChild(el('div', 'big', '❯_'));
       w.appendChild(el('h1', '', 'CybNate'));
-      w.appendChild(el('div', '', 'Free AI coding agent in your pocket. ' + a.icon + ' ' + a.name + ': ' + a.blurb.toLowerCase() + '.'));
+      w.appendChild(el('div', '', 'Free AI coding agent. It reads, writes and runs code, searches the web and reviews its own work. ' + a.icon + ' ' + a.name + ': ' + a.blurb.toLowerCase() + '.'));
       (SUGGEST[current.agent] || []).forEach((t) => { const b = el('button', 'sugg', t); b.onclick = () => { $('input').value = t; autoGrow(); $('input').focus(); }; w.appendChild(b); });
       const p = providerCfg();
       if (p.needsKey && !(settings.keys[settings.provider] || '').trim()) {
@@ -215,13 +419,25 @@
         nt.onclick = openSettings; w.appendChild(nt);
       }
       box.appendChild(w);
-    } else current.messages.forEach((m) => box.appendChild(msgNode(m)));
+    } else { current.messages.forEach((m) => box.appendChild(msgNode(m))); renderFollowups(); }
     box.scrollTop = box.scrollHeight;
     $('title').textContent = current.title || 'New chat';
   }
+  /** Next-step suggestions from the agent's last reply, as tappable chips. */
+  function renderFollowups() {
+    const box = $('messages'); const oldChips = box.querySelector('.followups'); if (oldChips) oldChips.remove();
+    if (busy || !current) return;
+    const last = current.messages[current.messages.length - 1];
+    if (!last || last.role !== 'assistant') return;
+    const list = C.followupsOf(last.content); if (!list.length) return;
+    const wrap = el('div', 'followups');
+    list.forEach((t) => { const b = el('button', 'sugg', '↳ ' + t); b.onclick = () => { $('input').value = t; send(); }; wrap.appendChild(b); });
+    const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+    box.appendChild(wrap); if (stick) box.scrollTop = box.scrollHeight;
+  }
   function renderAgents() {
     const nav = $('agents'); nav.innerHTML = '';
-    Object.keys(C.AGENTS).forEach((id) => {
+    Object.keys(C.AGENTS).filter((id) => !C.AGENTS[id].sub).forEach((id) => {
       const a = C.AGENTS[id], b = el('button', 'pill' + (current.agent === id ? ' on' : ''), a.icon + ' ' + a.name);
       b.onclick = () => { if (busy) return; current.agent = id; saveSessions(); renderAgents(); if (!current.messages.length) renderMessages(); $('input').placeholder = placeholder(); };
       nav.appendChild(b);
@@ -243,7 +459,7 @@
 
   // ------------------------------------------------------------ agent loop
   function apiHistory() {
-    return C.trimHistory(current.messages.filter((m) => m.role === 'user' || m.role === 'assistant'), 48000);
+    return C.trimHistory(current.messages.filter((m) => m.role === 'user' || m.role === 'assistant'), 70000);
   }
 
   async function send() {
@@ -262,8 +478,9 @@
     try {
       const agent = C.AGENTS[current.agent];
       const maxSteps = agent.tools.length ? Math.max(1, settings.maxSteps | 0) : 1;
+      const oldChips = box.querySelector('.followups'); if (oldChips) oldChips.remove();
       for (let step = 0; step < maxSteps; step++) {
-        const sys = C.buildSystemPrompt(current.agent, ws.summary(), settings.extra);
+        const sys = C.buildSystemPrompt(current.agent, ws.summary(), settings.extra, caps());
         const msg = { role: 'assistant', content: '', agent: current.agent, model: settings.model };
         const node = msgNode(msg); node.classList.add('cursor'); box.appendChild(node);
         box.scrollTop = box.scrollHeight;
@@ -293,12 +510,13 @@
         if (!agent.tools.length) break;
         const calls = C.parseToolCalls(full, agent.tools);
         let toolMsg;
-        if (calls.length) {
-          setStatus('running ' + calls.length + ' tool' + (calls.length > 1 ? 's' : '') + '…');
-          const parts = await C.runTools(calls, ws);
+        if (calls.length && !calls.every((c) => C.PASSIVE.indexOf(c.name) >= 0)) {
+          const sig = abortCtl.signal;
+          const env = { exec: (c, t) => runCommand(c, t, sig), search: (q) => webSearch(q, sig), readUrl: (u) => readUrl(u, sig), spawn: (type, p) => spawnAgent(type, p, sig) };
+          const parts = await C.runTools(calls, ws, env, (label) => setStatus(label.slice(0, 60) + '…'));
           toolMsg = { role: 'user', tool: true, parts, content: C.formatToolResults(parts) };
-        } else if (/<(write_file|edit_file)\b[^>]*>(?![\s\S]*<\/\1\s*>)/.test(full)) {
-          toolMsg = { role: 'user', tool: true, parts: [], content: 'Your last reply was cut off before the closing tag, so nothing was saved. Write that file again; if it is long, split the work into smaller files or use edit_file.' };
+        } else if (new RegExp('<(' + C.BODY_TOOLS.join('|') + ')\\b[^>]*>(?![\\s\\S]*<\\/\\1\\s*>)').test(C.stripThink(full))) {
+          toolMsg = { role: 'user', tool: true, parts: [], content: 'Your last reply was cut off before a closing tool tag, so that tool did not run. Send it again; if a file is long, split the work into smaller files or use edit_file.' };
         } else break;
         current.messages.push(toolMsg); box.appendChild(msgNode(toolMsg));
         box.scrollTop = box.scrollHeight; saveSessions(); updateBadge();
@@ -307,7 +525,7 @@
     } catch (e) {
       if (e.name !== 'AbortError') pushError(e.message || String(e)); else toast('Stopped');
     } finally {
-      busy = false; abortCtl = null; setStatus('');
+      busy = false; abortCtl = null; setStatus(''); renderFollowups();
       $('btnSend').classList.remove('stop'); $('btnSend').textContent = '➤';
       current.updated = Date.now(); saveSessions();
     }
@@ -428,6 +646,98 @@
     }, [['↻', drawSheet]]);
   }
 
+  // -------------------------------------------------------------- terminal
+  let termLog = '';
+  function openTerminal() {
+    closeDrawer();
+    openSheet('Terminal', (body) => {
+      const pre = el('pre', 'term'); const row = el('div', 'termrow');
+      const prompt = el('span', 'logo', '$'); const inp = el('input'); inp.type = 'text'; inp.autocapitalize = 'off'; inp.autocomplete = 'off'; inp.spellcheck = false;
+      inp.placeholder = canShell ? 'ls -la · python main.py · node app.js' : 'python main.py · node app.js';
+      const go = el('button', '', '⏎');
+      const show = () => { pre.textContent = termLog || 'Runs in your workspace folder.\n• python …   CPython 3.14, pip install for pure-Python packages\n• node …     JavaScript runtime\n' + (canShell ? '• anything else runs in the Android shell (ls, cat, grep, sed, find, tar …)\n' : '• shell commands work in the installed Android app\n'); pre.scrollTop = pre.scrollHeight; };
+      let running = false, ctl = null;
+      const run = async () => {
+        if (running) { if (ctl) ctl.abort(); return; }
+        const cmd = inp.value.trim(); if (!cmd) return;
+        if (cmd === 'clear') { termLog = ''; inp.value = ''; return show(); }
+        inp.value = ''; termLog += '$ ' + cmd + '\n'; show(); running = true; go.textContent = '■'; ctl = new AbortController();
+        try {
+          const r = await runCommand(cmd, 300, ctl.signal);
+          termLog += (r.out || '').replace(/\s+$/, '') + (r.out && r.out.trim() ? '\n' : '') + (r.code ? '[exit ' + r.code + ']\n' : '');
+        } catch (e) { termLog += (e.name === 'AbortError' ? '^C' : 'error: ' + e.message) + '\n'; }
+        if (termLog.length > 60000) termLog = termLog.slice(-60000);
+        running = false; go.textContent = '⏎'; setStatus(''); show(); updateBadge();
+      };
+      inp.onkeydown = (e) => { if (e.key === 'Enter') run(); }; go.onclick = run;
+      row.appendChild(prompt); row.appendChild(inp); row.appendChild(go);
+      body.appendChild(pre); body.appendChild(row); show();
+    }, [['Clear', () => { termLog = ''; drawSheet(); }]]);
+  }
+
+  // ---------------------------------------------------------------- github
+  function openGitHub() {
+    closeDrawer();
+    let working = false;
+    openSheet('GitHub', (body) => {
+      const note = (t, cls) => { const n = el('div', cls || 'note', t); body.appendChild(n); return n; };
+      const field = (ph, val, type) => { const i = el('input', 'field'); i.type = type || 'text'; i.placeholder = ph; i.value = val || ''; i.autocapitalize = 'off'; i.autocomplete = 'off'; i.spellcheck = false; return i; };
+      const card = el('div', 'card'); body.appendChild(card);
+      card.appendChild(el('h3', '', 'Access token'));
+      card.appendChild(el('p', '', 'Needed for private repositories and for pushing. Create a fine-grained token with "Contents: Read and write" for the repositories you want.'));
+      const tok = field('github_pat_…', settings.keys.github, 'password');
+      tok.onchange = () => { settings.keys.github = tok.value.trim(); saveSettings(); }; card.appendChild(tok);
+      const a = el('a', '', 'Create a token →'); a.href = 'https://github.com/settings/personal-access-tokens/new'; a.target = '_blank'; a.rel = 'noopener'; a.style.cssText = 'display:inline-block;margin-top:8px'; card.appendChild(a);
+
+      const c2 = el('div', 'card'); body.appendChild(c2);
+      c2.appendChild(el('h3', '', repoBase ? 'Open another repository' : 'Open a repository'));
+      const repo = field('owner/name or GitHub URL', settings.lastRepo || ''); c2.appendChild(repo);
+      const br = field('branch (empty = default branch)', ''); c2.appendChild(br);
+      const cloneBtn = el('button', 'wide', '⬇ Clone into workspace'); cloneBtn.style.marginTop = '10px'; c2.appendChild(cloneBtn);
+      cloneBtn.onclick = async () => {
+        if (working) return;
+        let pr; try { pr = GitHub.parseRepo(repo.value); } catch (e) { return toast(e.message); }
+        if (ws.list().length && !confirm('Cloning replaces the ' + ws.list().length + ' files now in the workspace. Continue?')) return;
+        working = true; cloneBtn.textContent = 'Cloning…';
+        try {
+          settings.keys.github = tok.value.trim(); settings.lastRepo = pr.owner + '/' + pr.repo; saveSettings();
+          const res = await GitHub.clone({ token: settings.keys.github, owner: pr.owner, repo: pr.repo, branch: br.value.trim() || pr.branch, onProgress: (d, n) => { cloneBtn.textContent = 'Cloning… ' + d + '/' + n; } });
+          ws.list().forEach((p) => ws.remove(p));
+          res.files.forEach((v, k) => ws.set(k, v));
+          repoBase = res.base; save('cyb.repo', repoBase);
+          toast('Cloned ' + res.files.size + ' files' + (res.skipped ? ' (' + res.skipped + ' large or binary files left on GitHub)' : ''));
+        } catch (e) { alert(e.message); }
+        working = false; drawSheet();
+      };
+
+      if (repoBase) {
+        const c3 = el('div', 'card on'); body.insertBefore(c3, c2);
+        const h = el('h3', '', repoBase.owner + '/' + repoBase.repo + ' '); h.appendChild(el('span', 'tag', repoBase.branch)); c3.appendChild(h);
+        c3.appendChild(el('p', '', 'Cloned at commit ' + repoBase.commit.slice(0, 7) + (repoBase.canPush ? '' : ' · this token cannot push here')));
+        const st = el('pre', 'changes', 'Checking changes…'); c3.appendChild(st);
+        const msg = field('Commit message', ''); c3.appendChild(msg);
+        const pushBtn = el('button', 'wide', '⬆ Commit & push'); pushBtn.style.marginTop = '10px'; c3.appendChild(pushBtn);
+        const disc = el('button', 'wide ghost', 'Disconnect (keeps the files)'); c3.appendChild(disc);
+        disc.onclick = () => { repoBase = null; save('cyb.repo', null); drawSheet(); };
+        GitHub.status(repoBase, ws).then((s) => {
+          st.textContent = s.count ? s.modified.map((p) => 'M  ' + p).concat(s.added.map((p) => 'A  ' + p), s.deleted.map((p) => 'D  ' + p)).join('\n') : 'No changes to commit.';
+          pushBtn.disabled = !s.count; pushBtn.style.opacity = s.count ? 1 : 0.4;
+        });
+        pushBtn.onclick = async () => {
+          if (working || pushBtn.disabled) return;
+          if (!msg.value.trim()) return toast('Write a commit message');
+          if (!confirm('Push these changes to ' + repoBase.owner + '/' + repoBase.repo + ' (' + repoBase.branch + ')?')) return;
+          working = true; pushBtn.textContent = 'Pushing…';
+          try {
+            const r = await GitHub.push({ token: (settings.keys.github || '').trim(), base: repoBase, ws, message: msg.value.trim() });
+            repoBase = r.base; save('cyb.repo', repoBase); toast('Pushed ' + r.changed + ' file change' + (r.changed > 1 ? 's' : '') + ' · ' + r.commit.slice(0, 7));
+          } catch (e) { alert(e.message); }
+          working = false; drawSheet();
+        };
+      }
+    });
+  }
+
   // -------------------------------------------------------------- settings
   function openSettings() {
     closeDrawer();
@@ -455,7 +765,7 @@
       c2.appendChild(el('p', '', 'Custom instructions added to every agent (optional)'));
       const ex = el('textarea', 'field'); ex.rows = 3; ex.value = settings.extra; ex.placeholder = 'e.g. Always answer in Hinglish. Prefer Python.'; ex.onchange = () => { settings.extra = ex.value; saveSettings(); }; c2.appendChild(ex);
       c2.appendChild(el('p', '', 'Maximum tool steps per message'));
-      const ms = el('input', 'field'); ms.type = 'text'; ms.inputMode = 'numeric'; ms.value = settings.maxSteps; ms.onchange = () => { settings.maxSteps = Math.min(40, Math.max(1, parseInt(ms.value, 10) || 12)); ms.value = settings.maxSteps; saveSettings(); }; c2.appendChild(ms);
+      const ms = el('input', 'field'); ms.type = 'text'; ms.inputMode = 'numeric'; ms.value = settings.maxSteps; ms.onchange = () => { settings.maxSteps = Math.min(80, Math.max(1, parseInt(ms.value, 10) || 25)); ms.value = settings.maxSteps; saveSettings(); }; c2.appendChild(ms);
       body.appendChild(c2);
       body.appendChild(el('div', 'label', 'Data'));
       const c3 = el('div', 'card');
@@ -522,6 +832,7 @@
   $('dNew').onclick = () => { if (busy) return; closeDrawer(); newSession(); };
   $('btnFiles').onclick = openFiles; $('dFiles').onclick = () => { closeDrawer(); openFiles(); };
   $('dSettings').onclick = openSettings;
+  $('btnTerm').onclick = openTerminal; $('dTerm').onclick = openTerminal; $('dGit').onclick = openGitHub;
   $('btnModel').onclick = () => openModels();
   $('sheetBack').onclick = closeSheet;
   $('btnAttach').onclick = () => pickFiles((names) => {
@@ -537,7 +848,10 @@
 
   if (!C.PROVIDERS[settings.provider]) { settings.provider = 'pollinations'; settings.model = 'openai'; }
   $('ver').textContent = Native ? 'v' + Native.version() : 'web';
+  window.__cyb = { C, ws, settings, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
   openDb().then(() => {
+    syncDisk();
+    if (/[?&]selftest=1/.test(location.search)) { const sc = document.createElement('script'); sc.src = 'selftest.js'; document.body.appendChild(sc); }
     current = sessions[0] || null;
     if (!current) newSession(); else renderAll();
   });
