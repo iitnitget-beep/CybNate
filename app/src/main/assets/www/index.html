@@ -1,1 +1,64 @@
-<!doctype html><title>CybNate</title>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f0e">
+<title>CybNate</title>
+<link rel="stylesheet" href="vendor/hljs.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <button class="icon" id="btnMenu" aria-label="Menu">☰</button>
+    <div class="title"><span class="logo">❯_</span> <span id="title">CybNate</span></div>
+    <button class="icon" id="btnFiles" aria-label="Files">▤<span id="fileBadge" class="badge" hidden></span></button>
+    <button class="icon" id="btnNew" aria-label="New chat">＋</button>
+  </header>
+  <nav id="agents"></nav>
+  <main id="messages"></main>
+  <footer>
+    <div class="row">
+      <button id="btnModel" class="chip"></button>
+      <span id="status"></span>
+    </div>
+    <div class="composer">
+      <button class="icon" id="btnAttach" aria-label="Attach files">＋</button>
+      <textarea id="input" rows="1" placeholder="Ask CybNate to build something…"></textarea>
+      <button id="btnSend" aria-label="Send">➤</button>
+    </div>
+  </footer>
+</div>
+
+<div id="scrim" hidden></div>
+<aside id="drawer" hidden>
+  <div class="drawer-head"><span class="logo">❯_</span> CybNate <small id="ver"></small></div>
+  <button class="wide" id="dNew">＋ New chat</button>
+  <div class="label">Chats</div>
+  <div id="chatList"></div>
+  <div class="drawer-foot">
+    <button class="wide ghost" id="dFiles">▤ Workspace files</button>
+    <button class="wide ghost" id="dSettings">⚙ Settings &amp; free API keys</button>
+  </div>
+</aside>
+
+<section class="sheet" id="sheet" hidden>
+  <div class="sheet-head">
+    <button class="icon" id="sheetBack" aria-label="Back">←</button>
+    <div id="sheetTitle" class="title"></div>
+    <div id="sheetActions"></div>
+  </div>
+  <div id="sheetBody"></div>
+</section>
+
+<input type="file" id="filePick" multiple hidden>
+<div id="toast" hidden></div>
+
+<script src="vendor/marked.js"></script>
+<script src="vendor/purify.min.js"></script>
+<script src="vendor/highlight.min.js"></script>
+<script src="core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
