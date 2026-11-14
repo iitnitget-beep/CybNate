@@ -29,26 +29,33 @@
 
   await test('pollinations model list', async () => { const l = await T.fetchModels('pollinations'); return l.length + ' models: ' + l.slice(0, 12).join(','); });
   await test('pollinations chat (keyless)', async () => { T.settings.provider = 'pollinations'; const l = T.settings.models.pollinations || []; T.settings.model = l.indexOf('openai-fast') >= 0 ? 'openai-fast' : (l[0] || 'openai-fast'); const r = await T.chatStream([{ role: 'user', content: 'Reply with exactly: CYB-OK' }], () => {}); return 'model=' + T.settings.model + ' reply=' + r; });
+  const nap = (s) => new Promise((r) => setTimeout(r, s * 1000));
+  const dump = (label, t) => { for (let i = 0; i < Math.min(t.length, 9000); i += 2800) console.log('CYBTEST RAW ' + label + ' [' + i + '] ' + t.slice(i, i + 2800).replace(/\n/g, '\\n')); };
   await test('diagnose long system prompt (raw)', async () => {
     const sys = T.C.buildSystemPrompt('coder', T.ws.summary(), '', { shell: true });
+    const q = 'Create a file named ping.txt containing the single word pong.';
     const out = [];
-    for (const [label, body] of [
-      ['stream', { model: T.settings.model, stream: true, messages: [{ role: 'system', content: sys }, { role: 'user', content: 'Create a file named ping.txt containing the single word pong.' }] }],
-      ['plain', { model: T.settings.model, messages: [{ role: 'system', content: sys }, { role: 'user', content: 'Create a file named ping.txt containing the single word pong.' }] }],
+    for (const [label, messages] of [
+      ['A system+user', [{ role: 'system', content: sys }, { role: 'user', content: q }]],
+      ['B merged', [{ role: 'user', content: '<instructions>\n' + sys + '\n</instructions>\n\n' + q }]],
     ]) {
-      const r = await fetch('https://text.pollinations.ai/openai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const t = await r.text(); out.push(label + ' HTTP ' + r.status + ' len=' + t.length + ' head=' + t.slice(0, 220) + ' tail=' + t.slice(-120));
-      console.log('CYBTEST INFO ' + out[out.length - 1].replace(/\s+/g, ' ').slice(0, 900));
+      await nap(47);
+      const r = await fetch('https://text.pollinations.ai/openai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: T.settings.model, messages }) });
+      const t = await r.text(); dump(label, t);
+      let info = 'HTTP ' + r.status + ' len=' + t.length;
+      try { const m = JSON.parse(t).choices[0]; info += ' finish=' + m.finish_reason + ' keys=' + Object.keys(m.message).join(',') + ' content=' + JSON.stringify((m.message.content || '').slice(0, 160)) + ' reasoning=' + JSON.stringify(String(m.message.reasoning_content || m.message.reasoning || '').slice(0, 160)) + ' tool_calls=' + JSON.stringify(m.message.tool_calls || null).slice(0, 200); } catch (e) { info += ' (not JSON)'; }
+      out.push(label + ': ' + info); console.log('CYBTEST INFO ' + label + ': ' + info.replace(/\s+/g, ' '));
     }
+    await nap(47);
     return 'sys chars=' + sys.length;
   });
   await test('agent tool call from real model', async () => { const sys = T.C.buildSystemPrompt('coder', T.ws.summary(), '', { shell: true }); const r = await T.chatStream([{ role: 'system', content: sys }, { role: 'user', content: 'Create a file named ping.txt containing the single word pong.' }], () => {}); const calls = T.C.parseToolCalls(r, T.C.AGENTS.coder.tools); must(calls.some((c) => c.name === 'write_file'), 'no write_file call in: ' + r); return 'variant=' + T.chatStream.lastVariant + ' ' + calls.map((c) => c.name + ':' + (c.attrs.path || '')).join(' '); });
   await test('full agent run through the UI', async () => {
-    box.style.display = 'none';
+    await nap(47); box.style.display = 'none';
     document.getElementById('input').value = 'Write fizz.py that prints FizzBuzz for 1 to 15, run it, and tell me the last line of the output.';
     document.getElementById('btnSend').click();
     const t0 = Date.now();
-    while (Date.now() - t0 < 240000) { await new Promise((r) => setTimeout(r, 1500)); if (!document.querySelector('#btnSend.stop')) break; }
+    while (Date.now() - t0 < 420000) { await new Promise((r) => setTimeout(r, 1500)); if (!document.querySelector('#btnSend.stop')) break; }
     box.style.display = '';
     const errs = [...document.querySelectorAll('.msg.error')].map((n) => n.textContent).join(' | ');
     const tools = [...document.querySelectorAll('.msg.tool summary')].map((n) => n.textContent).join(' | ');

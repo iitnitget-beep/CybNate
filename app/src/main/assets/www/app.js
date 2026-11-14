@@ -127,6 +127,7 @@
     try { const j = JSON.parse(raw); msg = (j.error && (j.error.message || j.error)) || j.message || j.detail || ''; if (typeof msg !== 'string') msg = JSON.stringify(msg); } catch (e) { msg = raw.replace(/<[^>]+>/g, ' ').trim().slice(0, 300); }
     let hint = '';
     if (status === 401 || status === 403) hint = p.needsKey ? 'Your ' + p.name + ' key was rejected. Check it in Settings.' : p.name + ' refused the request. It may now require a key; pick another provider in Settings.';
+    else if (status === 402) hint = p.name + ' has stopped serving free replies for now. Add a free Groq, Gemini or OpenRouter key in Settings.';
     else if (status === 429) hint = 'Free rate limit reached on ' + p.name + '. Wait a little, or switch model or provider.';
     else if (status === 404 || status === 400) hint = 'The model "' + settings.model + '" may no longer be available. Tap the model name and refresh the list.';
     else if (status >= 500) hint = p.name + ' is having problems right now. Try again or switch provider.';
@@ -173,7 +174,16 @@
       const args = variants[v](); if (!args) continue;
       r = await requestModel(p, args[0], onText, signal, args[1]);
       // free tiers rate-limit often: wait and retry a couple of times before giving up
-      if ((r.status === 429 || r.status === 503) && !r.full && waits < 2) { setStatus('rate limited, retrying…'); await sleep(waits++ ? 12000 : 4000, signal); v--; continue; }
+      if ((r.status === 429 || r.status === 503 || r.status === 402) && !r.full && waits < 6) {
+        // e.g. the keyless tier allows one reply every 45 seconds: wait exactly as long as the provider asks
+        const m = /retry after (\d+)\s*s/i.exec(r.raw) || /try again in ([\d.]+)\s*s/i.exec(r.raw);
+        const secs = m ? Math.min(90, Math.ceil(parseFloat(m[1])) + 1) : (r.status === 402 ? 0 : (waits ? 12 : 4));
+        if (secs) {
+          waits++;
+          for (let left = secs; left > 0; left--) { setStatus('free limit: next reply in ' + left + 's'); await sleep(1000, signal); }
+          v--; continue;
+        }
+      }
       if (r.status >= 400) throw new Error(explain(r.status, r.raw, p));
       if (r.full) { chatStream.lastVariant = v; return r.full; }
       if (r.err) break;
