@@ -3,6 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const C = require('../app/src/main/assets/www/core.js');
+const AUTO = { mode: 'auto' }; // these older tests exercise the tools themselves, not the approval gate
 
 (async () => {
   const ws = new C.Workspace();
@@ -15,7 +16,7 @@ const C = require('../app/src/main/assets/www/core.js');
   assert.deepStrictEqual(calls.map((c) => c.name), ['write_file', 'write_file', 'list_files', 'read_file']);
   assert.strictEqual(calls[0].body, '<!doctype html>\n<h1>Hi</h1>');
   assert.strictEqual(calls[1].body, 'const a = 1 > 0;');
-  let res = await C.runTools(calls, ws);
+  let res = await C.runTools(calls, ws, AUTO);
   assert.ok(res.every((r) => r.ok), JSON.stringify(res));
   assert.deepStrictEqual(ws.list(), ['index.html', 'js/app.js']);
   assert.ok(res[3].text.includes('<!doctype html>') && !res[3].text.includes('<h1>'));
@@ -28,16 +29,16 @@ const C = require('../app/src/main/assets/www/core.js');
   // --- edit_file exact + whitespace tolerant + failure
   ws.set('a.js', 'function f() {\n    return 1;\n}\nconst x = 2;\n');
   calls = C.parseToolCalls('<edit_file path="a.js">\n<search>const x = 2;</search>\n<replace>const x = 3;</replace>\n<search>\n  return 1;\n</search>\n<replace>\n    return 42;\n</replace>\n</edit_file>', allowed);
-  res = await C.runTools(calls, ws);
+  res = await C.runTools(calls, ws, AUTO);
   assert.ok(res[0].ok, res[0].text);
   assert.strictEqual(ws.get('a.js'), 'function f() {\n    return 42;\n}\nconst x = 3;\n');
-  res = await C.runTools(C.parseToolCalls('<edit_file path="a.js"><search>nope</search><replace>y</replace></edit_file>', allowed), ws);
+  res = await C.runTools(C.parseToolCalls('<edit_file path="a.js"><search>nope</search><replace>y</replace></edit_file>', allowed), ws, AUTO);
   assert.ok(!res[0].ok && /not found/.test(res[0].text));
   res = await C.runTools(C.parseToolCalls('<read_file path="missing.txt"/>', allowed), ws);
   assert.ok(!res[0].ok && /file not found/.test(res[0].text));
 
   // --- search / delete / path traversal is neutralised
-  res = await C.runTools(C.parseToolCalls('<search_files query="return \\d+"/><delete_file path="a.js"/>', allowed), ws);
+  res = await C.runTools(C.parseToolCalls('<search_files query="return \\d+"/><delete_file path="a.js"/>', allowed), ws, AUTO);
   assert.ok(/a\.js:2/.test(res[0].text)); assert.ok(!ws.has('a.js'));
   assert.strictEqual(C.Workspace.norm('../../etc/./passwd'), 'etc/passwd');
 
@@ -99,7 +100,7 @@ const C = require('../app/src/main/assets/www/core.js');
   assert.deepStrictEqual(C.parseCommand('pip install -U requests rich').argv, ['requests', 'rich']);
   assert.strictEqual(C.parseCommand('git push').code, 127);
   assert.ok(C.matchGlob('**/*.js', 'a/b/c.js') && C.matchGlob('*.js', 'a/c.js') && !C.matchGlob('src/*.js', 'src/a/b.js') && C.matchGlob('src/**/*.{ts,js}', 'src/a/b.ts'));
-  const env = { exec: async (c, t) => ({ code: c === 'false' ? 1 : 0, out: 'ran ' + c + ' ' + t, files: ['x.txt'] }), search: async (q) => [{ title: 'T', url: 'https://u', snippet: q }], readUrl: async (u) => 'page ' + u, spawn: async (t, p) => t + ' report: ' + p };
+  const env = { mode: 'auto', exec: async (c, t) => ({ code: c === 'false' ? 1 : 0, out: 'ran ' + c + ' ' + t, files: ['x.txt'] }), search: async (q) => [{ title: 'T', url: 'https://u', snippet: q }], readUrl: async (u) => 'page ' + u, spawn: async (t, p) => t + ' report: ' + p };
   calls = C.parseToolCalls('<run_terminal_command timeout="5">\nls &amp;&amp; echo hi\n</run_terminal_command><run_terminal_command>false</run_terminal_command><web_search query="q1"/><read_url url="https://a"/><spawn_agent type="thinker">why</spawn_agent><spawn_agent type="nope">x</spawn_agent><find_files pattern="*.html"/><write_todos>\n- [ ] a\n</write_todos>', C.AGENTS.coder.tools);
   res = await C.runTools(calls, ws, env);
   assert.ok(/^\$ ls && echo hi\nran ls && echo hi 5\n\[exit code 0\]\n\[files changed: x\.txt\]$/.test(res[0].text) && res[0].ok, res[0].text);
