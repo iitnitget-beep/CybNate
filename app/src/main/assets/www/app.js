@@ -987,7 +987,7 @@
     if (!lastW && window.innerWidth) { const b = document.body; b.style.display = 'none'; void b.offsetHeight; b.style.display = ''; }
     lastW = window.innerWidth;
   });
-  setTimeout(() => { const w = document.querySelector('.welcome'), h = document.querySelector('header'); console.log('CYBUI layout header=' + (h ? h.offsetHeight : -1) + ' welcome=' + (w ? w.offsetHeight : -1) + ' win=' + window.innerWidth + 'x' + window.innerHeight); }, 1500);
+  [1500, 6000, 12000, 25000].forEach((ms) => setTimeout(() => { const w = document.querySelector('.welcome'), h = document.querySelector('header'); console.log('CYBUI layout t=' + ms + ' header=' + (h ? h.offsetHeight : -1) + ' welcome=' + (w ? w.offsetHeight : -1) + ' win=' + window.innerWidth + 'x' + window.innerHeight + ' vis=' + document.visibilityState); }, ms));
   openDb().then(() => {
     syncDisk(); updateBadge();
     if (/[?&]selftest=1/.test(location.search)) { const sc = document.createElement('script'); sc.src = 'selftest.js'; document.body.appendChild(sc); }
