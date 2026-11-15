@@ -609,6 +609,7 @@
     sessions = [current].concat(sessions.filter((s) => s !== current));
     renderMessages();
     busy = true; abortCtl = new AbortController();
+    const checkpoint = S.makeCheckpoint(ws); // lets the user undo everything this run changes
     $('btnSend').classList.add('stop'); sendIcon = sendIcon || $('btnSend').innerHTML; $('btnSend').textContent = '■';
     const box = $('messages');
     try {
@@ -664,10 +665,24 @@
     } catch (e) {
       if (e.name !== 'AbortError') pushError(e.message || String(e)); else toast('Stopped');
     } finally {
-      busy = false; abortCtl = null; setStatus(''); renderFollowups();
+      busy = false; abortCtl = null; setStatus(''); renderFollowups(); offerUndo(checkpoint);
       $('btnSend').classList.remove('stop'); $('btnSend').innerHTML = sendIcon;
       current.updated = Date.now(); saveSessions();
     }
+  }
+  /** One-tap undo for the last agent run: changed and deleted files come back, files it created are removed. */
+  function offerUndo(cp) {
+    const old = $('messages').querySelector('.undo'); if (old) old.remove();
+    const changed = S.changedSince(ws, cp);
+    if (!changed.length) return;
+    const b = el('button', 'undo', '↶ Undo ' + changed.length + ' file change' + (changed.length > 1 ? 's' : '') + ' from this run');
+    b.title = changed.slice(0, 30).join('\n');
+    b.onclick = () => {
+      if (busy) return toast('Stop the current reply first');
+      const r = S.restoreCheckpoint(ws, cp); b.remove(); updateBadge();
+      toast('Undone: ' + r.restored + ' restored, ' + r.removed + ' removed' + (r.skipped.length ? ' (' + r.skipped.length + ' large files were not covered)' : ''));
+    };
+    $('messages').appendChild(b); $('messages').scrollTop = $('messages').scrollHeight;
   }
   function pushError(t) {
     const m = { role: 'error', content: t }; current.messages.push(m);
@@ -866,7 +881,10 @@
         pushBtn.onclick = async () => {
           if (working || pushBtn.disabled) return;
           if (!msg.value.trim()) return toast('Write a commit message');
-          if (!confirm('Push these changes to ' + repoBase.owner + '/' + repoBase.repo + ' (' + repoBase.branch + ')?')) return;
+          // a push always asks, in every permission mode, and has no "allow always"
+          const st2 = await GitHub.status(repoBase, ws);
+          const files = st2.modified.map((p) => 'M  ' + p).concat(st2.added.map((p) => 'A  ' + p), st2.deleted.map((p) => 'D  ' + p));
+          if ((await askApproval({ kind: 'push', repo: repoBase.owner + '/' + repoBase.repo, branch: repoBase.branch, files })) !== 'allow') return;
           working = true; pushBtn.textContent = 'Pushing…';
           try {
             const r = await GitHub.push({ token: (settings.keys.github || '').trim(), base: repoBase, ws, message: msg.value.trim() });
@@ -936,6 +954,14 @@
   }
   function openGeneral() {
     openSheet('General', (body) => {
+      const c0 = el('div', 'card'); c0.appendChild(el('div', 'ctitle', 'Permissions'));
+      const seg = el('div', 'seg perm');
+      const help = { ask: 'Ask before commands, file changes and deletions. Read-only commands run freely.', autoedit: 'File changes apply automatically. Commands and deletions still ask.', auto: 'Everything runs automatically, except protected files (.github, NOTICE, settings, secrets) and commands that use your secrets.' };
+      [['ask', 'Ask'], ['autoedit', 'Auto-edit'], ['auto', 'Auto']].forEach((o) => {
+        const b = el('button', permMode() === o[0] ? 'on' : '', o[1]); b.dataset.mode = o[0];
+        b.onclick = () => { settings.permission = o[0]; saveSettings(); drawSheet(); }; seg.appendChild(b);
+      });
+      c0.appendChild(seg); c0.appendChild(el('p', '', help[permMode()])); body.appendChild(c0);
       const c1 = el('div', 'card'); c1.appendChild(el('div', 'ctitle', 'Agent'));
       c1.appendChild(switchRow('Native tool calls', 'Send tool definitions to the model. Turn off if a model misbehaves.', () => settings.nativeTools !== false, (v) => { settings.nativeTools = v; }));
       c1.appendChild(switchRow('Include AGENTS.md', 'Include the workspace\u2019s AGENTS.md or CLAUDE.md from your next message.', () => settings.agentsMd !== false, (v) => { settings.agentsMd = v; }));
@@ -1266,6 +1292,8 @@
     if (names.some((n) => ws.isBinary(n)) && current.agent !== 'reverse' && !busy) { current.agent = 'reverse'; renderAgents(); toast('Switched to the Reverse agent for binary files'); }
   });
   window.onNativeBack = () => {
+    const deny = document.querySelector('.approval .abtn.deny');
+    if (deny) { deny.click(); return true; } // Back on an approval sheet means Deny
     if (sheetStack.length) { closeSheet(); return true; }
     if (!$('drawer').hidden || !$('agents').hidden) { closeDrawer(); return true; }
     return false;
@@ -1273,7 +1301,7 @@
 
   if (!C.PROVIDERS[settings.provider]) { settings.provider = 'pollinations'; settings.model = 'openai-fast'; }
   $('ver').textContent = Native ? 'v' + Native.version() : 'web';
-  window.__cyb = { C, ws, settings, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
+  window.__cyb = { C, ws, settings, askApproval, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
   window.addEventListener('error', (e) => { console.log('CYBERR ' + e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno); });
   window.addEventListener('unhandledrejection', (e) => { console.log('CYBERR promise ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)); });
 
