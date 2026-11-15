@@ -117,7 +117,13 @@
     const api = client(opt.token, opt.fetch);
     const r = '/repos/' + base.owner + '/' + base.repo;
     const st = await status(base, ws);
-    if (!st.count) throw new Error('Nothing to commit: the workspace matches the repository.');
+    const branch = opt.branch || base.branch, newBranch = branch !== base.branch;
+    if (!st.count && !(newBranch && opt.allowEmpty)) throw new Error('Nothing to commit: the workspace matches the repository.');
+    const refPath = (b) => b.split('/').map(encodeURIComponent).join('/');
+    if (!st.count) { // only a new branch name: point it at the cloned commit
+      await api(r + '/git/refs', { method: 'POST', body: { ref: 'refs/heads/' + branch, sha: base.commit } });
+      return { base: Object.assign({}, base, { branch }), commit: base.commit, changed: 0, url: 'https://github.com/' + base.owner + '/' + base.repo + '/tree/' + refPath(branch) };
+    }
     const entries = [];
     const newShas = Object.assign({}, base.shas);
     await pool(st.added.concat(st.modified), 4, async (p) => {
@@ -129,12 +135,14 @@
     const tree = await api(r + '/git/trees', { method: 'POST', body: { base_tree: base.tree, tree: entries } });
     const commit = await api(r + '/git/commits', { method: 'POST', body: { message: message || 'Update from CybNate', tree: tree.sha, parents: [base.commit] } });
     try {
-      await api(r + '/git/refs/heads/' + base.branch.split('/').map(encodeURIComponent).join('/'), { method: 'PATCH', body: { sha: commit.sha, force: false } });
+      if (newBranch) await api(r + '/git/refs', { method: 'POST', body: { ref: 'refs/heads/' + branch, sha: commit.sha } });
+      else await api(r + '/git/refs/heads/' + refPath(base.branch), { method: 'PATCH', body: { sha: commit.sha, force: false } });
     } catch (e) {
+      if (newBranch && e.status === 422) throw new Error('The branch ' + branch + ' already exists on GitHub. Pick another name with `git checkout -b <name>`.');
       if (e.status === 422 || /fast.forward/i.test(e.message)) throw new Error('The branch has new commits on GitHub since you cloned. Export your work, clone again, and re-apply it.');
       throw e;
     }
-    return { base: Object.assign({}, base, { commit: commit.sha, tree: tree.sha, shas: newShas }), commit: commit.sha, changed: st.count, url: 'https://github.com/' + base.owner + '/' + base.repo + '/commit/' + commit.sha };
+    return { base: Object.assign({}, base, { branch, commit: commit.sha, tree: tree.sha, shas: newShas }), commit: commit.sha, changed: st.count, url: 'https://github.com/' + base.owner + '/' + base.repo + '/commit/' + commit.sha };
   }
 
   return { parseRepo, clone, status, push, blobSha };

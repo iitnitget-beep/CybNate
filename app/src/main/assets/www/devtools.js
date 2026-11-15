@@ -461,6 +461,59 @@
     return d.errors.length ? '[diagnostics: ERROR in ' + path + ': ' + d.errors.join('; ') + ']' : '[diagnostics: OK]';
   }
 
-  return { fuzzyFind, fuzzyReplace, reindent, nearby, numbered, similarity, STAGE_NAMES, parseSearchReplace, parseUnifiedDiff, applyHunks, looseCalls, looksLikePath,
+  /** Line operations turning a into b: [[' '|'-'|'+', line]]. LCS on the middle part; very large inputs fall back to remove-all/add-all. */
+  function diffOps(A, B) {
+    let s = 0; while (s < A.length && s < B.length && A[s] === B[s]) s++;
+    let e = 0; while (e < A.length - s && e < B.length - s && A[A.length - 1 - e] === B[B.length - 1 - e]) e++;
+    const a = A.slice(s, A.length - e), b = B.slice(s, B.length - e), ops = [];
+    for (let i = 0; i < s; i++) ops.push([' ', A[i]]);
+    if (a.length * b.length > 4000000) { a.forEach((l) => ops.push(['-', l])); b.forEach((l) => ops.push(['+', l])); }
+    else {
+      const n = a.length, m = b.length, w = m + 1, t = new Uint32Array((n + 1) * w);
+      for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) t[i * w + j] = a[i] === b[j] ? t[(i + 1) * w + j + 1] + 1 : Math.max(t[(i + 1) * w + j], t[i * w + j + 1]);
+      let i = 0, j = 0;
+      while (i < n && j < m) {
+        if (a[i] === b[j]) { ops.push([' ', a[i]]); i++; j++; }
+        else if (t[(i + 1) * w + j] >= t[i * w + j + 1]) ops.push(['-', a[i++]]);
+        else ops.push(['+', b[j++]]);
+      }
+      while (i < n) ops.push(['-', a[i++]]);
+      while (j < m) ops.push(['+', b[j++]]);
+    }
+    for (let i = A.length - e; i < A.length; i++) ops.push([' ', A[i]]);
+    return ops;
+  }
+  /** A unified diff (git style, 3 context lines) between two versions of a file. '' when they are equal. null = the file does not exist on that side. */
+  function unifiedDiff(before, after, path, ctx) {
+    if (before === after) return '';
+    ctx = ctx == null ? 3 : ctx;
+    const lines = (t) => { if (t == null || t === '') return []; const l = String(t).split('\n'); if (l[l.length - 1] === '') l.pop(); return l; };
+    const ops = diffOps(lines(before), lines(after));
+    const out = ['--- ' + (before == null ? '/dev/null' : 'a/' + path), '+++ ' + (after == null ? '/dev/null' : 'b/' + path)];
+    let i = 0, la = 1, lb = 1; const n = ops.length;
+    const changed = ops.map((o) => o[0] !== ' ');
+    if (!changed.some(Boolean)) return out.join('\n') + '\n(only the final newline differs)';
+    while (i < n) {
+      if (!changed[i]) { i++; la++; lb++; continue; }
+      let start = i, back = 0; while (start > 0 && back < ctx && !changed[start - 1]) { start--; back++; }
+      let end = i, gap = 0, k = i;
+      while (k < n) { if (changed[k]) { end = k; gap = 0; } else if (++gap > ctx * 2) break; k++; }
+      let stop = Math.min(n, end + 1 + ctx);
+      const sa = la - back, sb = lb - back; let ca = 0, cb = 0; const body = [];
+      for (let q = start; q < stop; q++) { const o = ops[q]; body.push(o[0] + o[1]); if (o[0] !== '+') ca++; if (o[0] !== '-') cb++; }
+      out.push('@@ -' + (ca ? sa : sa - 1) + ',' + ca + ' +' + (cb ? sb : sb - 1) + ',' + cb + ' @@'); body.forEach((l) => out.push(l));
+      for (let q = i; q < stop; q++) { if (ops[q][0] !== '+') la++; if (ops[q][0] !== '-') lb++; }
+      i = stop;
+    }
+    return out.join('\n');
+  }
+  /** Lines added and removed between two versions. */
+  function diffStat(before, after) {
+    const lines = (t) => { if (t == null || t === '') return []; const l = String(t).split('\n'); if (l[l.length - 1] === '') l.pop(); return l; };
+    let add = 0, del = 0; diffOps(lines(before), lines(after)).forEach((o) => { if (o[0] === '+') add++; else if (o[0] === '-') del++; });
+    return { add, del };
+  }
+
+  return { diffOps, unifiedDiff, diffStat, fuzzyFind, fuzzyReplace, reindent, nearby, numbered, similarity, STAGE_NAMES, parseSearchReplace, parseUnifiedDiff, applyHunks, looseCalls, looksLikePath,
     definitions, repoMap, extOf, LANG, bracketErrors, jsSyntaxError, diagnose, diagLine };
 });
