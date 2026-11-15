@@ -35,9 +35,13 @@ const requests = [];
   await new Promise((r) => setTimeout(r, 600));
   assert.deepStrictEqual(errors, []);
   assert.ok(d.querySelector('.welcome'), 'welcome screen');
-  assert.strictEqual(d.querySelectorAll('#agents .pill').length, 5);
+  assert.strictEqual(d.querySelectorAll('#agents .pill').length, 6);
   assert.ok(/^openai/.test(d.getElementById('btnModel').textContent));
-  assert.ok(d.getElementById('modeBtn') && /Coder/.test(d.getElementById('btnMode').textContent), 'mode selector');
+  assert.ok(d.getElementById('modeBtn') && /Auto/.test(d.getElementById('btnMode').textContent), 'Auto is the default agent');
+  // the rest of this file drives the Coder agent directly; Auto mode has its own test (tests/auto.test.js)
+  [...d.querySelectorAll('#agents .pill')].find((b) => /Coder/.test(b.textContent)).click();
+  assert.ok(/Coder/.test(d.getElementById('btnMode').textContent), 'mode selector');
+  w.__cyb.limiter.limits.pollinations = { concurrent: 2, rpm: 6000, daily: 0 };
 
   d.getElementById('input').value = 'Build a timer';
   d.getElementById('btnSend').click();

@@ -5,6 +5,7 @@
   else root.Core = factory();
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
+  const Orchestra = (typeof module === 'object' && module.exports) ? require('./orchestra.js') : (typeof self !== 'undefined' ? self : this).Orchestra;
   const Safety = (typeof module === 'object' && module.exports) ? require('./safety.js') : (typeof self !== 'undefined' ? self : this).Safety;
 
   // ---------------------------------------------------------------- providers
@@ -127,6 +128,8 @@
     'or refine the search if it found the wrong sources. Stop as soon as you can answer. Give concise findings with the source URL supporting each, and say what you could not verify.';
 
   const AGENTS = {
+    // Not an agent with its own prompt: the app routes each request to one of the agents below (see orchestra.js).
+    auto: { name: 'Auto', icon: '✨', meta: true, blurb: 'Picks the right agent; plans, codes and reviews', tools: [], prompt: '' },
     coder: {
       name: 'Coder', icon: '⌨', blurb: 'Orchestrates the whole job: reads, edits, runs, reviews',
       tools: FS_READ.concat(FS_WRITE, EXEC, WEB, ['spawn_agent', 'load_skill'], META),
@@ -195,7 +198,7 @@
         'API details or code examples that answer the request, with the source URL for each. Say plainly if you could not find it. ' + RESEARCH_GUIDELINES,
     },
   };
-  const SUBAGENT_TYPES = ['explorer', 'thinker', 'reviewer', 'researcher'];
+  const SUBAGENT_TYPES = Orchestra.ASK_TYPES;
 
   const TOOL_DOCS = {
     list_files: '<list_files/>\n  List every file in the workspace with its size.',
@@ -208,8 +211,10 @@
     run_terminal_command: '<run_terminal_command>\npython main.py\n</run_terminal_command>\n  Run a command in the workspace root and get its output and exit code. Optional attribute timeout="120" (seconds). See Environment for what can run.',
     web_search: '<web_search query="pyodide load package from wheel"/>\n  Search the web; returns titles, URLs and snippets.',
     read_url: '<read_url url="https://example.com/docs"/>\n  Fetch a web page and return its readable text.',
-    spawn_agent: '<spawn_agent type="reviewer">\nWhat the agent should do, with all the context it needs.\n</spawn_agent>\n  Delegate to a helper agent with a fresh context and get its report back. Types: ' +
-      'explorer (find and summarise relevant code), thinker (reason about a hard design or bug), reviewer (review the changes you made), researcher (look things up on the web).',
+    spawn_agent: '<spawn_agent type="reviewer">\nWhat the agent should do, with all the context it needs.\n</spawn_agent>\n  Ask a helper agent with a fresh context and get its report back (also callable as ask_agent). Types: ' +
+      'explorer (find and summarise relevant code), thinker (reason about a hard design or bug), reviewer (review the changes you made), researcher (look things up on the web), ' +
+      'planner (write an implementation plan), reverse (analyse an APK or binary; it writes notes only under analysis/), chat (a general question). ' +
+      'Helpers cannot ask further helpers and, except reverse in analysis/, cannot change files: you make the edits. At most ' + Orchestra.MAX_ASKS + ' asks per task, so use them where they matter.',
     load_skill: '<load_skill name="skill-name"/>\n  Load the full instructions of an installed skill listed under Skills.',
     write_todos: '<write_todos>\n- [x] finished step\n- [ ] next step\n</write_todos>\n  Show the user your task checklist. Send the whole list again whenever it changes.',
     suggest_followups: '<suggest_followups>\nAdd dark mode\nWrite tests for the parser\n</suggest_followups>\n  Offer up to three short next steps, one per line, at the very end of your final reply.',
@@ -233,7 +238,7 @@
     run_terminal_command: [{ command: S('The command line to run in the workspace root'), timeout: N('Timeout in seconds (optional)'), secrets: S('Comma separated names of saved secrets to pass as environment variables (optional)') }, ['command']],
     web_search: [{ query: S('Search query') }, ['query']],
     read_url: [{ url: S('Page URL') }, ['url']],
-    spawn_agent: [{ type: { type: 'string', enum: ['explorer', 'thinker', 'reviewer', 'researcher'], description: 'Which helper agent' }, prompt: S('What the agent should do, with all the context it needs') }, ['type', 'prompt']],
+    spawn_agent: [{ type: { type: 'string', enum: Orchestra.ASK_TYPES, description: 'Which helper agent' }, prompt: S('What the agent should do, with all the context it needs') }, ['type', 'prompt']],
     load_skill: [{ name: S('Name of an installed skill') }, ['name']],
     write_todos: [{ todos: { type: 'array', description: 'The whole checklist', items: { type: 'object', properties: { task: S('Step'), done: { type: 'boolean' } }, required: ['task', 'done'] } } }, ['todos']],
     suggest_followups: [{ followups: { type: 'array', items: S('A short next step'), description: 'Up to three next steps' } }, ['followups']],
@@ -361,7 +366,8 @@
   }
   /** Remove hidden reasoning that some models emit inline. */
   function stripThink(text) {
-    return text.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/g, '').replace(/<think(?:ing)?>[\s\S]*$/, '');
+    return text.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/g, '').replace(/<think(?:ing)?>[\s\S]*$/, '')
+      .replace(/<(\/?)ask_agents?\b/g, '<$1spawn_agent'); // ask_agent is another name for spawn_agent
   }
 
   /** Find every tool call in an assistant reply. `allowed` limits which tools count. */
@@ -400,7 +406,7 @@
     shell: 'run_terminal_command', bash: 'run_terminal_command', terminal: 'run_terminal_command', execute_command: 'run_terminal_command',
     print_tree: 'list_files', list_dir: 'list_files', tree: 'list_files', open_file: 'read_file', cat: 'read_file', view_file: 'read_file', find: 'find_files',
     exec: 'run_terminal_command', run: 'run_terminal_command', python: 'run_terminal_command', write: 'write_file', save_file: 'write_file', edit: 'edit_file', remove_file: 'delete_file',
-    spawn_agents: 'spawn_agent', create_file: 'write_file', search: 'web_search', fetch_url: 'read_url', open_url: 'read_url',
+    spawn_agents: 'spawn_agent', ask_agent: 'spawn_agent', ask_agents: 'spawn_agent', create_file: 'write_file', search: 'web_search', fetch_url: 'read_url', open_url: 'read_url',
   };
   const attrEsc = (v) => String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const pick = (o, keys) => { for (const k of keys) if (o[k] != null) return o[k]; return undefined; };
@@ -634,8 +640,17 @@
     });
   }
   /** Every tool call passes the approval gate here, whichever way the model wrote it. */
+  /** Helper agents have a write rule (env.writeError). Returns the reason a call is refused, or ''. */
+  function writeRefusal(call, env) {
+    if (!env || !env.writeError) return '';
+    const a = call.attrs || {};
+    const path = call.name === 'zip_extract' ? (a.dest || a.entry || '') : a.path;
+    if (['write_file', 'edit_file', 'delete_file', 'zip_extract'].indexOf(call.name) < 0) return '';
+    return env.writeError(path || '') || '';
+  }
   async function runTool(call, ws, env, gate) {
     env = env || {};
+    const refused = writeRefusal(call, env); if (refused) throw new Error(refused);
     await Safety.ensureApproved(call, env, gate, (c) => previewEdits([c], ws)[0]);
     return runToolRaw(call, ws, env);
   }
@@ -809,7 +824,9 @@
     env = env || {};
     const gate = { ok: new Set(), no: new Set() };
     // all file edits of this step are shown to the user in one sheet
-    await Safety.approveEdits(calls, env, gate, (list) => previewEdits(list, ws));
+    // calls a helper agent is not allowed to make are never shown for approval; they fail in runTool below
+    const askable = calls.filter((c) => !writeRefusal(c, env));
+    await Safety.approveEdits(askable, env, gate, (list) => previewEdits(list, ws));
     const one = async (c, i) => {
       let res, ok = true;
       if (onProgress) onProgress(callLabel(c));
@@ -822,7 +839,8 @@
       if (calls[i].name === 'spawn_agent' || calls[i].name === 'web_search' || calls[i].name === 'read_url') {
         const batch = [];
         const kind = calls[i].name === 'spawn_agent';
-        while (i < calls.length && ((calls[i].name === 'spawn_agent') === kind) && ['spawn_agent', 'web_search', 'read_url'].indexOf(calls[i].name) >= 0) { batch.push(one(calls[i], i)); i++; }
+        // env.serial: the request budget is low, so helpers run one after another
+        while (i < calls.length && ((calls[i].name === 'spawn_agent') === kind) && ['spawn_agent', 'web_search', 'read_url'].indexOf(calls[i].name) >= 0) { const job = one(calls[i], i); if (env.serial && kind) await job; else batch.push(job); i++; }
         await Promise.all(batch);
       } else { await one(calls[i], i); i++; }
     }
@@ -1167,7 +1185,7 @@
   return {
     PROVIDERS, AGENTS, TOOL_DOCS, toolSchemas, parseSkill, findSkillPath, recoverFailedGeneration, PASSIVE, SUBAGENT_TYPES, BODY_TOOLS, parseModelList, buildSystemPrompt, parseToolCalls, displayText, Workspace,
     stripThink, followupsOf, nativeCallToText, nativeCallsToText, tokenize, parseCommand, matchGlob, callLabel,
-    Safety, previewEdits, runTool, runTools, formatToolResults, fileInfo, detectType, extractStrings, hexdump, zipEntries, zipRead, zipCreate,
+    Safety, Orchestra, previewEdits, runTool, runTools, formatToolResults, fileInfo, detectType, extractStrings, hexdump, zipEntries, zipRead, zipCreate,
     decodeAxml, decodeIfText, createSseParser, trimHistory, fmtSize, crc32, utf8,
   };
 });

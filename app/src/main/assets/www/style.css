@@ -228,3 +228,18 @@ html[data-style="3d"] .wide,html[data-style="3d"] .lite,html[data-style="3d"] #b
 .asecrets { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
 .asecret { font: 600 13px ui-monospace, monospace; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--line, #444); }
 .undonote { font-size: 12px; opacity: .85; margin: 6px 0 2px; padding: 8px 10px; border: 1px dashed var(--line, #555); border-radius: 10px; }
+/* Auto mode timeline */
+.msg.timeline { font-size: 12.5px; padding: 8px 10px; border: 1px solid var(--line, #3a3a3a); border-radius: 12px; margin: 6px 0; }
+.tltop { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.routechip { font: 600 12.5px inherit; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line, #555); background: transparent; color: inherit; }
+.reqs { margin-left: auto; opacity: .75; font-variant-numeric: tabular-nums; }
+.tlnote { opacity: .7; }
+.routemenu { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 2px; }
+.routeopt { font-size: 12.5px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line, #555); background: transparent; color: inherit; }
+.msg.timeline details { margin-top: 6px; }
+.msg.timeline summary { cursor: pointer; opacity: .9; }
+.tlrow { display: flex; flex-wrap: wrap; gap: 4px 8px; padding: 4px 0 0 4px; align-items: baseline; }
+.tlicon { width: 1.1em; text-align: center; }
+.tlrow.fail .tlicon { color: #e88; } .tlrow.ok .tlicon { color: #9c9; } .tlrow.skip { opacity: .6; }
+.tlname { font-weight: 600; }
+.tlmodel { font-family: ui-monospace, monospace; font-size: 11.5px; opacity: .8; }
