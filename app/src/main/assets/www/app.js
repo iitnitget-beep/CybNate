@@ -135,12 +135,12 @@
   }
 
   /** One request to the model. Returns { full, status, raw, err }. */
-  async function requestModel(p, messages, onText, signal, stream) {
+  async function requestModel(p, messages, onText, signal, stream, tools) {
     const sse = C.createSseParser(); let full = '', raw = '', err = '';
     const res = await httpStream(p.chatUrl, {
       method: 'POST', signal,
       headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders(settings.provider)),
-      body: JSON.stringify(stream ? { model: settings.model, messages, stream: true } : { model: settings.model, messages }),
+      body: JSON.stringify(Object.assign({ model: settings.model, messages }, stream ? { stream: true } : {}, tools && tools.length ? { tools: C.toolSchemas(tools), tool_choice: 'auto' } : {})),
     }, (chunk) => {
       if (raw.length < 400000) raw += chunk;
       if (!stream) return;
@@ -162,7 +162,7 @@
     return { full, status: res.status, raw, err };
   }
 
-  async function chatStream(messages, onText, signal) {
+  async function chatStream(messages, onText, signal, tools) {
     const p = providerCfg();
     if (!p.chatUrl) throw new Error('Set the server URL for the Custom provider in Settings.');
     if (p.needsKey && !(settings.keys[settings.provider] || '').trim()) throw new Error('Add your free ' + p.name + ' key in Settings, or switch to Pollinations (no key).');
@@ -173,11 +173,15 @@
       if (!sys || !rest.length) return null;
       return [{ role: 'user', content: '<instructions>\n' + sys + '\n</instructions>\n\n' + rest[0].content }].concat(rest.slice(1));
     };
+    // With tools the model gets real function definitions first (what strong free models expect);
+    // providers that reject them fall through to the plain-text tool protocol.
+    const useTools = tools && tools.length && settings.nativeTools !== false;
     const variants = [() => [messages, true], () => [messages, false], () => { const m = merged(); return m ? [m, true] : null; }];
-    let r = null, waits = 0;
+    if (useTools) variants.unshift(() => [messages, true, tools]);
+    let r = null, waits = 0, toolRetries = 0;
     for (let v = 0; v < variants.length; v++) {
       const args = variants[v](); if (!args) continue;
-      r = await requestModel(p, args[0], onText, signal, args[1]);
+      r = await requestModel(p, args[0], onText, signal, args[1], args[2]);
       // free tiers rate-limit often: wait and retry a couple of times before giving up
       if ((r.status === 429 || r.status === 503 || r.status === 402) && !r.full && waits < 6) {
         // e.g. the keyless tier allows one reply every 45 seconds: wait exactly as long as the provider asks
@@ -189,9 +193,21 @@
           v--; continue;
         }
       }
+      // tool-related refusals ("Tool choice is none, but model called a tool", tool_use_failed, tools unsupported)
+      const errText = r.err || (r.status >= 400 ? r.raw : '');
+      if (!r.full && errText && /tool|function/i.test(errText) && r.status !== 401 && r.status !== 403) {
+        const rec = C.recoverFailedGeneration(r.raw);
+        if (rec) { onText(rec); chatStream.lastVariant = v; return rec; }
+        if (useTools && toolRetries < 2) {
+          toolRetries++; setStatus('retrying tool call…');
+          // the model wants native calls but none were offered -> go back to the native variant; otherwise drop to text
+          if (/tool choice is none|called a tool/i.test(errText)) { v = -1; continue; }
+          if (args[2]) continue;
+        }
+      } else if (!r.full && args[2] && (r.status === 400 || r.status === 404 || r.status === 422 || r.status === 500)) continue; // provider does not take tools
       if (r.status >= 400) throw new Error(explain(r.status, r.raw, p));
       if (r.full) { chatStream.lastVariant = v; return r.full; }
-      if (r.err) break;
+      if (r.err) { if (args[2]) continue; break; }
       setStatus('empty reply, retrying…');
     }
     if (r && r.err) throw new Error(p.name + ': ' + r.err);
@@ -382,7 +398,7 @@
     for (let step = 0; step < 8; step++) {
       const sys = C.buildSystemPrompt(type, ws.summary(), settings.extra, caps({ noSpawn: true }));
       setStatus(agent.icon + ' ' + type + (step ? ' step ' + (step + 1) : '') + '…');
-      last = await chatStream([{ role: 'system', content: sys }].concat(C.trimHistory(msgs, 40000)), (t) => setStatus(agent.icon + ' ' + type + ' ' + t.length + ' chars'), signal);
+      last = await chatStream([{ role: 'system', content: sys }].concat(C.trimHistory(msgs, 40000)), (t) => setStatus(agent.icon + ' ' + type + ' ' + t.length + ' chars'), signal, agent.tools.filter((t) => t !== 'spawn_agent'));
       msgs.push({ role: 'assistant', content: last });
       const calls = C.parseToolCalls(last, agent.tools).filter((c) => C.PASSIVE.indexOf(c.name) < 0);
       if (!calls.length) return C.displayText(last).trim();
@@ -535,7 +551,7 @@
           full = await chatStream([{ role: 'system', content: sys }].concat(apiHistory()), (t) => {
             latest = t; setStatus('writing… ' + t.length + ' chars');
             if (!pending) { pending = true; setTimeout(paint, 90); }
-          }, abortCtl.signal);
+          }, abortCtl.signal, agent.tools);
         } catch (e) {
           if (latest) { msg.content = latest; current.messages.push(msg); }
           node.remove(); if (latest) box.appendChild(msgNode(msg));

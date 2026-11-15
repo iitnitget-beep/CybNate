@@ -85,6 +85,46 @@
   /** Tools that only update the UI; they never need another model turn by themselves. */
   const PASSIVE = ['write_todos', 'suggest_followups'];
 
+  // The guideline blocks below are adapted from the open-source Codebuff / Freebuff agent
+  // definitions (agents/base2/base2.ts, agents/reviewer/code-reviewer.ts, agents/researcher/researcher-web.ts),
+  // Copyright 2025 Codebuff, Apache License 2.0. See NOTICE.
+  const GUIDELINES = '# General guidelines\n' +
+    '- **Conventions & Style:** Rigorously adhere to existing project conventions when modifying code. Analyze surrounding code, tests, and configuration first.\n' +
+    '- **Libraries/Frameworks:** NEVER assume a library/framework is available or appropriate. Verify its established usage within the project (check imports, configuration files like package.json, requirements.txt, build.gradle, or observe neighboring files) before employing it.\n' +
+    '- **Simplicity & Minimalism:** Make as few changes as possible to the codebase to address the user\'s request. Prefer simple solutions.\n' +
+    '- **Code Reuse:** Always reuse helper functions, components, classes, etc., whenever possible! Don\'t reimplement what already exists elsewhere in the codebase.\n' +
+    '- **Front end development:** Make the UI look as good as possible. Don\'t hold back. Give it your all.\n' +
+    '    - Include as many relevant features and interactions as possible\n' +
+    '    - Add thoughtful details like hover states, transitions, and micro-interactions\n' +
+    '    - Apply design principles: hierarchy, contrast, balance, and movement\n' +
+    '- **Refactoring Awareness:** Whenever you modify an exported symbol like a function, class or variable, find and update all the references to it with search_files.\n' +
+    '- **Be careful with terminal commands:** Don\'t run commands that could be destructive or have effects that are hard to undo (deleting many files, overwriting user data) unless the user explicitly asks you to.\n' +
+    '- **Do what the user asks:** If the user asks you to do something, even running a risky terminal command, do it.\n' +
+    '- **Don\'t surprise the user:** Don\'t modify files if the user has not asked you to do so at least implicitly.\n' +
+    '- **Use <think></think> tags for moderate reasoning:** When you need to work through something moderately complex (understanding code flow, planning a small refactor, edge cases), wrap your thinking in <think></think> tags. Spawn the thinker agent for anything more complex, at most once or twice per task.\n' +
+    '- **Keep final summary extremely concise:** Write only a few words for each change you made in the final summary.\n\n' +
+    '# Spawning agents guidelines\n' +
+    '- **Spawn multiple agents in parallel:** Start several helper agents in one reply when they do not depend on each other. This is faster and more comprehensive.\n' +
+    '- **Sequence agents properly:** Spawn context-gathering agents (explorer, researcher) before making edits. Don\'t spawn agents in parallel that depend on each other.\n' +
+    '- **Give context:** A spawned agent starts with a fresh context and cannot see this conversation, so its prompt must name the files and state the goal.\n' +
+    '- **Validate:** For non-trivial changes, test them by running appropriate validation commands for the project (tests, a syntax check, running the script). If you can, only test the area you are editing. Don\'t skip this step unless the change is very small and targeted.\n' +
+    '- **Review:** Spawn a reviewer after you have implemented code changes. Skip this only if the change is extremely straightforward and obvious.';
+  const REVIEW_GUIDELINES = '# Guidelines\n' +
+    '- Focus on giving feedback that will help get to a complete and correct solution as the top priority.\n' +
+    '- Make sure all the requirements in the user\'s message are addressed. Call out any requirements that are not addressed -- advocate for the user!\n' +
+    '- Try to keep any changes to the codebase as minimal as possible.\n' +
+    '- Simplify any logic that can be simplified.\n' +
+    '- Where a function can be reused, reuse it and do not create a new one.\n' +
+    '- Make sure that no new dead code is introduced.\n' +
+    '- Make sure there are no missing imports.\n' +
+    '- Make sure no sections were deleted that weren\'t supposed to be deleted.\n' +
+    '- Make sure the new code matches the style of the existing code.\n' +
+    '- Make sure there are no unnecessary try/catch blocks. Prefer to remove those.\n' +
+    'Be brief: if you don\'t have much critical feedback, simply say it looks good in one sentence. Be extremely concise.';
+  const RESEARCH_GUIDELINES = 'Start with web_search using a focused keyword query. Base your answer on the returned excerpts when they cover the question and cite their URLs. ' +
+    'Use read_url when an excerpt lacks context, a precise detail, or evidence for a claim. Prefer primary sources. If the evidence leaves a gap, fetch the most relevant page, ' +
+    'or refine the search if it found the wrong sources. Stop as soon as you can answer. Give concise findings with the source URL supporting each, and say what you could not verify.';
+
   const AGENTS = {
     coder: {
       name: 'Coder', icon: '⌨', blurb: 'Orchestrates the whole job: reads, edits, runs, reviews',
@@ -103,7 +143,7 @@
         '6. Finish: reply with a very short summary of what changed and how you verified it, then offer next steps with suggest_followups.\n\n' +
         'If the request is a question rather than a change, gather the context and answer directly with the key evidence. ' +
         'If the request is ambiguous in a way that changes what you would build, ask one short question instead of guessing. ' +
-        'Keep messages brief: no long preambles, no repeating file contents the tools already wrote.',
+        'Keep messages brief: no long preambles, no repeating file contents the tools already wrote.\n\n' + GUIDELINES,
     },
     planner: {
       name: 'Planner', icon: '🧭', blurb: 'Researches and writes an implementation plan, no edits',
@@ -117,7 +157,7 @@
       tools: FS_READ.concat(EXEC),
       prompt: 'You are CybNate Reviewer, a strict senior code reviewer. Read the relevant files (and run the code or tests when that helps) and report ' +
         'real problems in order of severity: bugs, security issues, broken edge cases, then maintainability. For each one give the file, the ' +
-        'offending code and the concrete fix. Do not pad the review with praise or generic advice. If the code is fine, say so in one line. You do not edit files.',
+        'offending code and the concrete fix. Do not pad the review with praise or generic advice. If the code is fine, say so in one line. You do not edit files.\n\n' + REVIEW_GUIDELINES,
     },
     reverse: {
       name: 'Reverse', icon: '🧬', blurb: 'Analyses APKs, binaries and decompiled code',
@@ -151,7 +191,7 @@
     researcher: {
       name: 'Researcher', icon: '🌐', sub: true, blurb: 'Searches the web and documentation', tools: WEB,
       prompt: 'You are a web researcher working for another agent. Search, open the most relevant pages, and report the specific facts, ' +
-        'API details or code examples that answer the request, with the source URL for each. Say plainly if you could not find it.',
+        'API details or code examples that answer the request, with the source URL for each. Say plainly if you could not find it. ' + RESEARCH_GUIDELINES,
     },
   };
   const SUBAGENT_TYPES = ['explorer', 'thinker', 'reviewer', 'researcher'];
@@ -179,6 +219,52 @@
     android_manifest: '<android_manifest path="app.apk"/>\n  Decode the binary AndroidManifest.xml from an APK (or a raw binary manifest file) to readable XML.',
   };
 
+  const S = (d) => ({ type: 'string', description: d }), N = (d) => ({ type: 'integer', description: d });
+  const TOOL_PARAMS = {
+    list_files: [{}, []],
+    read_file: [{ path: S('File path relative to the workspace root'), start: N('First line to read (optional)'), end: N('Last line to read (optional)') }, ['path']],
+    search_files: [{ query: S('Text or regular expression to look for'), glob: S('Optional glob limiting the files, e.g. src/**/*.js') }, ['query']],
+    find_files: [{ pattern: S('Glob pattern, e.g. **/*.test.js') }, ['pattern']],
+    write_file: [{ path: S('File path relative to the workspace root'), content: S('The complete file content') }, ['path', 'content']],
+    edit_file: [{ path: S('File path'), edits: { type: 'array', description: 'Replacements to apply in order', items: { type: 'object', properties: { search: S('Exact existing text'), replace: S('New text') }, required: ['search', 'replace'] } } }, ['path', 'edits']],
+    delete_file: [{ path: S('File path') }, ['path']],
+    run_terminal_command: [{ command: S('The command line to run in the workspace root'), timeout: N('Timeout in seconds (optional)') }, ['command']],
+    web_search: [{ query: S('Search query') }, ['query']],
+    read_url: [{ url: S('Page URL') }, ['url']],
+    spawn_agent: [{ type: { type: 'string', enum: ['explorer', 'thinker', 'reviewer', 'researcher'], description: 'Which helper agent' }, prompt: S('What the agent should do, with all the context it needs') }, ['type', 'prompt']],
+    write_todos: [{ todos: { type: 'array', description: 'The whole checklist', items: { type: 'object', properties: { task: S('Step'), done: { type: 'boolean' } }, required: ['task', 'done'] } } }, ['todos']],
+    suggest_followups: [{ followups: { type: 'array', items: S('A short next step'), description: 'Up to three next steps' } }, ['followups']],
+    file_info: [{ path: S('File path') }, ['path']],
+    strings: [{ path: S('File path'), min: N('Minimum length'), filter: S('Optional case-insensitive regex'), limit: N('Maximum results') }, ['path']],
+    hexdump: [{ path: S('File path'), offset: S('Start offset, decimal or 0x-prefixed'), length: N('Number of bytes') }, ['path']],
+    zip_list: [{ path: S('Archive path') }, ['path']],
+    zip_extract: [{ path: S('Archive path'), entry: S('Entry name inside the archive'), dest: S('Destination path in the workspace') }, ['path', 'entry']],
+    android_manifest: [{ path: S('APK or binary manifest path') }, ['path']],
+  };
+  /** OpenAI-style function definitions for the given tool names. */
+  function toolSchemas(names) {
+    return (names || []).filter((n) => TOOL_PARAMS[n]).map((n) => ({
+      type: 'function',
+      function: { name: n, description: TOOL_DOCS[n].split('\n').pop().trim(), parameters: { type: 'object', properties: TOOL_PARAMS[n][0], required: TOOL_PARAMS[n][1] } },
+    }));
+  }
+  /** Some providers reject a reply and return the model's raw attempt ("failed_generation"). Recover the tool call from it. */
+  function recoverFailedGeneration(raw) {
+    let fg = '';
+    try { const j = JSON.parse(raw); fg = (j.error && j.error.failed_generation) || ''; } catch (e) { const m = /"failed_generation"\s*:\s*("(?:[^"\\\\]|\\\\.)*")/.exec(raw || ''); if (m) { try { fg = JSON.parse(m[1]); } catch (e2) { /* ignore */ } } }
+    if (!fg || typeof fg !== 'string') return '';
+    const tagRe = new RegExp('<(' + ALL_TOOLS.join('|') + ')\\b');
+    if (tagRe.test(fg)) return fg;
+    const out = [];
+    const tryObj = (o) => { if (o && typeof o === 'object' && (o.name || (o.function && o.function.name))) out.push(nativeCallToText(o.name || o.function.name, o.arguments || o.parameters || (o.function && o.function.arguments) || {})); };
+    try { const j = JSON.parse(fg); (Array.isArray(j) ? j : (j.tool_calls || [j])).forEach(tryObj); } catch (e) {
+      const m = /<function=([\w.:-]+)>?\s*(\{[\s\S]*\})\s*(<\/function>)?/.exec(fg);
+      if (m) out.push(nativeCallToText(m[1], m[2]));
+    }
+    const text = out.join('\n');
+    return tagRe.test(text) ? text : '';
+  }
+
   function environmentDoc(caps) {
     caps = caps || {};
     return '# Environment\n' +
@@ -204,7 +290,8 @@
         'inside <tool_results>. Rules:\n' +
         '- Write the tags exactly as shown, as plain text, never inside a code fence.\n' +
         '- Use several tools in one reply whenever they do not depend on each other; it is much faster. After writing tool tags, stop and wait for the results.\n' +
-        '- Never invent tool results. When the task is finished, reply without any tool tag (suggest_followups is allowed).\n\n' +
+        '- Never invent tool results. When the task is finished, reply without any tool tag (suggest_followups is allowed).\n' +
+        '- If your interface offers function calling, calling the functions with these same names is equally fine. Never call a tool that is not listed here.\n\n' +
         tools.map((t) => TOOL_DOCS[t]).join('\n\n') + '\n';
       if (tools.indexOf('run_terminal_command') >= 0) s += '\n' + environmentDoc(caps);
       if (tools.some((t) => FS_READ.indexOf(t) >= 0)) s += '\n# Workspace\n' + (fileSummary || '(empty)') + '\n';
@@ -1009,7 +1096,7 @@
   }
 
   return {
-    PROVIDERS, AGENTS, TOOL_DOCS, PASSIVE, SUBAGENT_TYPES, BODY_TOOLS, parseModelList, buildSystemPrompt, parseToolCalls, displayText, Workspace,
+    PROVIDERS, AGENTS, TOOL_DOCS, toolSchemas, recoverFailedGeneration, PASSIVE, SUBAGENT_TYPES, BODY_TOOLS, parseModelList, buildSystemPrompt, parseToolCalls, displayText, Workspace,
     stripThink, followupsOf, nativeCallToText, nativeCallsToText, tokenize, parseCommand, matchGlob, callLabel,
     runTool, runTools, formatToolResults, fileInfo, detectType, extractStrings, hexdump, zipEntries, zipRead, zipCreate,
     decodeAxml, decodeIfText, createSseParser, trimHistory, fmtSize, crc32, utf8,

@@ -137,3 +137,20 @@ const C = require('../app/src/main/assets/www/core.js');
   assert.ok(!C.buildSystemPrompt('chat', '').includes('write_file'));
   console.log('ALL CORE TESTS PASSED');
 })().catch((e) => { console.error(e); process.exit(1); });
+
+// ---- native function schemas and failed_generation recovery
+(function () {
+  const assert = require('assert');
+  const C2 = require('../app/src/main/assets/www/core.js');
+  const sc = C2.toolSchemas(C2.AGENTS.coder.tools);
+  assert.strictEqual(sc.length, C2.AGENTS.coder.tools.length);
+  sc.forEach((t) => { assert.strictEqual(t.type, 'function'); assert.ok(t.function.description.length > 5, t.function.name); assert.strictEqual(t.function.parameters.type, 'object'); });
+  // every schema round-trips through the native-call converter into a parsable tag
+  const sample = { write_file: { path: 'a.txt', content: 'hi' }, edit_file: { path: 'a.txt', edits: [{ search: 'a', replace: 'b' }] }, run_terminal_command: { command: 'ls' }, spawn_agent: { type: 'reviewer', prompt: 'x' }, write_todos: { todos: [{ task: 'a', done: true }] }, suggest_followups: { followups: ['a'] }, read_file: { path: 'a.txt' }, search_files: { query: 'x' }, find_files: { pattern: '*' }, web_search: { query: 'q' }, read_url: { url: 'https://e.com' }, delete_file: { path: 'a' }, list_files: {} };
+  Object.keys(sample).forEach((n) => { const calls = C2.parseToolCalls(C2.nativeCallToText(n, sample[n]), C2.AGENTS.coder.tools); assert.strictEqual(calls.length, 1, n); assert.strictEqual(calls[0].name, n); });
+  const groq = JSON.stringify({ error: { message: 'Tool choice is none, but model called a tool', code: 'tool_use_failed', failed_generation: '{"name": "write_file", "arguments": {"path": "index.html", "content": "<h1>x</h1>"}}' } });
+  assert.ok(/<write_file path="index.html">/.test(C2.recoverFailedGeneration(groq)));
+  assert.strictEqual(C2.recoverFailedGeneration('{"error":{"message":"nope"}}'), '');
+  assert.ok(/Code Reuse/.test(C2.buildSystemPrompt('coder', '', '', {})));
+  console.log('NATIVE TOOL SCHEMA TESTS PASSED');
+})();
