@@ -273,6 +273,17 @@ public class MainActivity extends Activity {
                         int status = c.getResponseCode();
                         String ct = c.getContentType();
                         emit(id, "h", status + "|" + (ct == null ? "" : ct));
+                        // rate-limit facts for the model router (retry-after, x-ratelimit-*); nothing else is passed on
+                        try {
+                            JSONObject rl = new JSONObject();
+                            for (java.util.Map.Entry<String, java.util.List<String>> en : c.getHeaderFields().entrySet()) {
+                                String k = en.getKey();
+                                if (k == null || en.getValue() == null || en.getValue().isEmpty()) continue;
+                                String lk = k.toLowerCase(java.util.Locale.US);
+                                if (lk.equals("retry-after") || lk.contains("ratelimit")) rl.put(lk, en.getValue().get(0));
+                            }
+                            if (rl.length() > 0) emit(id, "H", rl.toString());
+                        } catch (Exception ignored) { }
                         InputStream in = status >= 400 ? c.getErrorStream() : c.getInputStream();
                         if (in != null) {
                             InputStreamReader r = new InputStreamReader(in, StandardCharsets.UTF_8);

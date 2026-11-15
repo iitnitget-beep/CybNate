@@ -153,6 +153,30 @@
     const b = O.createBudget(2); b.take(); b.take(); let err = ''; try { b.take(); } catch (e) { err = e.name + ':' + e.code; }
     must(err === 'BudgetError:task', err); return 'peak ' + peak + ', budget stops at 2/2';
   });
+  await test('router: pace follows provider replies; paid model refused before sending', async () => {
+    const O = T.C.Orchestra; let clock = 1700000000000;
+    const lim = O.createLimiter({ now: () => clock, sleep: async (ms) => { clock += ms; }, limits: { p: { concurrent: 2, rpm: 60, daily: 0 } } });
+    lim.observe('p', { status: 429, headers: { 'Retry-After': '20' } });
+    must(lim.status('p').blockedMs === 20000 && lim.status('p').rpm === 30, JSON.stringify(lim.status('p')));
+    const t0 = clock; (await lim.acquire('p'))(); must(clock - t0 >= 20000, 'waited ' + (clock - t0));
+    lim.observe('p', { status: 429, headers: { 'retry-after': '3600' } });
+    let err = ''; try { await lim.acquire('p'); } catch (e) { err = e.name + ':' + e.code; } must(err === 'BudgetError:rate', err);
+    must(O.historyBudget(8192, 9000) < 70000 && O.historyBudget(0, 9000) === 70000, 'context budget');
+    must(!T.freeCheck({ provider: 'openrouter', model: 'openai/gpt-5' }).ok && T.freeCheck({ provider: 'openrouter', model: 'x/y:free' }).ok, 'free check');
+    let msg = '';
+    T.settings.keys.openrouter = 'selftest-not-a-key';
+    try { msg = ''; await T.chatStream([{ role: 'user', content: 'hi' }], () => {}, undefined, null, { chain: [{ provider: 'openrouter', model: 'openai/gpt-5' }] }); } catch (e) { msg = e.message; } finally { delete T.settings.keys.openrouter; }
+    must(/Not sent: "openai\/gpt-5" on OpenRouter is not a free model/.test(msg), msg);
+    return 'waits 20 s when asked, refuses a 1 h wait, paid model not sent';
+  });
+  await test('router: rate-limit headers reach the app through the native bridge', async () => {
+    if (!T.Native) return 'skipped: no native bridge (browser run)';
+    let res; try { res = await T.nativeStream('https://api.github.com/rate_limit', { headers: { Accept: 'application/json' } }, () => {}); } catch (e) { return 'skipped: no network (' + e.message + ')'; }
+    const h = T.C.Orchestra.parseRateHeaders(res.headers);
+    must(res.status === 200 || res.status === 403 || res.status === 429, 'status ' + res.status);
+    must(h.limit > 0 && h.remaining >= 0 && h.resetMs >= 0, 'headers: ' + JSON.stringify(res.headers));
+    return 'HTTP ' + res.status + ', limit ' + h.limit + ', remaining ' + h.remaining + ', resets in ' + Math.round(h.resetMs / 60000) + ' min';
+  });
   await test('auto: helper agents cannot change project files through the shell', async () => {
     T.ws.set('keep.txt', 'original');
     const r1 = await T.helperExec('reviewer', 'echo changed > keep.txt; echo new > made-by-reviewer.txt; echo ran', 30);

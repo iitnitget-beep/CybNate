@@ -84,14 +84,15 @@
 
   function nativeStream(url, opt, onChunk) {
     return new Promise((resolve, reject) => {
-      const id = 'r' + (++nativeSeq); let status = 0, ctype = '';
+      const id = 'r' + (++nativeSeq); let status = 0, ctype = '', headers = {};
       const done = () => { delete nativeReqs[id]; if (opt.signal) opt.signal.removeEventListener('abort', onAbort); };
       const onAbort = () => { try { Native.httpAbort(id); } catch (e) {} done(); reject(abortError()); };
       if (opt.signal) { if (opt.signal.aborted) return reject(abortError()); opt.signal.addEventListener('abort', onAbort); }
       nativeReqs[id] = (kind, data) => {
         if (kind === 'h') { const i = data.indexOf('|'); status = parseInt(data.slice(0, i), 10); ctype = data.slice(i + 1); }
+        else if (kind === 'H') { try { headers = JSON.parse(data) || {}; } catch (e) {} } // rate-limit headers, sent by newer app builds
         else if (kind === 'd') { try { onChunk(data); } catch (e) {} }
-        else if (kind === 'x') { done(); resolve({ status, ctype }); }
+        else if (kind === 'x') { done(); resolve({ status, ctype, headers }); }
         else if (kind === 'e') { done(); reject(new Error('Network error: ' + data)); }
       };
       Native.http(id, url, opt.method || 'GET', JSON.stringify(opt.headers || {}), opt.body || '');
@@ -115,7 +116,9 @@
       if (done) break;
       onChunk(td.decode(value, { stream: true }));
     }
-    return { status: res.status, ctype: res.headers.get('content-type') || '' };
+    const headers = {};
+    try { res.headers.forEach((v, k) => { if (/retry-after|ratelimit/i.test(k)) headers[k.toLowerCase()] = v; }); } catch (e) { /* no header access */ }
+    return { status: res.status, ctype: res.headers.get('content-type') || '', headers };
   }
 
   function providerCfg(id) {
@@ -147,11 +150,25 @@
   /** One request to the model. Returns { full, status, raw, err }. */
   // ------------------------------------------------ limits, budget and model pool (Auto mode, see orchestra.js)
   const O = C.Orchestra;
-  const limiter = O.createLimiter({ sleep: (ms, signal) => sleep(ms, signal), loadDaily: () => load('cyb.daily', null), saveDaily: (d) => save('cyb.daily', d) });
+  const limiter = O.createLimiter({ sleep: (ms, signal) => sleep(ms, signal), loadDaily: () => load('cyb.daily', null), saveDaily: (d) => save('cyb.daily', d), loadSeen: () => load('cyb.seen', null), saveSeen: (x) => save('cyb.seen', x) });
   const health = load('cyb.health', {});
   let task = null; // the run in progress: { budget, asks, roles, single, tl, tlNode }
   const userTarget = () => ({ provider: settings.provider, model: settings.model });
   const usable = (id) => { const p = C.PROVIDERS[id]; return p.custom ? !!(settings.customUrl || '').trim() : (!p.needsKey || !!(settings.keys[id] || '').trim()); };
+  /** Published facts about a model (context window, price), when its provider lists them. */
+  const metaOf = (t) => ((settings.meta || {})[t.provider] || {})[t.model] || {};
+  /** The free-only rule for one model: {ok, reason}. Only providers that price each model (OpenRouter) are judged per model. */
+  const freeCheck = (t) => O.freeCheck(C.PROVIDERS[t.provider] && C.PROVIDERS[t.provider].freeOnly ? 'priced' : '', t.model, (settings.meta || {})[t.provider], !!settings.allowPaid);
+  /** Today's requests, failures and tokens per model, for the Usage screen. Counts only what this app sent from this phone. */
+  function noteUsage(t, r) {
+    const day = new Date().toISOString().slice(0, 10); let u = load('cyb.usage', null);
+    if (!u || u.date !== day) u = { date: day, m: {} };
+    const e = u.m[O.keyOf(t)] || (u.m[O.keyOf(t)] = { req: 0, fail: 0, limited: 0, tok: 0 });
+    e.req++; if (r.status === 429) e.limited++; else if (r.status >= 400) e.fail++;
+    const all = (r.raw || '').match(/"total_tokens"\s*:\s*(\d+)/g);
+    if (all) e.tok += parseInt(all[all.length - 1].replace(/\D+/g, ''), 10) || 0;
+    save('cyb.usage', u);
+  }
   /** Every model the user can call right now: providers without a key requirement or with a key set. */
   function modelPool() {
     const pool = [];
@@ -159,7 +176,7 @@
     const slow = (id) => id === 'pollinations' && !(settings.keys.pollinations || '').trim();
     let ids = Object.keys(C.PROVIDERS).filter(usable);
     if (ids.some((id) => !slow(id))) ids = ids.filter((id) => !slow(id) || id === settings.provider);
-    ids.forEach((id) => (modelsFor(id) || []).slice(0, 60).forEach((m) => pool.push({ provider: id, model: m })));
+    ids.forEach((id) => (modelsFor(id) || []).slice(0, 60).forEach((m) => { const t = { provider: id, model: m }; if (!freeCheck(t).ok) return; const c = metaOf(t).ctx; if (c) t.ctx = c; pool.push(t); }));
     const u = userTarget(); if (!pool.some((t) => O.keyOf(t) === O.keyOf(u))) pool.unshift(u);
     return pool;
   }
@@ -176,7 +193,12 @@
     target = target || userTarget();
     if (task) task.budget.take();
     const release = await limiter.acquire(target.provider, signal);
-    try { return await requestModelNow(p, messages, onText, signal, stream, tools, target); } finally { release(); }
+    try {
+      const r = await requestModelNow(p, messages, onText, signal, stream, tools, target);
+      limiter.observe(target.provider, { status: r.status, headers: r.headers, body: r.status >= 400 ? r.raw.slice(0, 2000) : '' });
+      noteUsage(target, r);
+      return r;
+    } finally { release(); }
   }
   async function requestModelNow(p, messages, onText, signal, stream, tools, target) {
     const sse = C.createSseParser(); let full = '', raw = '', err = '';
@@ -202,7 +224,7 @@
     // models that answer with native function calls: turn them into our tool tags
     if (native.length) full = (full ? full.replace(/\s+$/, '') + '\n' : '') + C.nativeCallsToText(native);
     if (full) onText(full);
-    return { full, status: res.status, raw, err };
+    return { full, status: res.status, raw, err, headers: res.headers || {} };
   }
 
   /**
@@ -220,8 +242,9 @@
         O.recordHealth(health, O.keyOf(t), true, Date.now()); save('cyb.health', health);
         return out;
       } catch (e) {
-        if (e.name === 'AbortError' || e.name === 'BudgetError') throw e;
-        O.recordHealth(health, O.keyOf(t), false, Date.now()); save('cyb.health', health);
+        if (e.name === 'AbortError' || (e.name === 'BudgetError' && e.code === 'task')) throw e;
+        // a provider that is rate-limited or refused by the free-only rule is skipped, not marked as a broken model
+        if (e.name !== 'BudgetError') { O.recordHealth(health, O.keyOf(t), false, Date.now()); save('cyb.health', health); }
         lastErr = e;
         if (i < chain.length - 1) setStatus(t.model + ' failed, trying ' + chain[i + 1].model + '…');
       }
@@ -232,6 +255,8 @@
     const p = providerCfg(target.provider);
     if (!p.chatUrl) throw new Error('Set the server URL for the Custom provider in Settings.');
     if (p.needsKey && !(settings.keys[target.provider] || '').trim()) throw new Error('Add your free ' + p.name + ' key in Settings, or switch to Pollinations (no key).');
+    const fc = freeCheck(target);
+    if (!fc.ok) throw O.limitError('paid', 'Not sent: "' + target.model + '" on ' + p.name + ' is not a free model (' + fc.reason + '). Pick one from the model list, or turn on "Allow paid models" in Settings → General.');
     // Some free endpoints answer a long prompt with an empty stream. Fall back to a plain
     // (non-streaming) request, then to a request with the system prompt folded into the first message.
     const merged = () => {
@@ -252,7 +277,10 @@
       if ((r.status === 429 || r.status === 503 || r.status === 402) && !r.full && waits < 6) {
         // e.g. the keyless tier allows one reply every 45 seconds: wait exactly as long as the provider asks
         const m = /retry after (\d+)\s*s/i.exec(r.raw) || /try again in ([\d.]+)\s*s/i.exec(r.raw);
-        const secs = m ? Math.min(90, Math.ceil(parseFloat(m[1])) + 1) : (r.status === 402 ? 0 : (waits ? 12 : 4));
+        const ra = O.parseRateHeaders(r.headers).retryAfterMs;
+        // a long wait (for example a daily quota): stop here so a fallback model can take over
+        if (r.status === 429 && limiter.status(target.provider).blockedMs > O.MAX_BLOCK_WAIT) throw O.limitError('rate', explain(r.status, r.raw, p) + '\n' + p.name + ' asks to wait ' + Math.ceil(limiter.status(target.provider).blockedMs / 60000) + ' min.');
+        const secs = m ? Math.min(90, Math.ceil(parseFloat(m[1])) + 1) : ra ? Math.min(90, Math.ceil(ra / 1000) + 1) : (r.status === 402 ? 0 : (waits ? 12 : 4));
         if (secs) {
           waits++;
           for (let left = secs; left > 0; left--) { setStatus('free limit: next reply in ' + left + 's'); await sleep(1000, signal); }
@@ -291,11 +319,20 @@
   async function fetchModels(id) {
     const p = providerCfg(id);
     if (!p.modelsUrl) throw new Error('No model list URL for this provider.');
-    let raw = '';
-    const res = await httpStream(p.modelsUrl, { headers: authHeaders(id) }, (c) => { raw += c; });
+    let raw = '', res = null, netErr = null;
+    try { res = await httpStream(p.modelsUrl, { headers: authHeaders(id) }, (c) => { raw += c; }); } catch (e) { if (e.name === 'AbortError' || !p.custom) throw e; netErr = e; }
+    if (p.custom && (netErr || res.status >= 400)) {
+      // a plain Ollama address (no /v1): its own list endpoint
+      const first = netErr || new Error(explain(res.status, raw, p)); raw = '';
+      try { res = await httpStream(p.modelsUrl.replace(/\/models$/, '').replace(/\/v1$/, '') + '/api/tags', { headers: authHeaders(id) }, (c) => { raw += c; }); } catch (e) { throw first; }
+      if (res.status >= 400) throw first;
+    }
     if (res.status >= 400) throw new Error(explain(res.status, raw, p));
-    const list = C.parseModelList(JSON.parse(raw), p);
+    const json = JSON.parse(raw), list = C.parseModelList(json, p);
     if (!list.length) throw new Error('The provider returned no usable models.');
+    const all = O.parseModelMeta(json), keep = {};
+    list.forEach((m) => { if (all[m]) keep[m] = all[m]; });
+    settings.meta = settings.meta || {}; settings.meta[id] = keep;
     settings.models[id] = list; saveSettings();
     return list;
   }
@@ -584,7 +621,7 @@
       for (let n = 0; n < 8; n++) {
         const sys = C.buildSystemPrompt(type, ws.summary(), extraPrompt(), caps({ noSpawn: true }));
         setStatus(agent.icon + ' ' + type + (n ? ' step ' + (n + 1) : '') + '…');
-        last = await chatStream([{ role: 'system', content: sys }].concat(C.trimHistory(msgs, 40000)), (t) => setStatus(agent.icon + ' ' + type + ' ' + t.length + ' chars'), signal, toolsFor(agent).filter((t) => t !== 'spawn_agent'), via);
+        last = await chatStream([{ role: 'system', content: sys }].concat(C.trimHistory(msgs, Math.min(40000, O.historyBudget(ctxOf(via && via.chain), sys.length, 40000)))), (t) => setStatus(agent.icon + ' ' + type + ' ' + t.length + ' chars'), signal, toolsFor(agent).filter((t) => t !== 'spawn_agent'), via);
         msgs.push({ role: 'assistant', content: last });
         const calls = C.parseToolCalls(last, agent.tools).filter((c) => C.PASSIVE.indexOf(c.name) < 0 && c.name !== 'spawn_agent');
         if (!calls.length) { step.status = 'ok'; tlDraw(); return C.displayText(last).trim(); }
@@ -764,14 +801,19 @@
   function renderAll() { renderAgents(); renderMessages(); renderModelChip(); updateBadge(); }
 
   // ------------------------------------------------------------ agent loop
-  function apiHistory() {
+  /** Smallest known context window among the models a request may fall back to (0 = unknown). */
+  function ctxOf(chain) {
+    const c = (chain && chain.length ? chain : [userTarget()]).map((t) => metaOf(t).ctx || 0).filter(Boolean);
+    return c.length ? Math.min.apply(null, c) : 0;
+  }
+  function apiHistory(chain, reserved) {
     const out = [];
     current.messages.filter((m) => m.role === 'user' || m.role === 'assistant').forEach((m) => {
       const last = out[out.length - 1];
       // a request followed by a helper's report: one user turn, since some providers reject two in a row
       if (last && last.role === 'user' && m.role === 'user') last.content += '\n\n' + m.content; else out.push({ role: m.role, content: m.content });
     });
-    return C.trimHistory(out, 70000);
+    return C.trimHistory(out, O.historyBudget(ctxOf(chain), reserved, 70000));
   }
 
   /**
@@ -798,7 +840,7 @@
       };
       let full;
       try {
-        full = await chatStream([{ role: 'system', content: sys }].concat(apiHistory()), (t) => {
+        full = await chatStream([{ role: 'system', content: sys }].concat(apiHistory(chain, sys.length)), (t) => {
           latest = t; setStatus('writing… ' + t.length + ' chars');
           if (!pending) { pending = true; setTimeout(paint, 90); }
         }, abortCtl.signal, toolsFor(agent), via);
@@ -1276,8 +1318,9 @@
       const ms = el('input', 'field'); ms.type = 'text'; ms.inputMode = 'numeric'; ms.value = settings.maxSteps; ms.onchange = () => { settings.maxSteps = Math.min(80, Math.max(1, parseInt(ms.value, 10) || 25)); ms.value = settings.maxSteps; saveSettings(); }; c2.appendChild(ms);
       c2.appendChild(el('p', '', 'Requests per task (model calls, all agents together)')).style.marginTop = '12px';
       const tb = el('input', 'field'); tb.id = 'taskBudget'; tb.type = 'text'; tb.inputMode = 'numeric'; tb.value = settings.taskBudget || 30; tb.onchange = () => { settings.taskBudget = Math.min(200, Math.max(3, parseInt(tb.value, 10) || 30)); tb.value = settings.taskBudget; saveSettings(); }; c2.appendChild(tb);
+      c2.appendChild(switchRow('Allow paid models', 'Off: a model that is not marked free is never called. Turn on only if you accept charges on your own provider account.', () => !!settings.allowPaid, (v) => { settings.allowPaid = v; }));
       const ls = limiter.status(settings.provider);
-      c2.appendChild(el('p', 'hint', C.PROVIDERS[settings.provider].name + ' today: ' + ls.dailyUsed + (ls.dailyMax ? '/' + ls.dailyMax : '') + ' requests from this app · limit ' + ls.rpm + '/min, ' + ls.concurrent + ' at a time. Auto mode drops to a single agent when little is left.'));
+      c2.appendChild(el('p', 'hint', C.PROVIDERS[settings.provider].name + ' today: ' + ls.dailyUsed + (ls.dailyMax ? '/' + ls.dailyMax : '') + ' requests from this app' + (ls.dailyIsEstimate ? ' (estimate, not enforced)' : '') + ' · pace ' + ls.rpm + '/min, ' + ls.concurrent + ' at a time. Auto mode drops to a single agent when little is left. Details: Settings → Usage & limits.'));
       body.appendChild(c2);
       const c3 = el('div', 'card'); c3.appendChild(el('div', 'ctitle', 'Data'));
       c3.appendChild(el('p', '', 'Chats, files and keys are stored only on this device. Messages are sent directly to the provider you select.'));
@@ -1506,6 +1549,7 @@
       body.appendChild(settingsRow('General', '', openGeneral));
       body.appendChild(settingsRow('Model Providers', C.PROVIDERS[settings.provider].name, openProviders));
       body.appendChild(settingsRow('Model', settings.model.length > 18 ? settings.model.slice(0, 17) + '\u2026' : settings.model, () => openModels()));
+      body.appendChild(settingsRow('Usage & limits', '', openUsage));
       body.appendChild(settingsRow('Project settings', '', openProject));
       body.appendChild(settingsRow('Skills', (settings.skills || []).length ? (settings.skills || []).length + '' : '', () => openSkills(!(settings.skills || []).length)));
       body.appendChild(settingsRow('Appearance', settings.matchDevice ? 'Match device' : THEMES[themeId()][0], openAppearance));
@@ -1517,6 +1561,40 @@
     });
   }
 
+  /** What the app knows about each provider's limits (and where that knowledge comes from) plus today's use per model. */
+  function usageReport() {
+    const u = load('cyb.usage', null) || { m: {} }, out = [];
+    Object.keys(C.PROVIDERS).forEach((id) => {
+      const st = limiter.status(id), lines = [];
+      if (!usable(id)) lines.push('Not set up (no key or address).');
+      lines.push('Pace: ' + st.rpm + ' requests/min, ' + st.concurrent + ' at a time (' + st.paceSource + ').');
+      lines.push('Sent today from this app: ' + st.dailyUsed + (st.dailyMax ? ' · rough free allowance ' + st.dailyMax + (st.dailyIsEstimate ? ' (estimate, not enforced)' : '') : '') + '.');
+      if (st.quota) lines.push('Provider reports: ' + (st.quota.remaining !== undefined ? st.quota.remaining : '?') + ' of ' + (st.quota.limit !== undefined ? st.quota.limit : '?') + ' requests left' + (st.quota.resetAt ? ', resets in ' + fmtWait(st.quota.resetAt - Date.now()) : '') + '.');
+      else lines.push('Provider has not reported a quota yet.');
+      if (st.tokenQuota && st.tokenQuota.limit !== undefined) lines.push('Tokens/min reported: ' + (st.tokenQuota.remaining !== undefined ? st.tokenQuota.remaining : '?') + ' of ' + st.tokenQuota.limit + ' left.');
+      if (st.blockedMs) lines.push('Waiting ' + fmtWait(st.blockedMs) + ': ' + (st.why || 'rate limited') + '.');
+      const models = Object.keys(u.m).filter((k) => k.indexOf(id + '|') === 0).map((k) => {
+        const e = u.m[k], t = { provider: id, model: k.slice(id.length + 1) }, h = health[k], m = metaOf(t);
+        return { model: t.model, text: e.req + ' requests' + (e.limited ? ', ' + e.limited + ' rate-limited' : '') + (e.fail ? ', ' + e.fail + ' failed' : '') + (e.tok ? ', ' + e.tok + ' tokens' : '') +
+          ' · health ' + Math.round(O.healthScore(h, Date.now()) * 100) + '%' + (m.ctx ? ' · context ' + Math.round(m.ctx / 1000) + 'k' : '') };
+      });
+      out.push({ id, name: C.PROVIDERS[id].name, lines, models });
+    });
+    return out;
+  }
+  const fmtWait = (ms) => { const sec = Math.max(0, Math.round(ms / 1000)); return sec >= 3600 ? Math.floor(sec / 3600) + ' h ' + Math.round(sec % 3600 / 60) + ' min' : sec >= 90 ? Math.round(sec / 60) + ' min' : sec + ' s'; };
+  function openUsage() {
+    openSheet('Usage & limits', (body) => {
+      body.appendChild(el('div', 'empty', 'Free tiers have quotas that change. The app starts at a careful pace and then follows what each provider answers. Counts are only this app on this phone.')).style.cssText = 'text-align:left;padding:0 4px 12px';
+      usageReport().forEach((p) => {
+        const card = el('div', 'card'); card.dataset.provider = p.id; card.appendChild(el('div', 'ctitle', p.name));
+        p.lines.forEach((l) => card.appendChild(el('p', '', l)));
+        p.models.forEach((m) => { const r = el('p', 'hint'); r.appendChild(el('b', '', m.model)); r.appendChild(document.createTextNode(' ' + m.text)); card.appendChild(r); });
+        body.appendChild(card);
+      });
+      const clr = el('button', 'wide ghost', 'Forget learned limits'); clr.onclick = () => { Object.keys(limiter.seen).forEach((k) => delete limiter.seen[k]); save('cyb.seen', {}); drawSheet(); toast('Back to the starting pace'); }; body.appendChild(clr);
+    });
+  }
   function openModels(id) {
     id = id || settings.provider;
     let loading = false;
@@ -1544,7 +1622,7 @@
       };
       const list = modelsFor(id);
       if (!list.length) body.appendChild(el('div', 'empty', 'No models listed yet. Tap ↻ Refresh.'));
-      list.forEach((m) => { const b = el('button', 'model' + (settings.provider === id && settings.model === m ? ' on' : ''), m); b.onclick = () => pick(m); body.appendChild(b); });
+      list.forEach((m) => { const b = el('button', 'model' + (settings.provider === id && settings.model === m ? ' on' : ''), m); const mt = metaOf({ provider: id, model: m }), fc = freeCheck({ provider: id, model: m }); const info = [mt.ctx ? Math.round(mt.ctx / 1000) + 'k context' : '', p.freeOnly ? (fc.ok && !/paid/.test(fc.reason) ? 'free' : fc.ok ? 'PAID' : 'not free, blocked') : ''].filter(Boolean).join(' · '); if (info) b.appendChild(el('small', '', ' ' + info)); b.onclick = () => pick(m); body.appendChild(b); });
       if (!settings.models[id] && p.modelsUrl && (!p.needsKey || (settings.keys[id] || '').trim())) refresh();
     }, [['↻ Refresh', refresh]]);
   }
@@ -1608,7 +1686,7 @@
 
   if (!C.PROVIDERS[settings.provider]) { settings.provider = 'pollinations'; settings.model = 'openai-fast'; }
   $('ver').textContent = Native ? 'v' + Native.version() : 'web';
-  window.__cyb = { C, ws, settings, limiter, health, modelPool, spawnAgent, helperExec, rerunAs, get task() { return task; }, askApproval, openPreview, offerUndo, namedSecrets, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
+  window.__cyb = { Native, nativeStream, fetchModels, C, ws, settings, limiter, health, usageReport, openUsage, freeCheck, metaOf, apiHistory, modelPool, spawnAgent, helperExec, rerunAs, get task() { return task; }, askApproval, openPreview, offerUndo, namedSecrets, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
   window.addEventListener('error', (e) => { console.log('CYBERR ' + e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno); });
   window.addEventListener('unhandledrejection', (e) => { console.log('CYBERR promise ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)); });
 

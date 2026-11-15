@@ -89,6 +89,14 @@ Auto is the default agent. It decides who should handle a request and, for code 
 - **Task budget**: 30 model requests per task by default (Settings → General). The timeline shows "requests used: N/30"; at the cap the run stops and reports what was done.
 - **Safety**: helpers pass through the same approval gate, approval sheets appear one at a time, shell commands run one at a time, and every helper report reaches the next agent inside `<untrusted_data>`.
 
+## Model router (Phase 2)
+
+- **Free only.** On OpenRouter a model is called only if the price list says it costs nothing or its id is a `:free` variant. Anything else is refused before a request is made, with the reason. "Allow paid models" (Settings → General) is off by default. Groq, Gemini and Pollinations bill per account, not per model, so the app cannot see whether your account has billing turned on; use keys from accounts without billing.
+- **Limits are learned, not assumed.** The app starts at a careful pace and then follows each provider's replies: `retry-after`, `x-ratelimit-*` headers and wait hints in error bodies. A short wait is honoured; a wait longer than 90 s makes the request fall back to the next model. The daily figures in the code are estimates that only trigger the "running low" warning.
+- **Context window.** Where a provider publishes it (OpenRouter, Groq), the chat history sent is sized to the smallest window in the fallback chain, and small-window models rank lower for agent roles.
+- **Local models.** The Custom provider accepts an Ollama address with or without `/v1`; the model list is read from `/v1/models` or `/api/tags`, and local models join the Auto pool.
+- **Usage & limits** (Settings) shows, per provider, the current pace and where it came from, what the provider reported, any wait in force, and today's requests, failures and tokens per model.
+
 ## Tests
 
 ```
@@ -96,6 +104,8 @@ node tests/core.test.js        # tools, parser, commands, ZIP, APK analysis
 node tests/safety.test.js      # approval gate, bypass routes, injection page, checkpoint
 node tests/preview.test.js     # preview never runs next to the native bridge; Stop reaches the shell (needs jsdom)
 node tests/orchestra.test.js   # router, pipeline, limiter, budget, model pool, helper write rules
+node tests/router.test.js      # model router: rate-limit headers, back-off, free-only guard, context budget
+node tests/router.ui.test.js   # the same inside the app with fake provider servers (needs jsdom)
 node tests/auto.test.js        # Auto mode end to end with fake models (needs jsdom)
 node tests/ui.smoke.js         # UI + agent loop in jsdom (needs jsdom)
 node tests/browser.test.js     # full run in headless Chromium with real Python (needs puppeteer-core, @sparticuz/chromium)
