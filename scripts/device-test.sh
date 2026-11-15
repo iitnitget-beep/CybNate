@@ -6,7 +6,7 @@ adb install -r release/CybNate.apk
 adb logcat -c
 adb shell am start -n com.cybnate.app/.MainActivity
 for i in $(seq 1 30); do adb logcat -d -s CybNateJS:I 2>/dev/null | grep -q "CYBUI ready" && break; sleep 2; done
-sleep 4
+sleep 14
 adb exec-out screencap -p > release/screenshot-home.png
 adb logcat -d -s CybNateJS:I | grep -o "CYB.*" > release/device-console.txt || true
 adb shell am force-stop com.cybnate.app

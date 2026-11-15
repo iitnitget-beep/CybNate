@@ -1,5 +1,5 @@
 <resources>
-    <color name="bg">#0B0F0E</color>
+    <color name="bg">#1C1C1C</color>
     <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/bg</item>
         <item name="android:statusBarColor">@color/bg</item>

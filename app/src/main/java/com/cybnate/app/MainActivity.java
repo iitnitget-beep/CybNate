@@ -52,7 +52,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         web = new WebView(this);
-        web.setBackgroundColor(0xFF0B0F0E);
+        web.setBackgroundColor(0xFF1C1C1C);
         setContentView(web);
 
         WebSettings s = web.getSettings();

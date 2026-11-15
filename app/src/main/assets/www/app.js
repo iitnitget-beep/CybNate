@@ -980,6 +980,7 @@
   current = sessions[0] || null;
   if (!current) newSession(); else renderAll();
   console.log('CYBUI ready agents=' + $('agents').children.length + ' model=' + settings.model);
+  setTimeout(() => { const w = document.querySelector('.welcome'), h = document.querySelector('header'); console.log('CYBUI layout header=' + (h ? h.offsetHeight : -1) + ' welcome=' + (w ? w.offsetHeight : -1) + ' win=' + window.innerWidth + 'x' + window.innerHeight); }, 1500);
   openDb().then(() => {
     syncDisk(); updateBadge();
     if (/[?&]selftest=1/.test(location.search)) { const sc = document.createElement('script'); sc.src = 'selftest.js'; document.body.appendChild(sc); }
