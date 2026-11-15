@@ -35,3 +35,4 @@ adb shell am start -n com.cybnate.app/.MainActivity
 sleep 12
 adb exec-out screencap -p > release/screenshot-chat.png
 cat release/selftest.txt
+# first-launch screenshots: home (14 s) and home2 (30 s)
