@@ -1,4 +1,4 @@
-CybNate on-device self test (2026-11-15T01:00Z, Android 14, versionName=113.0.5672.136)
+CybNate on-device self test (2026-11-15T01:10Z, Android 14, versionName=113.0.5672.136)
 CYBTEST START ua=Mozilla/5.0 (Linux; Android 14; sdk_gphone64_x86_64 Build/UE1A.230829.050; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/113.0.5672.136 Mobile Safari/537.36
 CYBTEST PASS shell echo + workspace mirror :: hello.py lib main.js 34 done 
 CYBTEST PASS shell writes file back into workspace :: main.js,gen/a.txt,lib/add.js (deleted)
@@ -9,11 +9,11 @@ CYBTEST PASS python error exit code :: traceback ok
 CYBTEST PASS python numpy from CDN :: 15 
 CYBTEST PASS pip install pure package :: cowsay ok
 CYBTEST PASS node runs + require + fs :: node says 5 
-CYBTEST PASS timeout kills runaway python :: 11661 ms incl. restart
+CYBTEST PASS timeout kills runaway python :: 9179 ms incl. restart
 CYBTEST PASS pollinations model list :: 1 models: openai-fast
 CYBTEST PASS pollinations chat (keyless) :: model=openai-fast reply=CYB-OK
 CYBTEST PASS agent tool call from real model :: variant=0 write_file:ping.txt
-CYBTEST PASS full agent run through the UI :: 3s tools=[✓ write_file fizz.py | ✓ $ python fizz.py] errors=[] final=⌨ coder · openai-fast Last line: FizzBuzz
+CYBTEST PASS full agent run through the UI :: 2s tools=[✓ write_file fizz.py | ✓ $ python fizz.py] errors=[] final=⌨ coder · openai-fast Last line: FizzBuzz
 CYBTEST PASS web search :: 8 results; first: Pyodide — Version 314.0.8 https://pyodide.org/
 CYBTEST PASS read url :: # Example Domain https://example.com This domain is for use in documentation ex
 CYBTEST PASS github api reachable (CORS) :: CodebuffAI/freebuff
