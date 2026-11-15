@@ -37,6 +37,9 @@ jobs:
               -dname "CN=CybNate, O=CybNate, C=IN"
           fi
 
+      - name: Agent core and safety tests
+        run: node tests/core.test.js && node tests/safety.test.js
+
       - name: Fetch bundled Python runtime (Pyodide)
         run: bash scripts/fetch-vendor.sh
 

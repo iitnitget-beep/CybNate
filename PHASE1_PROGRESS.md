@@ -11,6 +11,6 @@ Rollback point: tag `v3.4-baseline` (commit eaea03e).
 - [x] g. Checkpoint before each agent run + one-tap Undo
 - [x] h. Risky-command prompt line replaced
 - [x] Tests: tests/safety.test.js (bypass by 5 routes, injection page, checkpoint), core, ui smoke, browser e2e pass locally
-- [ ] Emulator self test + APK build on the new code
+- [x] Emulator self test on build #26: pass=24 fail=0 (17 old + 7 new). APK in release/ and Drive (CybNate-v4-phase1.apk)
 
 ## Notes
