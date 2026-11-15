@@ -45,10 +45,13 @@ jobs:
         run: |
           set -e
           for t in core safety orchestra router devtools engine cli; do node tests/$t.test.js; done
+          # the backend: a real server on a local port with real bash, python and git; then, as root, that users are kept apart
+          node server/test/server.test.js
+          sudo env "PATH=$PATH" node server/test/isolation.test.js
           # UI tests run the real index.html in jsdom with fake models and a fake network
           mkdir -p /tmp/jsd && (cd /tmp/jsd && npm init -y >/dev/null && npm i --silent jsdom@31.0.1)
           export NODE_PATH=/tmp/jsd/node_modules
-          for t in webtest.test integrations.test signin.test engine.ui.test auto.test router.ui.test preview.test ui.smoke; do node tests/$t.js; done
+          for t in webtest.test integrations.test signin.test backend.test engine.ui.test auto.test router.ui.test preview.test ui.smoke; do node tests/$t.js; done
 
       - name: Fetch bundled Python runtime (Pyodide)
         run: bash scripts/fetch-vendor.sh

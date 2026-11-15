@@ -1,0 +1,10 @@
+{
+  "name": "cybnate-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CybNate backend: Linux workspace, command execution, LSP, secrets, OAuth and saved state for the mobile app",
+  "main": "index.js",
+  "engines": { "node": ">=22.13" },
+  "scripts": { "start": "node index.js", "test": "node test/server.test.js" },
+  "dependencies": {}
+}

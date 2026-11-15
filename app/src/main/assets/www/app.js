@@ -35,6 +35,7 @@
         if (value === null) st.delete(path); else st.put(value, path);
       } catch (e) { /* persistence is best effort */ }
     }
+    if (!fromServer) backend.note(path, value);
     if (canShell && mirror) {
       try {
         if (value === null) Native.wsDelete(path);
@@ -42,6 +43,13 @@
       } catch (e) { /* the shell will simply not see this file */ }
     }
     updateBadge();
+  });
+  // ------------------------------------------------- server: commands, secrets and sign-ins on the CybNate backend (backend.js)
+  let fromServer = false; // true while changes that a server command made are being taken over
+  const backend = Backend.create({
+    http: (url, opt) => httpFull(url, opt), get: () => settings.backend || null, ws, decode: (b) => C.decodeIfText(b),
+    remoteOnly: { list: () => { try { return JSON.parse(localStorage.getItem('cyb.remoteOnly') || '[]'); } catch (e) { return []; } }, set: (l) => { try { localStorage.setItem('cyb.remoteOnly', JSON.stringify(l)); } catch (e) { /* best effort */ } } },
+    applying: (fn) => { fromServer = true; try { fn(); } finally { fromServer = false; } },
   });
   /** Paths that exist only on disk because they are too large for the in-app workspace. */
   const diskOnly = () => { try { return JSON.parse(localStorage.getItem('cyb.diskOnly') || '[]'); } catch (e) { return []; } };
@@ -130,11 +138,13 @@
       p.chatUrl = base ? base + '/chat/completions' : '';
       p.modelsUrl = base ? base + '/models' : '';
     }
+    // a ChatGPT sign-in kept on the server: requests go through it, and it adds the token there
+    if (p.api === 'codex' && settings.codex && settings.codex.remote && backend.on()) { p.chatUrl = settings.backend.url + '/v1/llm/codex/responses'; p.modelsUrl = settings.backend.url + '/v1/llm/codex/models'; }
     return p;
   }
   function authHeaders(id) {
     const h = {}; const k = (settings.keys[id] || '').trim(); const api = (C.PROVIDERS[id] || {}).api;
-    if (api === 'codex') return Wire.codexHeaders(settings.codex);
+    if (api === 'codex') return settings.codex && settings.codex.remote ? { Authorization: 'Bearer ' + ((settings.backend || {}).token || '') } : Wire.codexHeaders(settings.codex);
     if (api === 'anthropic') { if (k) h['x-api-key'] = k; h['anthropic-version'] = '2023-06-01'; return h; }
     if (k) h.Authorization = 'Bearer ' + k;
     return h;
@@ -408,7 +418,7 @@
   /** Secrets whose name appears in a command the user typed. */
   const namedSecrets = (cmd) => Object.keys(secretEnv()).filter((k) => new RegExp('\\b' + k + '\\b').test(String(cmd)));
   async function runCommandNow(cmd, timeoutSec, signal, secretNames) {
-    if (secretNames && secretNames.length) await freshGoogle(secretNames);
+    if (secretNames && secretNames.length && !backend.on()) await freshGoogle(secretNames);
     const r = await runCommandRaw(cmd, timeoutSec, signal, secretNames);
     if (r && r.out) r.out = redact(r.out);
     return r;
@@ -419,6 +429,15 @@
     if (signal && signal.aborted) throw abortError();
     const pc = C.parseCommand(cmd);
     if (pc.kind === 'note') return { code: pc.code || 0, out: pc.text, files: [] };
+    // With a server connected every command runs there. Two things stay in the app because they are part of it:
+    // the built-in git (tied to the GitHub screen and its push approval) and page tests (they need this phone's WebView).
+    if (backend.on() && pc.kind !== 'git' && pc.kind !== 'webtest') {
+      const lm = /^\s*lsp\s+(\S+)\s*$/.exec(cmd); if (lm) return backend.diagnostics(lm[1], signal);
+      await secretsUp();
+      // curl / http_request: parsed here, sent by the server, which puts the secret values in
+      if (pc.kind === 'curl') { curlSecrets = secretNames || []; try { return await cli.curl(pc.prog, pc.argv, pc.cwd, signal); } finally { curlSecrets = null; } }
+      return backend.exec(cmd, timeoutSec, signal, secretNames);
+    }
     // built-in tools (cli.js, webtest.js): a simplified git, npm install from CDN builds, curl/wget, page tests
     if (pc.kind === 'git') return cli.git(pc.argv, signal);
     if (pc.kind === 'curl') return cli.curl(pc.prog, pc.argv.map((a) => Integrations.expand(a, senv)), pc.cwd, signal);
@@ -483,8 +502,33 @@
     }
     return { status: res.status, ctype: res.ctype || '', headers: res.headers || {}, text };
   }
+  let curlSecrets = null; // set while a curl command is sent through the server
+  async function serverHttp(url, opt) {
+    const r = await backend.call('POST', '/v1/http', { url, method: opt.method, headers: opt.headers || {}, body: opt.body, secrets: curlSecrets || [] }, { signal: opt.signal });
+    return { status: r.status, ctype: (r.headers && r.headers['content-type']) || '', headers: r.headers || {}, text: r.text };
+  }
+  let secretJob = Promise.resolve();
+  /** With a server connected, secret values move there and only the names stay on the phone. */
+  function secretsUp() {
+    if (!backend.on()) return Promise.resolve();
+    const job = secretJob.then(async () => {
+      for (const k of (settings.secrets || []).slice()) {
+        if (!k.value) continue;
+        try { await backend.putSecret(k.name, k.value); k.value = ''; k.remote = true; }
+        catch (e) {
+          if (e.status !== 409) throw e;
+          // this name is a sign-in the server manages itself: the token held by the phone is dropped, and the service is connected again through the server
+          settings.secrets = (settings.secrets || []).filter((x) => x !== k);
+          Object.keys(settings.integrations || {}).forEach((id) => { const en = Integrations.BY_ID[id]; if (en && en.signin && en.fields[0].env === k.name) delete settings.integrations[id]; });
+        }
+      }
+      saveSettings();
+    });
+    secretJob = job.catch(() => {});
+    return job;
+  }
   const cli = Cli.create({
-    ws, kv, http: httpFull, GitHub, matchGlob: C.matchGlob,
+    ws, kv, http: (url, opt) => (curlSecrets ? serverHttp(url, opt) : httpFull(url, opt)), GitHub, matchGlob: C.matchGlob,
     getRepo: () => repoBase, setRepo: (b) => { repoBase = b; save('cyb.repo', repoBase); },
     token: () => (settings.keys.github || '').trim(),
     blob: async (sha) => {
@@ -677,7 +721,7 @@
 
   // ------------------------------------------------------------ sub-agents
   let repoBase = load('cyb.repo', null);
-  const caps = (extra) => Object.assign({ shell: canShell, repo: repoBase ? repoBase.owner + '/' + repoBase.repo : '', skills: (settings.skills || []).filter((k) => k.on !== false), secrets: Object.keys(secretEnv()) }, extra || {});
+  const caps = (extra) => Object.assign({ server: backend.on(), shell: canShell, repo: repoBase ? repoBase.owner + '/' + repoBase.repo : '', skills: (settings.skills || []).filter((k) => k.on !== false), secrets: Object.keys(secretEnv()) }, extra || {});
   const loadSkill = (name) => { const n = String(name || '').toLowerCase().trim(); const k = (settings.skills || []).find((x) => x.on !== false && x.name === n) || (settings.skills || []).find((x) => x.on !== false && x.name.indexOf(n) >= 0 && n); if (!k) throw new Error('no installed skill named "' + name + '". Installed: ' + ((settings.skills || []).map((x) => x.name).join(', ') || 'none')); return '# Skill: ' + k.name + '\n' + k.body; };
   const toolsFor = (agent) => agent.tools.filter((t) => t !== 'load_skill' || caps().skills.length);
 
@@ -1394,7 +1438,14 @@
 
   // ---------------------------------------------------------------- github
   // ---- Integrations: one place to connect outside services. Keys are stored as app secrets, on this phone only.
-  const setSecret = (name, value) => { const list = settings.secrets || (settings.secrets = []); const i = list.findIndex((x) => x.name === name); if (i >= 0) list.splice(i, 1); if (value) list.push({ name, value }); };
+  // `onServer`: the value already lives on the server (a sign-in it manages), so only the name is kept here.
+  const setSecret = (name, value, onServer) => {
+    const list = settings.secrets || (settings.secrets = []); const i = list.findIndex((x) => x.name === name); const had = i >= 0 ? list[i] : null; if (i >= 0) list.splice(i, 1);
+    if (onServer) list.push({ name, value: '', remote: true }); else if (value) list.push({ name, value });
+    if (!backend.on() || onServer) return;
+    if (value) secretsUp().catch((e) => toast('Not saved on the server yet: ' + e.message));
+    else if (had && had.remote) backend.putSecret(name, '').catch(() => { /* a name the server manages, or already gone */ });
+  };
   /** Check a connection with the values given. Returns { ok, who, why, checked }. */
   async function testIntegration(entry, vals, signal) {
     const req = Integrations.testRequest(entry, vals);
@@ -1519,7 +1570,8 @@
     });
   }
   /** Sign in, check that the service really answers, then save. Returns { ok, who, why, checked }. */
-  async function googleConnect(e) {
+  async function googleConnect(e, onUrl, signal) {
+    if (backend.on()) return googleViaServer(e, onUrl, signal);
     const tok = await googleToken(e.scopes, false);
     const vals = {}; vals[e.fields[0].env] = tok.token;
     const res = await testIntegration(e, vals);
@@ -1527,6 +1579,31 @@
     else if (/HTTP 403/.test(res.why || '')) res.why += ' If it says the API is disabled, enable it for the CybNate project in Google Cloud Console → APIs & Services → Library.';
     return res;
   }
+  /** With a server connected the sign-in ends there: the browser opens Google, Google sends the code to the server, and the phone only hears that it worked. */
+  async function googleViaServer(e, onUrl, signal) {
+    const before = await backend.signIns(signal), g0 = before.providers.find((p) => p.id === 'google');
+    if (!g0 || !g0.configured) return { ok: false, why: 'Google sign-in is not set up on your server yet. The server needs GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET of a "Web application" OAuth client and CYB_PUBLIC_URL, and Google Cloud must list this redirect address: ' + before.redirectUri };
+    const env = e.fields[0].env;
+    if (g0.secrets.indexOf(env) < 0) return { ok: false, why: 'This server version does not manage ' + env + '. Update the server.' };
+    const st = await backend.oauthStart('google', e.scopes);
+    if (onUrl) onUrl(st.url);
+    openExternal(st.url);
+    const until = Date.now() + 10 * 60 * 1000;
+    for (;;) {
+      await sleep(googleViaServer.intervalMs || 2500, signal);
+      const g = (await backend.signIns(signal)).providers.find((p) => p.id === 'google');
+      if (g && g.connected && (g.at || 0) > (g0.at || 0)) {
+        const missing = (e.scopes || []).filter((sc) => g.scopes.indexOf(sc) < 0);
+        if (missing.length) return { ok: false, why: 'Google did not grant everything ' + e.name + ' needs. Sign in again and leave all the boxes ticked.' };
+        setSecret(env, '', true);
+        (settings.integrations || (settings.integrations = {}))[e.id] = { at: Date.now(), who: g.who || '', checked: true, server: true }; saveSettings();
+        return { ok: true, who: g.who || '', checked: true };
+      }
+      if (Date.now() > until) return { ok: false, why: 'No sign-in arrived within 10 minutes. Start again.' };
+    }
+  }
+  /** Open an address outside the app (the phone's browser). */
+  function openExternal(url) { try { const a = document.createElement('a'); a.href = url; a.target = '_blank'; a.rel = 'noopener'; a.style.display = 'none'; document.body.appendChild(a); a.click(); a.remove(); } catch (e) { /* the card shows the link as well */ } }
   /** Before a command gets a Google token, renew it quietly when it is older than 40 minutes. */
   async function freshGoogle(names) {
     const conn = settings.integrations || {};
@@ -1538,23 +1615,31 @@
       catch (err) { /* the old token is sent; if Google refuses it the agent sees HTTP 401 and the user signs in again */ }
     }
   }
+  let googleUrl = '';
   function drawGoogleCard(e, card, info, st) {
     const cur = st.get();
     card.appendChild(el('div', 'flabel', 'CybNate will be able to'));
     const ul = el('ul', 'grants'); (e.grants || []).forEach((g) => ul.appendChild(el('li', '', g))); card.appendChild(ul);
-    card.appendChild(el('p', '', 'You choose the Google account on the next screen; it can be any account, not only the one on this phone. The agent asks before each request, and the token stays on this phone.'));
+    card.appendChild(el('p', '', backend.on() ? 'Google opens in your browser; choose any account. The sign-in ends on your server: the token is kept and renewed there and never comes to this phone. The agent asks before each request.' : 'You choose the Google account on the next screen; it can be any account, not only the one on this phone. The agent asks before each request, and the token stays on this phone.'));
     const s = cur.state;
     const msg = el('div', s ? (s.ok ? 'note ok' : 'note err') : 'note', s ? (s.ok ? '✓ Connected' + (s.who ? ' as ' + s.who : '') + '.' : '✗ ' + s.why) : 'Secret for the agent: ' + e.fields[0].env); msg.id = 'intMsg'; card.appendChild(msg);
     const go = el('button', 'wide', cur.working ? 'Waiting for Google…' : info ? 'Sign in again' : 'Sign in with Google'); go.id = 'intGo'; go.disabled = cur.working; card.appendChild(go);
     go.onclick = async () => {
       st.set(null, true); let res;
-      try { res = await googleConnect(e); } catch (err) { res = { ok: false, why: String(err && err.message ? err.message : err) }; }
+      try { res = await googleConnect(e, (url) => { googleUrl = url; st.set(null, true); }); } catch (err) { res = { ok: false, why: String(err && err.message ? err.message : err) }; }
+      googleUrl = '';
       if (res.ok) toast(e.name + ' connected');
       st.set(res, false);
     };
+    if (cur.working && googleUrl) { const a = el('a', 'wide linkbtn', 'Open the Google sign-in page →'); a.id = 'intOpen'; a.href = googleUrl; a.target = '_blank'; a.rel = 'noopener'; card.appendChild(a); card.appendChild(el('p', 'hint', 'Finish in the browser, then come back. The app notices by itself.')); }
     if (info) {
       const off = el('button', 'wide danger', 'Disconnect'); off.id = 'intOff'; card.appendChild(off);
-      off.onclick = () => { removeIntegration(e); toast(e.name + ' disconnected'); st.set(null, false); };
+      off.onclick = () => {
+        const onServer = !!info.server; removeIntegration(e);
+        // the server holds one Google sign-in for all Google services: drop it when the last of them is disconnected
+        if (onServer && backend.on() && !connectedIds().some((id) => Integrations.BY_ID[id].signin === 'google')) backend.oauthOff('google').catch(() => {});
+        toast(e.name + ' disconnected'); st.set(null, false);
+      };
       const a = el('a', '', 'Remove the access in your Google account →'); a.href = e.keyUrl; a.target = '_blank'; a.rel = 'noopener'; a.style.cssText = 'display:inline-block;margin:8px 0'; card.appendChild(a);
     }
   }
@@ -1563,12 +1648,14 @@
   let codexUi = { step: '', code: '', error: '', ctl: null }, codexRefreshing = null;
   function setCodex(s) {
     if (s) { settings.codex = s; settings.keys.codex = s.access; }
-    else { delete settings.codex; delete settings.keys.codex; delete settings.models.codex; if (settings.meta) delete settings.meta.codex; if (settings.provider === 'codex') { settings.provider = 'pollinations'; settings.model = C.PROVIDERS.pollinations.fallbackModels[0]; } }
+    else {
+      if (settings.codex && settings.codex.remote && backend.on()) backend.oauthOff('codex').catch(() => {}); delete settings.codex; delete settings.keys.codex; delete settings.models.codex; if (settings.meta) delete settings.meta.codex; if (settings.provider === 'codex') { settings.provider = 'pollinations'; settings.model = C.PROVIDERS.pollinations.fallbackModels[0]; } }
     saveSettings();
   }
   const wireCall = (r, signal) => httpFull(r.url, { method: r.method, headers: r.headers, body: r.body, signal });
   /** Renew the access token shortly before it runs out. */
   function codexFresh(signal) {
+    if (settings.codex && settings.codex.remote) return Promise.resolve(); // the server renews it
     if (!Wire.codexStale(settings.codex, Date.now())) return Promise.resolve();
     if (!codexRefreshing) {
       codexRefreshing = wireCall(Wire.codexRefreshRequest(settings.codex.refresh), signal)
@@ -1580,6 +1667,24 @@
   }
   /** The whole sign-in. onState({code, url}) fires once the code to type is known. Returns the session. */
   async function codexSignIn(onState, signal) {
+    if (backend.on()) {
+      // the server asks OpenAI, waits for the login and keeps the tokens; the phone shows the code and waits
+      const d = await backend.codexStart();
+      onState({ code: d.code, url: d.url });
+      try {
+        for (;;) {
+          await sleep(codexSignIn.intervalMs || 3000, signal);
+          const st = await backend.codexStatus(signal);
+          if (st.state === 'pending') continue;
+          if (st.state !== 'connected') throw new Error(st.error || 'The sign-in was not completed. Start again.');
+          const s = { remote: true, access: 'kept-on-server', email: st.email || '', plan: st.plan || '', at: Date.now() };
+          setCodex(s);
+          try { await fetchModels('codex'); s.modelsError = ''; } catch (e) { if (e && e.name === 'AbortError') throw e; s.modelsError = e.message; }
+          saveSettings();
+          return s;
+        }
+      } catch (e) { if (e && e.name === 'AbortError') backend.codexCancel().catch(() => {}); throw e; }
+    }
     let r = await wireCall(Wire.codexUserCodeRequest(), signal);
     const dc = Wire.codexUserCode(r.status, r.text);
     onState({ code: dc.code, url: Wire.CODEX.verifyUrl });
@@ -1835,7 +1940,7 @@
       c2.appendChild(el('p', 'hint', C.PROVIDERS[settings.provider].name + ' today: ' + ls.dailyUsed + (ls.dailyMax ? '/' + ls.dailyMax : '') + ' requests from this app' + (ls.dailyIsEstimate ? ' (estimate, not enforced)' : '') + ' · pace ' + ls.rpm + '/min, ' + ls.concurrent + ' at a time. Auto mode drops to a single agent when little is left. Details: Settings → Usage & limits.'));
       body.appendChild(c2);
       const c3 = el('div', 'card'); c3.appendChild(el('div', 'ctitle', 'Data'));
-      c3.appendChild(el('p', '', 'Chats, files and keys are stored only on this device. Messages are sent directly to the provider you select.'));
+      c3.appendChild(el('p', '', backend.on() ? 'Chats and model-provider keys are stored on this device. Files are also copied to your server, where commands run and secrets are kept. Messages are sent directly to the provider you select.' : 'Chats, files and keys are stored only on this device. Messages are sent directly to the provider you select.'));
       const del = el('button', 'wide danger', 'Delete all chats'); del.onclick = () => { if (confirm('Delete all chats?')) { sessions = []; current = null; newSession(); saveSessions(); toast('Chats deleted'); } }; c3.appendChild(del);
       body.appendChild(c3);
       const c4 = el('div', 'card'); c4.appendChild(settingsRow('Version', Native ? Native.version() : 'web', null, true)); body.appendChild(c4);
@@ -1926,18 +2031,17 @@
       c1.appendChild(run); c1.appendChild(out); body.appendChild(c1);
 
       const c2 = el('div', 'card'); c2.appendChild(el('div', 'ctitle', 'Secrets'));
-      c2.appendChild(el('p', '', 'Stored only on this phone. A command gets a secret only when it names it: the agent must request it and you approve, and your own terminal commands get the ones whose name you type. The model is given only the names, and values are masked in command output; but code that you allow to receive a secret can read it, so check the approval sheet.'));
+      c2.appendChild(el('p', '', (backend.on() ? 'Stored encrypted on your server; this phone keeps only the names and cannot read a value back.' : 'Stored only on this phone.') + ' A command gets a secret only when it names it: the agent must request it and you approve, and your own terminal commands get the ones whose name you type. The model is given only the names, and values are masked in command output; but code that you allow to receive a secret can read it, so check the approval sheet.'));
       const list = settings.secrets || (settings.secrets = []);
       if (!list.length) c2.appendChild(el('p', '', 'No secrets yet.'));
-      list.forEach((k, i) => { const r = settingsRow(k.name, 'Remove', () => { list.splice(i, 1); saveSettings(); drawSheet(); }, true); r.classList.add('mono'); c2.appendChild(r); });
+      list.forEach((k, i) => { const r = settingsRow(k.name, 'Remove', () => { setSecret(k.name, ''); saveSettings(); drawSheet(); }, true); r.classList.add('mono'); c2.appendChild(r); });
       const n = el('input', 'field mono'); n.type = 'text'; n.placeholder = 'NAME'; n.autocapitalize = 'characters'; n.autocomplete = 'off';
       const v = el('input', 'field mono'); v.type = 'password'; v.placeholder = 'Value'; v.autocomplete = 'off';
       const add = el('button', 'wide ghost', 'Add');
       add.onclick = () => {
         const name = n.value.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_');
         if (!/^[A-Z_][A-Z0-9_]*$/.test(name) || !v.value) return toast('Enter a NAME (letters, digits, _) and a value');
-        const old = list.findIndex((x) => x.name === name); if (old >= 0) list.splice(old, 1);
-        list.push({ name, value: v.value }); saveSettings(); drawSheet();
+        setSecret(name, v.value); saveSettings(); drawSheet();
       };
       c2.appendChild(n); c2.appendChild(v); c2.appendChild(add); body.appendChild(c2);
     });
@@ -2070,7 +2174,70 @@
       body.appendChild(settingsRow('Workspace files', ws.list().length + '', openFiles));
       body.appendChild(settingsRow('Terminal', '', openTerminal));
       body.appendChild(settingsRow('GitHub', '', openGitHub));
+      body.appendChild(settingsRow('Server', backend.on() ? 'Connected' : 'Off', openServer));
     });
+  }
+
+  /** Settings → Server: connect this phone to a CybNate server, which then runs the commands and keeps the secrets and sign-ins. */
+  let serverUi = { working: false, error: '', info: null, note: '' };
+  function openServer() {
+    const top = () => sheetStack.length && sheetStack[sheetStack.length - 1].title === 'Server';
+    const redraw = () => { if (top()) drawSheet(); };
+    const look = () => { if (!backend.on()) return; backend.call('GET', '/v1/health').then((h) => { serverUi.info = h; serverUi.error = ''; redraw(); }).catch((e) => { serverUi.info = null; serverUi.error = e.message; redraw(); }); };
+    let urlDraft = '', keyDraft = '';
+    openSheet('Server', (body) => {
+      const c = el('div', 'card'); body.appendChild(c);
+      if (!backend.on()) {
+        c.appendChild(el('div', 'ctitle', 'Connect a server'));
+        c.appendChild(el('p', '', 'A CybNate server is a small Linux machine of your own. Once connected, commands run there with real bash, Python, Node and git instead of on this phone, and secrets and sign-ins are kept there. Without a server the app keeps working on the phone as before.'));
+        c.appendChild(el('div', 'flabel', 'Server address'));
+        const u = el('input', 'field mono'); u.id = 'srvUrl'; u.type = 'url'; u.placeholder = 'https://cybnate.example.com'; u.autocapitalize = 'off'; u.autocomplete = 'off'; u.spellcheck = false; u.value = urlDraft; u.oninput = () => { urlDraft = u.value; }; c.appendChild(u);
+        c.appendChild(el('div', 'flabel', 'Access key (CYB_ACCESS_KEY of the server)'));
+        const k = el('input', 'field mono'); k.id = 'srvKey'; k.type = 'password'; k.autocomplete = 'off'; k.value = keyDraft; k.oninput = () => { keyDraft = k.value; }; c.appendChild(k);
+        if (serverUi.error) { const n = el('div', 'note err', '✗ ' + serverUi.error); n.id = 'srvMsg'; c.appendChild(n); }
+        const go = el('button', 'wide', serverUi.working ? 'Connecting…' : 'Connect'); go.id = 'srvGo'; go.disabled = serverUi.working; c.appendChild(go);
+        go.onclick = async () => {
+          serverUi = { working: true, error: '', info: null, note: '' }; redraw();
+          try {
+            const cfg = await backend.pair(urlDraft, keyDraft, '');
+            settings.backend = cfg; saveSettings(); keyDraft = '';
+            const moved = (settings.secrets || []).filter((x) => x.value).length;
+            let note = '';
+            try { await secretsUp(); const r = await backend.sync(); note = r.written + ' file' + (r.written === 1 ? '' : 's') + ' sent' + (moved ? ', ' + moved + ' secret' + (moved === 1 ? '' : 's') + ' moved to the server' : '') + '.'; }
+            catch (e) { note = 'Connected, but the first transfer failed: ' + e.message + ' It is tried again with the next command.'; }
+            serverUi = { working: false, error: '', info: null, note }; toast('Server connected'); look();
+          } catch (e) { serverUi = { working: false, error: String(e && e.message ? e.message : e), info: null, note: '' }; }
+          redraw();
+        };
+        c.appendChild(el('p', 'hint', 'How to run a server: see docs/BACKEND.md in the project. Use an https address; with plain http anyone on the network can read the traffic.'));
+        return;
+      }
+      const b = settings.backend, h = serverUi.info;
+      const ok = el('div', serverUi.error ? 'note err' : 'note ok', serverUi.error ? '✗ ' + serverUi.error : '✓ Connected to ' + b.url.replace(/^https?:\/\//, '') + (h ? ' · version ' + h.version : '')); ok.id = 'srvState'; c.appendChild(ok);
+      if (/^http:/.test(b.url)) c.appendChild(el('div', 'note', 'This address is plain http: the traffic, including command output, is not encrypted on the way.'));
+      if (serverUi.note) c.appendChild(el('p', '', serverUi.note));
+      if (h) {
+        c.appendChild(settingsRow('Users kept apart', h.isolation === 'uid' ? 'Yes' : 'No (one user)', null, true));
+        c.appendChild(settingsRow('Language servers', (h.languages || []).join(', ') || 'none', null, true));
+        c.appendChild(settingsRow('Sign-in through the server', (h.signIn || []).map((x) => (x === 'codex' ? 'ChatGPT' : x.charAt(0).toUpperCase() + x.slice(1))).join(', '), null, true));
+      }
+      c.appendChild(el('p', '', 'Commands, pip and npm run on the server. Secrets you add are stored there. Still on this phone: your chats, the keys of model providers, the built-in git with GitHub push, and web page tests.'));
+      if (settings.codex && !settings.codex.remote) c.appendChild(el('div', 'note', 'Your ChatGPT sign-in is still kept on this phone. Sign in again in Model Providers to move it to the server.'));
+      const send = el('button', 'wide ghost', 'Compare and send files now'); send.id = 'srvSync'; c.appendChild(send);
+      send.onclick = async () => { send.disabled = true; send.textContent = 'Sending…'; try { backend.reset(); const r = await backend.sync(); serverUi.note = r.written + ' sent, ' + r.removed + ' removed on the server.'; } catch (e) { serverUi.note = e.message; } redraw(); };
+      const off = el('button', 'wide danger', 'Disconnect'); off.id = 'srvOff'; c.appendChild(off);
+      off.onclick = async () => {
+        if (!confirm('Disconnect from the server?\n\nSecrets and sign-ins kept on the server cannot be copied back to the phone: you will have to enter them again. Your files stay on this phone.')) return;
+        try { await backend.logout(); } catch (e) { /* the phone forgets the server either way */ }
+        const gone = new Set((settings.secrets || []).filter((x) => x.remote && !x.value).map((x) => x.name));
+        settings.secrets = (settings.secrets || []).filter((x) => !gone.has(x.name));
+        Object.keys(settings.integrations || {}).forEach((id) => { const en = Integrations.BY_ID[id]; if (en && en.fields && en.fields.some((fd) => !fd.optional && gone.has(fd.env))) delete settings.integrations[id]; });
+        delete settings.backend; backend.reset();
+        if (settings.codex && settings.codex.remote) setCodex(null); else saveSettings();
+        serverUi = { working: false, error: '', info: null, note: '' }; syncDisk(); toast('Disconnected'); renderAll(); redraw();
+      };
+    });
+    look();
   }
 
   /** What the app knows about each provider's limits (and where that knowledge comes from) plus today's use per model. */
@@ -2199,7 +2366,7 @@
 
   if (!C.PROVIDERS[settings.provider]) { settings.provider = 'pollinations'; settings.model = 'openai-fast'; }
   $('ver').textContent = Native ? 'v' + Native.version() : 'web';
-  window.__cyb = { wireCall, codexSignIn, codexFresh, setCodex, googleConnect, googleToken, freshGoogle, fetchModels, openProviders, chatStream, openIntegrations, testIntegration, saveIntegration, removeIntegration, connectedIds, extraPrompt, cli, testWebapp, slashCommand, attachMentions, compactChat, kv, Native, nativeStream, fetchModels, C, ws, settings, limiter, health, usageReport, openUsage, freeCheck, metaOf, apiHistory, modelPool, spawnAgent, helperExec, rerunAs, get task() { return task; }, askApproval, openPreview, offerUndo, namedSecrets, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
+  window.__cyb = { backend, openServer, secretsUp, setSecret, wireCall, codexSignIn, codexFresh, setCodex, googleConnect, googleToken, freshGoogle, fetchModels, openProviders, chatStream, openIntegrations, testIntegration, saveIntegration, removeIntegration, connectedIds, extraPrompt, cli, testWebapp, slashCommand, attachMentions, compactChat, kv, Native, nativeStream, fetchModels, C, ws, settings, limiter, health, usageReport, openUsage, freeCheck, metaOf, apiHistory, modelPool, spawnAgent, helperExec, rerunAs, get task() { return task; }, askApproval, openPreview, offerUndo, namedSecrets, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
   window.addEventListener('error', (e) => { console.log('CYBERR ' + e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno); });
   window.addEventListener('unhandledrejection', (e) => { console.log('CYBERR promise ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)); });
 

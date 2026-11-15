@@ -396,6 +396,19 @@
 
   function environmentDoc(caps) {
     caps = caps || {};
+    if (caps.server) return '# Environment\n' +
+      'Commands run on a Linux server (bash) that holds a copy of the workspace; files you write are sent there before each command and what a command changes comes back. Commands start in the workspace root.\n' +
+      '- Real tools: bash with pipes, redirects and && chains, python3 (also as `python`) with pip, node with npm, and whatever else is installed on the server. Check with `command -v <tool>` before relying on a tool.\n' +
+      '- execute_python runs Python code directly; sqlite_query runs SQL on a database file.\n' +
+      '- `lsp <file>` prints what the language server reports for that file (type errors, unknown names). Use it after editing Python, JavaScript or TypeScript.\n' +
+      '- `curl` / `wget` as the whole command (built in: -X, -H, -d, -i, -s, -o) and http_request make real HTTP requests from the server.\n' +
+      '- `git status`, `git diff [file]`, `git log`, `git branch`, `git checkout -- <file>`, `git add`, `git commit -m "..."`, `git clone <owner/repo>` and `git push` as the whole command are built into the app (a simplified git backed by workspace snapshots and the GitHub API; no merge, rebase or stash). The user is always asked before a push.\n' +
+      '- test_webapp loads an HTML page off-screen on the phone and reports its console output, runtime errors and the result of an optional test script.\n' +
+      '- A command is stopped at its time limit, and background processes end with it: start a server and test it inside one command (for example `node server.js & sleep 1; curl -s localhost:3000; kill %1`).\n' +
+      '- node_modules, .venv and similar folders stay on the server and are not shown in the file list.\n' +
+      '- The user previews web projects with the Run button; keep them self-contained with relative paths.\n' +
+      (caps.secrets && caps.secrets.length ? '- The user saved these secrets on the server: ' + caps.secrets.join(', ') + '. A command receives one only when you name it in the secrets attribute, e.g. <run_terminal_command secrets="' + caps.secrets[0] + '">, and the user is asked first. Read it with os.environ / process.env / $NAME; in http_request write $NAME where the value belongs. Never print a secret or send it anywhere the user did not ask for.\n' : '') +
+      (caps.repo ? '- The workspace is a clone of the GitHub repository ' + caps.repo + '. `git commit` then `git push` sends the changes; the user approves every push.\n' : '');
     return '# Environment\n' +
       'You are on an Android phone. Commands start in the workspace root.\n' +
       '- `python file.py`, `python -c "..."`, `python -m unittest`: real CPython 3.14 (WebAssembly) with the full standard library. ' +
