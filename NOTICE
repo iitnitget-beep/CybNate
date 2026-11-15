@@ -1,0 +1,12 @@
+CybNate
+
+Parts of the agent instructions in app/src/main/assets/www/core.js (the general
+guidelines, agent-spawning guidelines, code review guidelines and web research
+guidance) are adapted from the Codebuff / Freebuff project
+(https://github.com/CodebuffAI/freebuff), Copyright 2025 Codebuff, licensed under
+the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
+The text was shortened and changed to match the tools available on Android.
+
+Phase 1 safety work (approval before commands and file changes, untrusted tool results) follows ideas
+that are common to agent tools, including the command approval flow described by hermes-agent
+(NousResearch, MIT). No code was copied from that project.
