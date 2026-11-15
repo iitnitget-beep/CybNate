@@ -121,7 +121,21 @@ public class MainActivity extends Activity {
         web.addJavascriptInterface(new Bridge(), "Native");
 
         if (savedInstanceState != null) web.restoreState(savedInstanceState);
-        else web.loadUrl(getIntent() != null && getIntent().getBooleanExtra("selftest", false) ? HOME + "?selftest=1" : HOME);
+        else {
+            // Load only once the view has a real size: a page loaded into a 0x0 WebView can stay blank.
+            final String url = getIntent() != null && getIntent().getBooleanExtra("selftest", false) ? HOME + "?selftest=1" : HOME;
+            if (web.getWidth() > 0) web.loadUrl(url);
+            else web.addOnLayoutChangeListener(new android.view.View.OnLayoutChangeListener() {
+                boolean done;
+                @Override
+                public void onLayoutChange(android.view.View v, int l, int t, int r, int btm, int ol, int ot, int or, int ob) {
+                    if (done || r - l <= 0 || btm - t <= 0) return;
+                    done = true;
+                    web.removeOnLayoutChangeListener(this);
+                    web.post(new Runnable() { @Override public void run() { web.loadUrl(url); } });
+                }
+            });
+        }
     }
 
     @Override

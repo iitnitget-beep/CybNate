@@ -980,6 +980,10 @@
   current = sessions[0] || null;
   if (!current) newSession(); else renderAll();
   console.log('CYBUI ready agents=' + $('agents').children.length + ' model=' + settings.model);
+  // Safety net: if the page still has no size after a few seconds, reload it once.
+  setTimeout(() => {
+    try { if (Native && !window.innerWidth && !busy && !sessionStorage.getItem('cyb.reloaded')) { sessionStorage.setItem('cyb.reloaded', '1'); console.log('CYBUI reload (0x0 viewport)'); location.reload(); } } catch (e) { /* ignore */ }
+  }, 3000);
   // Some WebViews lay the page out at 0x0 before the window is attached and then skip the first paint: repaint on resize.
   let lastW = window.innerWidth;
   window.addEventListener('resize', () => {
