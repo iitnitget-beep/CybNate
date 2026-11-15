@@ -1,14 +1,15 @@
 CYBUI ready agents=5 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:982)
-CYBUI layout t=1500 header=56 welcome=1278 win=0x0 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:990)
-CYBUI layout t=6000 header=56 welcome=1278 win=0x0 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:990)
-CYBUI layout t=12000 header=56 welcome=1278 win=0x0 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:990)
-CYBUI layout t=25000 header=56 welcome=1278 win=0x0 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:990)
-FOCUS1   mCurrentFocus=Window{4ca3e0b u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{a829ce2 u0 com.cybnate.app/.MainActivity t8} 
-  mCurrentFocus=Window{4ca3e0b u0 com.cybnate.app/com.cybnate.app.MainActivity}
-  mFocusedApp=ActivityRecord{a829ce2 u0 com.cybnate.app/.MainActivity t8}
-11-15 01:28:30.584   534   553 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +6s830ms
+CYBUI layout t=1500 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:994)
+CYBUI layout t=6000 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:994)
+CYBUI layout t=12000 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:994)
+CYBUI layout t=25000 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:994)
+FOCUS1   mCurrentFocus=Window{f08a65a u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{b57296 u0 com.cybnate.app/.MainActivity t8} 
+  mCurrentFocus=Window{f08a65a u0 com.cybnate.app/com.cybnate.app.MainActivity}
+  mFocusedApp=ActivityRecord{b57296 u0 com.cybnate.app/.MainActivity t8}
+11-15 01:39:30.053  2794  3041 E chromium: [ERROR:simple_version_upgrade.cc(152)] Failed to write a new fake index.
+11-15 01:39:31.100   525   547 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +3s879ms
 CybNateJS: CYBUI ready agents=5 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:982)
-CybNateJS: CYBUI layout t=1500 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:990)
-CybNateJS: CYBUI layout t=6000 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:990)
-CybNateJS: CYBUI layout t=12000 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:990)
-CybNateJS: CYBUI layout t=25000 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:990)
+CybNateJS: CYBUI layout t=1500 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:994)
+CybNateJS: CYBUI layout t=6000 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:994)
+CybNateJS: CYBUI layout t=12000 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:994)
+CybNateJS: CYBUI layout t=25000 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:994)
