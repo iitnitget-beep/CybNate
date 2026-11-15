@@ -37,8 +37,18 @@ jobs:
               -dname "CN=CybNate, O=CybNate, C=IN"
           fi
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Agent core and safety tests
-        run: node tests/core.test.js && node tests/safety.test.js && node tests/orchestra.test.js && node tests/router.test.js
+        run: |
+          set -e
+          for t in core safety orchestra router devtools engine cli; do node tests/$t.test.js; done
+          # UI tests run the real index.html in jsdom with fake models and a fake network
+          mkdir -p /tmp/jsd && (cd /tmp/jsd && npm init -y >/dev/null && npm i --silent jsdom@31.0.1)
+          export NODE_PATH=/tmp/jsd/node_modules
+          for t in webtest.test engine.ui.test auto.test router.ui.test preview.test ui.smoke; do node tests/$t.js; done
 
       - name: Fetch bundled Python runtime (Pyodide)
         run: bash scripts/fetch-vendor.sh

@@ -611,6 +611,7 @@
         body.appendChild(el('p', 'awarn', 'The command, and any code it runs, can read these values and could send them over the network. Masking in the output does not prevent that. Allow only if you trust this exact command.'));
       }
       if (req.sensitive) body.appendChild(el('p', 'awarn', 'It names a protected file (CI, licence, settings or secrets).'));
+      if (req.network) body.appendChild(el('p', 'awarn', 'It sends data out of this device (upload, POST or push). Check the address and the data.'));
     } else if (req.kind === 'delete') {
       pre(req.path);
     } else if (req.kind === 'push') {
@@ -1408,7 +1409,7 @@
         const msg = field('Commit message', ''); c3.appendChild(msg);
         const pushBtn = el('button', 'wide', '⬆ Commit & push'); pushBtn.style.marginTop = '10px'; c3.appendChild(pushBtn);
         const disc = el('button', 'wide ghost', 'Disconnect (keeps the files)'); c3.appendChild(disc);
-        disc.onclick = () => { repoBase = null; save('cyb.repo', null); drawSheet(); };
+        disc.onclick = () => { repoBase = null; save('cyb.repo', null); cli.gitForget(); drawSheet(); };
         GitHub.status(repoBase, ws).then((s) => {
           st.textContent = s.count ? s.modified.map((p) => 'M  ' + p).concat(s.added.map((p) => 'A  ' + p), s.deleted.map((p) => 'D  ' + p)).join('\n') : 'No changes to commit.';
           pushBtn.disabled = !s.count; pushBtn.style.opacity = s.count ? 1 : 0.4;
@@ -1856,7 +1857,7 @@
     if (busy) return toast('Stop the current reply first');
     closeDrawer();
     if (ws.list().length && !confirm('Start a new project? This removes the ' + ws.list().length + ' files in the current workspace. Export or push them first if you need them.')) return;
-    ws.list().forEach((p) => ws.remove(p)); repoBase = null; save('cyb.repo', null);
+    ws.list().forEach((p) => ws.remove(p)); repoBase = null; save('cyb.repo', null); cli.gitForget();
     newSession(); openGitHub(); toast('Empty workspace. Clone a repo here, or just ask the agent to build.');
   };
   applyTheme();

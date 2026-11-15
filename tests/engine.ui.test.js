@@ -121,7 +121,11 @@ async function boot(settings) {
   assert.strictEqual(out.out, '{"got":"{\\"a\\":1}","method":"POST"}'); assert.strictEqual(net[net.length - 1].headers['Content-Type'], 'application/json');
   // the http_request tool goes the same way
   const hc = T.C.parseToolCalls('<http_request method="POST" url="https://api.test/echo" headers=\'{"X-K":"v"}\'>\n{"b":2}\n</http_request>');
-  const hres = await T.C.runTools(hc, T.ws, { mode: 'auto', exec: (c, t) => T.runCommand(c, t) });
+  let hres = await T.C.runTools(hc, T.ws, { mode: 'auto', exec: (c, t) => T.runCommand(c, t) });
+  assert.ok(!hres[0].ok && /DENIED/.test(hres[0].text), 'a POST is never sent without an approval, even in Auto mode');
+  let asked = null;
+  hres = await T.C.runTools(hc, T.ws, { mode: 'auto', exec: (c, t) => T.runCommand(c, t), approve: async (req) => { asked = req; return 'allow'; } });
+  assert.ok(asked, 'the approval screen was asked');
   assert.ok(hres[0].ok && /HTTP 201/.test(hres[0].text) && /"got":"\{\\"b\\":2\}"/.test(hres[0].text), hres[0].text); assert.strictEqual(net[net.length - 1].headers['X-K'], 'v');
   script.http = (url) => ({ 'https://cdn.jsdelivr.net/npm/pad/package.json': { status: 200, text: JSON.stringify({ name: 'pad', version: '1.0.0', main: 'index.js' }) }, 'https://cdn.jsdelivr.net/npm/pad@1.0.0/index.js': { status: 200, text: 'module.exports = (s, n) => String(s).padStart(n, "0");' } }[url] || null);
   out = await T.runCommand('npm install pad'); assert.strictEqual(out.code, 0, out.out);
