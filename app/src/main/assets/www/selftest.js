@@ -6,7 +6,8 @@
   box.style.cssText = 'position:fixed;inset:0;z-index:99;margin:0;background:#0b0f0e;color:#e6f2ec;font:11px monospace;padding:10px;overflow:auto;white-space:pre-wrap';
   document.body.appendChild(box);
   const say = (name, ok, detail) => { const l = 'CYBTEST ' + (ok ? 'PASS ' : 'FAIL ') + name + (detail ? ' :: ' + String(detail).replace(/\s+/g, ' ').slice(0, 260) : ''); lines.push(l); console.log(l); box.textContent = lines.join('\n'); };
-  const test = async (name, fn) => { try { const d = await fn(); say(name, true, d); } catch (e) { say(name, false, e && e.message ? e.message : e); } };
+  // one stuck case must not stall the whole run: after 5 minutes it is reported as failed and the next case starts
+  const test = async (name, fn) => { try { const d = await Promise.race([fn(), new Promise((_, rej) => setTimeout(() => rej(new Error('no result after 300 s')), 300000))]); say(name, true, d); } catch (e) { say(name, false, e && e.message ? e.message : e); } };
   const must = (c, m) => { if (!c) throw new Error(m); };
   console.log('CYBTEST START ua=' + navigator.userAgent);
 
