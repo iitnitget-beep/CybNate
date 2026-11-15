@@ -18,12 +18,17 @@
     window.addEventListener('error', function (e) {
       var t = e.target;
       if (t && t !== window && t.tagName && (t.src || t.href)) errors.push('Failed to load <' + t.tagName.toLowerCase() + '>: ' + String(t.src || t.href).slice(0, 200));
-      else errors.push((e.message || 'Script error') + (e.lineno ? ' (line ' + e.lineno + (e.colno ? ':' + e.colno : '') + ')' : ''));
+      else {
+        var ln = e.lineno; if (ln > CFG.off && CFG.off) ln -= CFG.off; /* browsers count lines of the whole document, harness included */
+        errors.push((e.message || 'Script error') + (ln ? ' (line ' + ln + (e.colno ? ':' + e.colno : '') + ')' : ''));
+      }
     }, true);
     window.addEventListener('unhandledrejection', function (e) { errors.push('Unhandled promise rejection: ' + str(e.reason)); });
     function describe(el) { return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (el.className && typeof el.className === 'string' ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : ''); }
     function report(test) {
       var d = document, body = d.body, issues = [], vw = window.innerWidth || 0, vh = window.innerHeight || 0;
+      // Android zooms an overflowing page out, which makes innerWidth grow. The screen width is the real limit.
+      var sw = (window.screen && window.screen.width) || 0; if (sw && vw > sw + 1) { vh = Math.round(vh * sw / vw); vw = sw; }
       var all = body ? body.getElementsByTagName('*') : [], q = function (s) { return d.querySelectorAll(s).length; };
       var text = body ? String(body.innerText != null ? body.innerText : body.textContent || '') : '';
       text = text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
@@ -78,7 +83,7 @@
 
   /** The page with the harness as its first script. `script` is the optional test; `waitMs` the settle time after load. */
   function instrument(html, script, waitMs, id) {
-    const cfg = JSON.stringify({ script: script || '', wait: waitMs == null ? 600 : waitMs, id: id || '' }).replace(/</g, '\\u003c').replace(/\u2028|\u2029/g, '');
+    const cfg = JSON.stringify({ script: script || '', wait: waitMs == null ? 600 : waitMs, id: id || '', off: harness.toString().split('\n').length - 1 }).replace(/</g, '\\u003c').replace(/\u2028|\u2029/g, '');
     const tag = '<script>(' + harness.toString() + ')(' + cfg + ');</' + 'script>';
     html = String(html == null ? '' : html);
     const m = /<head\b[^>]*>/i.exec(html) || /<html\b[^>]*>/i.exec(html) || /<!doctype[^>]*>/i.exec(html);

@@ -198,7 +198,8 @@
     T.ws.set('wt/bad.html', '<!doctype html><title>Bad</title><meta name="viewport" content="width=device-width,initial-scale=1"><div id="wide" style="width:1400px;height:20px;background:red">x</div><button id="b" style="width:12px;height:12px;padding:0"></button><script>Promise.reject(new Error("async boom"));\nnoSuchFunction();</script>');
     const r = await T.testWebapp('wt/bad.html', 'assert($("#missing"), "the #missing element does not exist");', 20);
     must(r.code === 1, 'exit code ' + r.code); must(/noSuchFunction is not defined/.test(r.out), 'error not caught: ' + r.out); must(/async boom/.test(r.out), 'rejection not caught: ' + r.out);
-    must(/Test script: FAILED: .*#missing element does not exist/.test(r.out), 'assert: ' + r.out); must(/Layout issues \(\d+\)/.test(r.out) && /Horizontal overflow/.test(r.out), 'layout: ' + r.out);
+    must(/Test script: FAILED: .*#missing/.test(r.out), 'assert: ' + r.out.slice(-200)); must(/Horizontal overflow: the page is \d+ px wide in a 3\d\d px viewport/.test(r.out) && /div#wide/.test(r.out) && /tap target/.test(r.out), 'layout: ' + (r.out.match(/Layout issues[\s\S]*?(?=Visible text)/) || [r.out.slice(0, 200)])[0]);
+    must(/noSuchFunction is not defined \(line 2:/.test(r.out), 'line number: ' + (r.out.match(/noSuchFunction[^\n]*/) || [''])[0]);
     return (r.out.match(/Layout issues[\s\S]*?(?=Visible text)/) || [''])[0];
   });
   await test('test_webapp: page has no bridge, unfinished script is stopped', async () => {
