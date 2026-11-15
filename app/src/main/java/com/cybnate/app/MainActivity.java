@@ -77,6 +77,19 @@ public class MainActivity extends Activity {
 
         web.setWebViewClient(new WebViewClient() {
             @Override
+            public void onPageFinished(final WebView view, String url) {
+                // Some WebViews lay the first page out but never draw it: ask for fresh frames a few times.
+                for (long d : new long[] {250, 1000, 2500, 5000}) {
+                    view.postDelayed(new Runnable() {
+                        @Override public void run() {
+                            view.requestLayout();
+                            view.invalidate();
+                            view.evaluateJavascript("(function(){var b=document.body;if(!b)return;b.style.opacity='0.999';requestAnimationFrame(function(){b.style.opacity='';});})()", null);
+                        }
+                    }, d);
+                }
+            }
+            @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 return loader.shouldInterceptRequest(request.getUrl());
             }
