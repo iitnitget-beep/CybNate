@@ -11,7 +11,7 @@
   const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { toast('Storage is full. Delete some old chats.'); } };
 
   const settings = Object.assign({
-    provider: 'pollinations', model: 'openai-fast', keys: {}, customUrl: '', models: {}, extra: '', maxSteps: 25,
+    provider: 'pollinations', model: 'openai-fast', keys: {}, customUrl: '', models: {}, extra: '', maxSteps: 25, skills: [], secrets: [], startup: '',
   }, load('cyb.settings', {}));
   let sessions = load('cyb.sessions', []);
   let current = null;
@@ -271,14 +271,22 @@
     execQueue = job.catch(() => {});
     return job;
   }
+  const secretEnv = () => { const o = {}; (settings.secrets || []).forEach((k) => { if (k.name) o[k.name] = k.value; }); return o; };
+  const redact = (t) => { (settings.secrets || []).forEach((k) => { if (k.value && k.value.length >= 4) t = String(t || '').split(k.value).join('***'); }); return t; };
   async function runCommandNow(cmd, timeoutSec, signal) {
+    const r = await runCommandRaw(cmd, timeoutSec, signal);
+    if (r && r.out) r.out = redact(r.out);
+    return r;
+  }
+  async function runCommandRaw(cmd, timeoutSec, signal) {
     if (signal && signal.aborted) throw abortError();
     const pc = C.parseCommand(cmd);
     if (pc.kind === 'note') return { code: pc.code || 0, out: pc.text, files: [] };
     let r;
     if (pc.kind === 'sh') {
       if (!canShell) return { code: 127, out: 'Shell commands run only in the installed Android app. In this browser preview you can run `python …` and `node …`.', files: [] };
-      r = await nativeExec(cmd, timeoutSec);
+      const exp = Object.keys(secretEnv()).filter((k) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)).map((k) => 'export ' + k + "='" + String(secretEnv()[k]).replace(/'/g, "'\\''") + "'; ").join('');
+      r = await nativeExec(exp + cmd, timeoutSec);
       const changed = (r.changed || []).filter((c) => !c.tooBig);
       mirror = false;
       try {
@@ -294,9 +302,9 @@
     const files = ws.list().filter((p) => ws.size(p) <= 16 * 1048576).map((p) => ({ path: p, data: ws.bytes(p) }));
     if (pc.kind === 'python' || pc.kind === 'pip') {
       if (!pyLoaded) setStatus('starting Python…');
-      r = await workerRun('py', { files, mode: pc.kind === 'pip' ? 'pip' : pc.mode, argv: pc.argv, src: pc.src || '', cwd: pc.cwd }, timeoutSec, signal);
+      r = await workerRun('py', { files, mode: pc.kind === 'pip' ? 'pip' : pc.mode, argv: pc.argv, src: pc.src || '', cwd: pc.cwd, env: secretEnv() }, timeoutSec, signal);
     } else {
-      r = await workerRun('js', { files, mode: pc.mode, argv: pc.argv, src: pc.src || '', cwd: pc.cwd }, timeoutSec, signal);
+      r = await workerRun('js', { files, mode: pc.mode, argv: pc.argv, src: pc.src || '', cwd: pc.cwd, env: secretEnv() }, timeoutSec, signal);
     }
     (r.changed || []).forEach((c) => { const t = C.decodeIfText(c.data); ws.set(c.path, t != null ? t : c.data); });
     (r.deleted || []).forEach((p) => ws.remove(p));
@@ -389,7 +397,9 @@
 
   // ------------------------------------------------------------ sub-agents
   let repoBase = load('cyb.repo', null);
-  const caps = (extra) => Object.assign({ shell: canShell, repo: repoBase ? repoBase.owner + '/' + repoBase.repo : '' }, extra || {});
+  const caps = (extra) => Object.assign({ shell: canShell, repo: repoBase ? repoBase.owner + '/' + repoBase.repo : '', skills: (settings.skills || []).filter((k) => k.on !== false), secrets: Object.keys(secretEnv()) }, extra || {});
+  const loadSkill = (name) => { const n = String(name || '').toLowerCase().trim(); const k = (settings.skills || []).find((x) => x.on !== false && x.name === n) || (settings.skills || []).find((x) => x.on !== false && x.name.indexOf(n) >= 0 && n); if (!k) throw new Error('no installed skill named "' + name + '". Installed: ' + ((settings.skills || []).map((x) => x.name).join(', ') || 'none')); return '# Skill: ' + k.name + '\n' + k.body; };
+  const toolsFor = (agent) => agent.tools.filter((t) => t !== 'load_skill' || caps().skills.length);
 
   /** Run a helper agent with its own context and return its final report. */
   /** User instructions plus the project's AGENTS.md / CLAUDE.md when enabled. */
@@ -403,12 +413,12 @@
   }
   async function spawnAgent(type, prompt, signal) {
     const agent = C.AGENTS[type], msgs = [{ role: 'user', content: prompt }];
-    const env = { exec: (c, t) => runCommand(c, t, signal), search: (q) => webSearch(q, signal), readUrl: (u) => readUrl(u, signal) };
+    const env = { exec: (c, t) => runCommand(c, t, signal), search: (q) => webSearch(q, signal), readUrl: (u) => readUrl(u, signal), skill: loadSkill };
     let last = '';
     for (let step = 0; step < 8; step++) {
       const sys = C.buildSystemPrompt(type, ws.summary(), extraPrompt(), caps({ noSpawn: true }));
       setStatus(agent.icon + ' ' + type + (step ? ' step ' + (step + 1) : '') + '…');
-      last = await chatStream([{ role: 'system', content: sys }].concat(C.trimHistory(msgs, 40000)), (t) => setStatus(agent.icon + ' ' + type + ' ' + t.length + ' chars'), signal, agent.tools.filter((t) => t !== 'spawn_agent'));
+      last = await chatStream([{ role: 'system', content: sys }].concat(C.trimHistory(msgs, 40000)), (t) => setStatus(agent.icon + ' ' + type + ' ' + t.length + ' chars'), signal, toolsFor(agent).filter((t) => t !== 'spawn_agent'));
       msgs.push({ role: 'assistant', content: last });
       const calls = C.parseToolCalls(last, agent.tools).filter((c) => C.PASSIVE.indexOf(c.name) < 0);
       if (!calls.length) return C.displayText(last).trim();
@@ -564,7 +574,7 @@
           full = await chatStream([{ role: 'system', content: sys }].concat(apiHistory()), (t) => {
             latest = t; setStatus('writing… ' + t.length + ' chars');
             if (!pending) { pending = true; setTimeout(paint, 90); }
-          }, abortCtl.signal, agent.tools);
+          }, abortCtl.signal, toolsFor(agent));
         } catch (e) {
           if (latest) { msg.content = latest; current.messages.push(msg); }
           node.remove(); if (latest) box.appendChild(msgNode(msg));
@@ -579,7 +589,7 @@
         let toolMsg;
         if (calls.length && !calls.every((c) => C.PASSIVE.indexOf(c.name) >= 0)) {
           const sig = abortCtl.signal;
-          const env = { exec: (c, t) => runCommand(c, t, sig), search: (q) => webSearch(q, sig), readUrl: (u) => readUrl(u, sig), spawn: (type, p) => spawnAgent(type, p, sig) };
+          const env = { exec: (c, t) => runCommand(c, t, sig), search: (q) => webSearch(q, sig), readUrl: (u) => readUrl(u, sig), spawn: (type, p) => spawnAgent(type, p, sig), skill: loadSkill };
           const parts = await C.runTools(calls, ws, env, (label) => setStatus(label.slice(0, 60) + '…'));
           toolMsg = { role: 'user', tool: true, parts, content: C.formatToolResults(parts) };
         } else if (new RegExp('<(' + C.BODY_TOOLS.join('|') + ')\\b[^>]*>(?![\\s\\S]*<\\/\\1\\s*>)').test(C.stripThink(full))) {
@@ -775,6 +785,7 @@
           res.files.forEach((v, k) => ws.set(k, v));
           repoBase = res.base; save('cyb.repo', repoBase);
           toast('Cloned ' + res.files.size + ' files' + (res.skipped ? ' (' + res.skipped + ' large or binary files left on GitHub)' : ''));
+          if ((settings.startup || '').trim()) runStartup();
         } catch (e) { alert(e.message); }
         working = false; drawSheet();
       };
@@ -871,6 +882,159 @@
       body.appendChild(c);
     });
   }
+
+  // ------------------------------------------------------- project & skills
+  async function runStartup() {
+    const lines = (settings.startup || '').split('\n').map((l) => l.trim()).filter((l) => l && l[0] !== '#');
+    if (!lines.length) return '';
+    let log = '';
+    for (const l of lines) {
+      toast('Startup: ' + l.slice(0, 40));
+      try { const r = await runCommand(l, 180); log += '$ ' + l + '\n' + (r.out || '').trim() + '\n[exit code ' + r.code + ']\n\n'; if (r.code !== 0) break; }
+      catch (e) { log += '$ ' + l + '\n' + (e.message || e) + '\n'; break; }
+    }
+    toast(/\[exit code [1-9]/.test(log) ? 'Startup script failed' : 'Startup script finished');
+    return log;
+  }
+  function openProject() {
+    openSheet('Project settings', (body) => {
+      const c1 = el('div', 'card'); c1.appendChild(el('div', 'ctitle', 'Startup script'));
+      c1.appendChild(el('p', '', 'Commands run after a repository is cloned, one per line. For example: pip install requests'));
+      const ta = el('textarea', 'field mono'); ta.rows = 3; ta.value = settings.startup || ''; ta.placeholder = 'pip install -r requirements.txt'; ta.autocapitalize = 'off'; ta.spellcheck = false;
+      ta.onchange = () => { settings.startup = ta.value; saveSettings(); }; c1.appendChild(ta);
+      const out = el('pre', 'changes'); out.hidden = true;
+      const run = el('button', 'wide ghost', 'Run now'); run.onclick = async () => { settings.startup = ta.value; saveSettings(); run.textContent = 'Running…'; out.hidden = false; out.textContent = (await runStartup()) || 'Nothing to run.'; run.textContent = 'Run now'; };
+      c1.appendChild(run); c1.appendChild(out); body.appendChild(c1);
+
+      const c2 = el('div', 'card'); c2.appendChild(el('div', 'ctitle', 'Secrets'));
+      c2.appendChild(el('p', '', 'Stored only on this phone. Commands receive them as environment variables; the model sees the names, never the values.'));
+      const list = settings.secrets || (settings.secrets = []);
+      if (!list.length) c2.appendChild(el('p', '', 'No secrets yet.'));
+      list.forEach((k, i) => { const r = settingsRow(k.name, 'Remove', () => { list.splice(i, 1); saveSettings(); drawSheet(); }, true); r.classList.add('mono'); c2.appendChild(r); });
+      const n = el('input', 'field mono'); n.type = 'text'; n.placeholder = 'NAME'; n.autocapitalize = 'characters'; n.autocomplete = 'off';
+      const v = el('input', 'field mono'); v.type = 'password'; v.placeholder = 'Value'; v.autocomplete = 'off';
+      const add = el('button', 'wide ghost', 'Add');
+      add.onclick = () => {
+        const name = n.value.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_');
+        if (!/^[A-Z_][A-Z0-9_]*$/.test(name) || !v.value) return toast('Enter a NAME (letters, digits, _) and a value');
+        const old = list.findIndex((x) => x.name === name); if (old >= 0) list.splice(old, 1);
+        list.push({ name, value: v.value }); saveSettings(); drawSheet();
+      };
+      c2.appendChild(n); c2.appendChild(v); c2.appendChild(add); body.appendChild(c2);
+    });
+  }
+
+  // Popular public skills (name, GitHub repository). The SKILL.md file is downloaded from the repository when added.
+  const SKILL_CATALOG = [
+    ['skill-creator', 'anthropics/skills'], ['mcp-builder', 'anthropics/skills'], ['frontend-design', 'anthropics/skills'], ['webapp-testing', 'anthropics/skills'],
+    ['canvas-design', 'anthropics/skills'], ['doc-coauthoring', 'anthropics/skills'], ['pdf', 'anthropics/skills'], ['docx', 'anthropics/skills'], ['xlsx', 'anthropics/skills'], ['pptx', 'anthropics/skills'],
+    ['brainstorming', 'obra/superpowers'], ['writing-plans', 'obra/superpowers'], ['executing-plans', 'obra/superpowers'], ['verification-before-completion', 'obra/superpowers'],
+    ['systematic-debugging', 'obra/superpowers'], ['test-driven-development', 'obra/superpowers'], ['requesting-code-review', 'obra/superpowers'], ['receiving-code-review', 'obra/superpowers'],
+    ['using-git-worktrees', 'obra/superpowers'], ['finishing-a-development-branch', 'obra/superpowers'],
+    ['web-design-guidelines', 'vercel-labs/agent-skills'], ['vercel-react-best-practices', 'vercel-labs/agent-skills'], ['vercel-composition-patterns', 'vercel-labs/agent-skills'],
+    ['vercel-react-native-skills', 'vercel-labs/agent-skills'], ['deploy-to-vercel', 'vercel-labs/agent-skills'],
+    ['accessibility', 'addyosmani/web-quality-skills'], ['performance', 'addyosmani/web-quality-skills'],
+    ['tdd', 'mattpocock/skills'], ['review', 'mattpocock/skills'], ['improve-codebase-architecture', 'mattpocock/skills'], ['setup-pre-commit', 'mattpocock/skills'],
+    ['tailwind-design-system', 'wshobson/agents'], ['typescript-advanced-types', 'wshobson/agents'], ['nodejs-backend-patterns', 'wshobson/agents'], ['nextjs-app-router-patterns', 'wshobson/agents'],
+    ['api-design-principles', 'wshobson/agents'], ['python-performance-optimization', 'wshobson/agents'], ['python-testing-patterns', 'wshobson/agents'], ['rust-async-patterns', 'wshobson/agents'],
+    ['git-commit', 'github/awesome-copilot'], ['multi-stage-dockerfile', 'github/awesome-copilot'], ['documentation-writer', 'github/awesome-copilot'],
+    ['supabase-postgres-best-practices', 'supabase/agent-skills'], ['stripe-best-practices', 'stripe/ai'], ['wrangler', 'cloudflare/skills'], ['workers-best-practices', 'cloudflare/skills'],
+  ];
+  const repoTrees = {};
+  async function ghJson(path, raw) {
+    const h = { Accept: raw ? 'application/vnd.github.raw+json' : 'application/vnd.github+json' };
+    if ((settings.keys.github || '').trim()) h.Authorization = 'Bearer ' + settings.keys.github.trim();
+    let text = '', res;
+    const onChunk = (c) => { if (text.length < 3000000) text += c; };
+    if (Native) res = await nativeStream('https://api.github.com' + path, { headers: h }, onChunk); else res = await httpStream('https://api.github.com' + path, { headers: h }, onChunk);
+    if (res.status === 403 || res.status === 429) throw new Error('GitHub rate limit reached. Add a GitHub token on the GitHub screen, or try again in an hour.');
+    if (res.status >= 400) throw new Error('GitHub returned HTTP ' + res.status + ' for ' + path.split('?')[0]);
+    return raw ? text : JSON.parse(text);
+  }
+  async function repoSkillPaths(repo) {
+    if (!repoTrees[repo]) { const t = await ghJson('/repos/' + repo + '/git/trees/HEAD?recursive=1'); repoTrees[repo] = (t.tree || []).map((x) => x.path).filter((p) => /(^|\/)SKILL\.md$/i.test(p)); }
+    return repoTrees[repo];
+  }
+  function saveSkill(k, source) {
+    const list = settings.skills || (settings.skills = []);
+    const i = list.findIndex((x) => x.name === k.name); if (i >= 0) list.splice(i, 1);
+    list.push({ name: k.name, description: k.description, body: k.body.slice(0, 20000), source: source || '', on: true }); saveSettings();
+  }
+  async function installSkill(name, repo, path) {
+    if (!path) { path = C.findSkillPath(await repoSkillPaths(repo), name); if (!path) throw new Error('No skill named "' + name + '" in ' + repo + ' any more. Browse the repository below to see what it has.'); }
+    const text = await ghJson('/repos/' + repo + '/contents/' + path.split('/').map(encodeURIComponent).join('/'), true);
+    const k = C.parseSkill(text, name || path.split('/').slice(-2, -1)[0]); if (name) k.name = C.parseSkill('', name).name;
+    if (!k.body) throw new Error('That skill file is empty.');
+    saveSkill(k, repo); return k;
+  }
+  function openSkillEditor(k) {
+    openSheet(k ? 'Edit skill' : 'Create skill', (body) => {
+      const c = el('div', 'card');
+      const n = el('input', 'field'); n.type = 'text'; n.placeholder = 'Name, e.g. my-style-guide'; n.value = k ? k.name : ''; n.autocapitalize = 'off';
+      const d = el('input', 'field'); d.type = 'text'; d.placeholder = 'When should the agent use it? (one line)'; d.value = k ? k.description : '';
+      const b = el('textarea', 'field'); b.rows = 12; b.placeholder = 'Instructions the agent must follow when it uses this skill'; b.value = k ? k.body : '';
+      const save1 = el('button', 'wide', 'Save skill');
+      save1.onclick = () => {
+        if (!n.value.trim() || !b.value.trim()) return toast('Name and instructions are required');
+        if (k) settings.skills = settings.skills.filter((x) => x !== k);
+        saveSkill({ name: C.parseSkill('', n.value).name, description: d.value.trim(), body: b.value }, k ? k.source : 'created'); closeSheet();
+      };
+      [n, d, b, save1].forEach((x) => c.appendChild(x)); save1.style.marginTop = '10px'; body.appendChild(c);
+    });
+  }
+  function openSkills(showDiscover) {
+    let q = '', browse = '', browseList = null;
+    openSheet('Skills', (body) => {
+      const c = el('div', 'card');
+      const s = el('input', 'field'); s.type = 'text'; s.placeholder = 'Search skills'; s.value = q; s.autocapitalize = 'off';
+      s.oninput = () => { q = s.value.trim().toLowerCase(); body.querySelectorAll('.skill').forEach((n) => { n.hidden = !!q && n.textContent.toLowerCase().indexOf(q) < 0; }); };
+      c.appendChild(s);
+      const bt = el('div', 'btns'); bt.style.marginTop = '10px';
+      const mk = (t, fn) => { const b = el('button', 'lite', t); b.onclick = fn; bt.appendChild(b); };
+      mk(showDiscover ? 'Hide discover' : 'Discover', () => { showDiscover = !showDiscover; drawSheet(); });
+      mk('Create', () => openSkillEditor(null));
+      mk('Upload', () => { const p = document.createElement('input'); p.type = 'file'; p.accept = '.md,.txt,text/*'; p.onchange = () => { const f = p.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { const k = C.parseSkill(String(r.result), f.name.replace(/\.[^.]+$/, '').replace(/^skill$/i, 'uploaded-skill')); if (!k.body) return toast('That file is empty'); saveSkill(k, 'uploaded'); drawSheet(); toast('Added ' + k.name); }; r.readAsText(f); }; p.click(); });
+      c.appendChild(bt);
+      const mine = settings.skills || [];
+      if (!mine.length) c.appendChild(el('p', '', 'No skills installed. Discover or create a skill to get started.'));
+      mine.forEach((k) => {
+        const row = el('div', 'skill mine'); const info = el('button', 'sinfo'); info.appendChild(el('b', '', k.name)); info.appendChild(el('small', '', (k.source ? k.source + ' · ' : '') + (k.description || '').slice(0, 110)));
+        info.onclick = () => openSkillEditor(k);
+        const sw = el('button', 'switch' + (k.on !== false ? ' on' : '')); sw.onclick = () => { k.on = k.on === false; saveSettings(); sw.classList.toggle('on', k.on !== false); };
+        const rm = el('button', 'lite', 'Remove'); rm.onclick = () => { settings.skills = settings.skills.filter((x) => x !== k); saveSettings(); drawSheet(); };
+        row.appendChild(info); row.appendChild(sw); row.appendChild(rm); c.appendChild(row);
+      });
+      body.appendChild(c);
+      if (!showDiscover) return;
+      const dcard = el('div', 'card'); dcard.appendChild(el('div', 'ctitle', 'Discover'));
+      dcard.appendChild(el('p', '', 'Public skills from GitHub. A skill is a set of instructions; the agent loads it when a task matches. Skills written for desktop tools may mention commands that do not exist on a phone.'));
+      const have = (n) => mine.some((x) => x.name === n);
+      const addRow = (name, repo, path) => {
+        const row = el('div', 'skill'); const info = el('div', 'sinfo'); info.appendChild(el('b', '', name)); info.appendChild(el('small', '', repo));
+        const b = el('button', 'lite', have(name) ? 'Added' : 'Add'); b.disabled = have(name);
+        b.onclick = async () => { b.textContent = '…'; b.disabled = true; try { const k = await installSkill(name, repo, path); toast('Added ' + k.name); drawSheet(); } catch (e) { b.textContent = 'Add'; b.disabled = false; alert(e.message); } };
+        row.appendChild(info); row.appendChild(b); row.hidden = !!q && row.textContent.toLowerCase().indexOf(q) < 0; dcard.appendChild(row);
+      };
+      SKILL_CATALOG.forEach((x) => addRow(x[0], x[1]));
+      body.appendChild(dcard);
+      const bcard = el('div', 'card'); bcard.appendChild(el('div', 'ctitle', 'Browse a repository'));
+      const r = el('input', 'field'); r.type = 'text'; r.placeholder = 'owner/repo, e.g. anthropics/skills'; r.value = browse; r.autocapitalize = 'off';
+      const go = el('button', 'wide ghost', 'List skills');
+      go.onclick = async () => { const pr = GitHub.parseRepo(r.value.trim()); if (!pr) return toast('Enter owner/repo'); browse = pr.owner + '/' + pr.repo; go.textContent = 'Loading…'; try { browseList = await repoSkillPaths(browse); } catch (e) { alert(e.message); browseList = null; } drawSheet(); };
+      bcard.appendChild(r); bcard.appendChild(go); body.appendChild(bcard);
+      if (browseList) {
+        if (!browseList.length) bcard.appendChild(el('p', '', 'No SKILL.md files in ' + browse + '.'));
+        browseList.slice(0, 300).forEach((p) => {
+          const name = C.parseSkill('', p.split('/').slice(-2, -1)[0] || browse.split('/')[1]).name;
+          const row = el('div', 'skill'); const info = el('div', 'sinfo'); info.appendChild(el('b', '', name)); info.appendChild(el('small', '', p));
+          const b = el('button', 'lite', have(name) ? 'Added' : 'Add'); b.disabled = have(name);
+          b.onclick = async () => { b.textContent = '…'; b.disabled = true; try { await installSkill(name, browse, p); toast('Added ' + name); drawSheet(); } catch (e) { b.textContent = 'Add'; b.disabled = false; alert(e.message); } };
+          row.appendChild(info); row.appendChild(b); bcard.appendChild(row);
+        });
+      }
+    });
+  }
+
   function openSettings() {
     closeDrawer();
     openSheet('Settings', (body) => {
@@ -878,6 +1042,8 @@
       body.appendChild(settingsRow('General', '', openGeneral));
       body.appendChild(settingsRow('Model Providers', C.PROVIDERS[settings.provider].name, openProviders));
       body.appendChild(settingsRow('Model', settings.model.length > 18 ? settings.model.slice(0, 17) + '\u2026' : settings.model, () => openModels()));
+      body.appendChild(settingsRow('Project settings', '', openProject));
+      body.appendChild(settingsRow('Skills', (settings.skills || []).length ? (settings.skills || []).length + '' : '', () => openSkills(!(settings.skills || []).length)));
       body.appendChild(settingsRow('Appearance', cap(settings.theme || 'dark'), openAppearance));
       body.appendChild(settingsRow('Workspace files', ws.list().length + '', openFiles));
       body.appendChild(settingsRow('Terminal', '', openTerminal));
@@ -972,7 +1138,7 @@
 
   if (!C.PROVIDERS[settings.provider]) { settings.provider = 'pollinations'; settings.model = 'openai-fast'; }
   $('ver').textContent = Native ? 'v' + Native.version() : 'web';
-  window.__cyb = { C, ws, settings, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
+  window.__cyb = { C, ws, settings, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
   window.addEventListener('error', (e) => { console.log('CYBERR ' + e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno); });
   window.addEventListener('unhandledrejection', (e) => { console.log('CYBERR promise ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)); });
 

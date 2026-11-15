@@ -49,7 +49,7 @@ self.onmessage = async (e) => {
   const builtins = { fs: fsMod, path: pathMod, assert: assertMod, util: { inspect: fmt, format: (...a) => a.map(fmt).join(' ') }, os: { EOL: '\n', platform: () => 'android' } };
 
   class Exit extends Error {}
-  const proc = { argv: ['node'].concat(m.argv), env: {}, platform: 'android', cwd: () => '/' + cwd, exit: (c) => { exitCode = c | 0; exited = true; throw new Exit(); }, stdout: { write: (s) => { if (out.length < 200000) out += s; } }, stderr: { write: (s) => { if (out.length < 200000) out += s; } } };
+  const proc = { argv: ['node'].concat(m.argv), env: m.env || {}, platform: 'android', cwd: () => '/' + cwd, exit: (c) => { exitCode = c | 0; exited = true; throw new Exit(); }, stdout: { write: (s) => { if (out.length < 200000) out += s; } }, stderr: { write: (s) => { if (out.length < 200000) out += s; } } };
 
   // keep the worker alive until timers have fired
   let pending = 0; const realSet = self.setTimeout.bind(self), realClear = self.clearTimeout.bind(self);

@@ -128,7 +128,7 @@
   const AGENTS = {
     coder: {
       name: 'Coder', icon: '⌨', blurb: 'Orchestrates the whole job: reads, edits, runs, reviews',
-      tools: FS_READ.concat(FS_WRITE, EXEC, WEB, ['spawn_agent'], META),
+      tools: FS_READ.concat(FS_WRITE, EXEC, WEB, ['spawn_agent', 'load_skill'], META),
       prompt: 'You are CybNate, an expert AI coding agent that works like a strong senior engineer. You run on the user\'s Android phone ' +
         'inside a project workspace and you finish tasks end to end instead of describing what could be done.\n\n' +
         '# How you work\n' +
@@ -147,21 +147,21 @@
     },
     planner: {
       name: 'Planner', icon: '🧭', blurb: 'Researches and writes an implementation plan, no edits',
-      tools: FS_READ.concat(WEB, ['suggest_followups']),
+      tools: FS_READ.concat(WEB, ['load_skill', 'suggest_followups']),
       prompt: 'You are CybNate Planner. You are in plan mode: understand the request, inspect the workspace, research if useful, and produce a concrete ' +
         'numbered implementation plan: the files to create or change, the key decisions with a recommendation, and the risks. ' +
         'You do not implement anything and you make no file changes, even if asked; tell the user to switch to the Coder agent to build the plan.',
     },
     reviewer: {
       name: 'Reviewer', icon: '🔍', blurb: 'Finds bugs and security problems in workspace code',
-      tools: FS_READ.concat(EXEC),
+      tools: FS_READ.concat(EXEC, ['load_skill']),
       prompt: 'You are CybNate Reviewer, a strict senior code reviewer. Read the relevant files (and run the code or tests when that helps) and report ' +
         'real problems in order of severity: bugs, security issues, broken edge cases, then maintainability. For each one give the file, the ' +
         'offending code and the concrete fix. Do not pad the review with praise or generic advice. If the code is fine, say so in one line. You do not edit files.\n\n' + REVIEW_GUIDELINES,
     },
     reverse: {
       name: 'Reverse', icon: '🧬', blurb: 'Analyses APKs, binaries and decompiled code',
-      tools: FS_READ.concat(FS_WRITE, RE_TOOLS, EXEC, WEB, META),
+      tools: FS_READ.concat(FS_WRITE, RE_TOOLS, EXEC, WEB, ['load_skill'], META),
       prompt: 'You are CybNate Reverse, a reverse-engineering analyst. The user imports files (APK, DEX, ELF, PE, firmware, ' +
         'or decompiled/disassembled text from tools such as Ghidra or JADX) into the workspace. Gather evidence with your tools ' +
         'before concluding: identify the format, list archive contents, decode the Android manifest, pull strings, inspect bytes, and write ' +
@@ -173,7 +173,7 @@
     },
     chat: {
       name: 'Chat', icon: '💬', blurb: 'Conversation and research',
-      tools: WEB.concat(['suggest_followups']),
+      tools: WEB.concat(['load_skill', 'suggest_followups']),
       prompt: 'You are CybNate, a helpful and direct AI assistant. Answer clearly and concisely. Use Markdown and fenced code blocks for code. ' +
         'Search the web when the question needs current or specific facts, and cite the pages you used.',
     },
@@ -209,6 +209,7 @@
     read_url: '<read_url url="https://example.com/docs"/>\n  Fetch a web page and return its readable text.',
     spawn_agent: '<spawn_agent type="reviewer">\nWhat the agent should do, with all the context it needs.\n</spawn_agent>\n  Delegate to a helper agent with a fresh context and get its report back. Types: ' +
       'explorer (find and summarise relevant code), thinker (reason about a hard design or bug), reviewer (review the changes you made), researcher (look things up on the web).',
+    load_skill: '<load_skill name="skill-name"/>\n  Load the full instructions of an installed skill listed under Skills.',
     write_todos: '<write_todos>\n- [x] finished step\n- [ ] next step\n</write_todos>\n  Show the user your task checklist. Send the whole list again whenever it changes.',
     suggest_followups: '<suggest_followups>\nAdd dark mode\nWrite tests for the parser\n</suggest_followups>\n  Offer up to three short next steps, one per line, at the very end of your final reply.',
     file_info: '<file_info path="app.apk"/>\n  Detect the file type and show size, SHA-256, entropy and header details (ELF, PE, DEX, ZIP/APK).',
@@ -232,6 +233,7 @@
     web_search: [{ query: S('Search query') }, ['query']],
     read_url: [{ url: S('Page URL') }, ['url']],
     spawn_agent: [{ type: { type: 'string', enum: ['explorer', 'thinker', 'reviewer', 'researcher'], description: 'Which helper agent' }, prompt: S('What the agent should do, with all the context it needs') }, ['type', 'prompt']],
+    load_skill: [{ name: S('Name of an installed skill') }, ['name']],
     write_todos: [{ todos: { type: 'array', description: 'The whole checklist', items: { type: 'object', properties: { task: S('Step'), done: { type: 'boolean' } }, required: ['task', 'done'] } } }, ['todos']],
     suggest_followups: [{ followups: { type: 'array', items: S('A short next step'), description: 'Up to three next steps' } }, ['followups']],
     file_info: [{ path: S('File path') }, ['path']],
@@ -241,6 +243,35 @@
     zip_extract: [{ path: S('Archive path'), entry: S('Entry name inside the archive'), dest: S('Destination path in the workspace') }, ['path', 'entry']],
     android_manifest: [{ path: S('APK or binary manifest path') }, ['path']],
   };
+  /** Parse a SKILL.md file: YAML-ish front matter (name, description) plus the instruction body. */
+  function parseSkill(text, fallbackName) {
+    text = String(text || '').replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
+    let name = fallbackName || '', description = '', body = text;
+    const m = /^---\n([\s\S]*?)\n---\n?/.exec(text);
+    if (m) {
+      body = text.slice(m[0].length);
+      const lines = m[1].split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        const kv = /^(name|description)\s*:\s*(.*)$/.exec(lines[i]); if (!kv) continue;
+        let v = kv[2].trim();
+        if (/^[>|][+-]?$/.test(v) || v === '') { const buf = []; while (i + 1 < lines.length && /^\s+\S/.test(lines[i + 1])) buf.push(lines[++i].trim()); v = buf.join(' '); }
+        v = v.replace(/^(['"])([\s\S]*)\1$/, '$2');
+        if (kv[1] === 'name') name = v || name; else description = v;
+      }
+    }
+    if (!description) description = (body.split('\n').find((l) => l.trim() && !/^#/.test(l)) || '').trim().slice(0, 200);
+    name = String(name || 'skill').toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'skill';
+    return { name, description, body: body.trim() };
+  }
+  /** Pick the SKILL.md path for a skill name out of a repository file list. */
+  function findSkillPath(paths, name) {
+    const all = paths.filter((p) => /(^|\/)SKILL\.md$/i.test(p)).map((p) => ({ p, dir: (p.split('/').slice(-2, -1)[0] || '').toLowerCase() }));
+    const n = String(name || '').toLowerCase();
+    const by = (f) => all.filter(f).sort((a, b) => a.p.length - b.p.length)[0];
+    const hit = by((x) => x.dir === n) || by((x) => x.dir && (n.endsWith('-' + x.dir) || n.startsWith(x.dir + '-') || x.dir.endsWith('-' + n) || x.dir.startsWith(n + '-'))) || by((x) => x.dir && (n.indexOf(x.dir) >= 0 || x.dir.indexOf(n) >= 0));
+    return hit ? hit.p : '';
+  }
+
   /** OpenAI-style function definitions for the given tool names. */
   function toolSchemas(names) {
     return (names || []).filter((n) => TOOL_PARAMS[n]).map((n) => ({
@@ -277,6 +308,7 @@
         : '- Other shell commands are not available in this browser preview; they work in the installed Android app.\n') +
       '- Not available: git, npm, gcc, apt, sudo. A python or node command must be the whole command (an optional `cd dir &&` prefix is fine), not part of a pipeline.\n' +
       '- Web projects (HTML/CSS/JS) are previewed by the user with the Run button; you cannot see the rendered page, so keep them self-contained with relative paths.\n' +
+      (caps.secrets && caps.secrets.length ? '- These secrets are set as environment variables for every command (read them with os.environ / process.env / $NAME, never print them): ' + caps.secrets.join(', ') + '.\n' : '') +
       (caps.repo ? '- The workspace is a clone of the GitHub repository ' + caps.repo + '. The user commits and pushes from the GitHub screen; you cannot push.\n' : '');
   }
 
@@ -284,6 +316,8 @@
     const a = AGENTS[agentId] || AGENTS.coder;
     let tools = a.tools;
     if (caps && caps.noSpawn) tools = tools.filter((t) => t !== 'spawn_agent');
+    const skills = (caps && caps.skills) || [];
+    if (!skills.length) tools = tools.filter((t) => t !== 'load_skill');
     let s = a.prompt + '\n';
     if (tools.length) {
       s += '\n# Tools\nYou act by writing tool tags in your reply. The app runs them and sends back the results in the next message ' +
@@ -294,6 +328,7 @@
         '- If your interface offers function calling, calling the functions with these same names is equally fine. Never call a tool that is not listed here.\n\n' +
         tools.map((t) => TOOL_DOCS[t]).join('\n\n') + '\n';
       if (tools.indexOf('run_terminal_command') >= 0) s += '\n' + environmentDoc(caps);
+      if (skills.length && tools.indexOf('load_skill') >= 0) s += '\n# Skills\nThe user installed these skills. When a task matches one, load it with load_skill BEFORE you start and follow its instructions.\n' + skills.map((k) => '- ' + k.name + ': ' + String(k.description || '').slice(0, 300)).join('\n') + '\n';
       if (tools.some((t) => FS_READ.indexOf(t) >= 0)) s += '\n# Workspace\n' + (fileSummary || '(empty)') + '\n';
     }
     if (extra && extra.trim()) s += '\n# User instructions\n' + extra.trim() + '\n';
@@ -623,6 +658,10 @@
         return '$ ' + call.body + '\n' + (out ? clip(tailClip(out, 9000)) + '\n' : '') + '[exit code ' + r.code + (r.timedOut ? ', timed out' : '') + ']' +
           (r.files && r.files.length ? '\n[files changed: ' + r.files.slice(0, 20).join(', ') + ']' : '');
       }
+      case 'load_skill': {
+        if (!env.skill) throw new Error('no skills are installed');
+        return clip(env.skill(a.name || a.skill || ''));
+      }
       case 'web_search': {
         if (!a.query) throw new Error('missing query attribute');
         if (!env.search) throw new Error('web search is not available in this context');
@@ -738,7 +777,7 @@
     const a = c.attrs || {};
     if (c.name === 'run_terminal_command') return '$ ' + (c.body || '').split('\n')[0].slice(0, 70);
     if (c.name === 'spawn_agent') return 'agent ' + (a.type || '');
-    return c.name + (a.path ? ' ' + a.path : a.query ? ' ' + a.query : a.pattern ? ' ' + a.pattern : a.url ? ' ' + a.url : '');
+    return c.name + (a.path ? ' ' + a.path : a.query ? ' ' + a.query : a.pattern ? ' ' + a.pattern : a.url ? ' ' + a.url : a.name ? ' ' + a.name : '');
   }
   /** Run calls in order. Independent helper agents run in parallel, like Freebuff's spawn_agents. */
   async function runTools(calls, ws, env, onProgress) {
@@ -1096,7 +1135,7 @@
   }
 
   return {
-    PROVIDERS, AGENTS, TOOL_DOCS, toolSchemas, recoverFailedGeneration, PASSIVE, SUBAGENT_TYPES, BODY_TOOLS, parseModelList, buildSystemPrompt, parseToolCalls, displayText, Workspace,
+    PROVIDERS, AGENTS, TOOL_DOCS, toolSchemas, parseSkill, findSkillPath, recoverFailedGeneration, PASSIVE, SUBAGENT_TYPES, BODY_TOOLS, parseModelList, buildSystemPrompt, parseToolCalls, displayText, Workspace,
     stripThink, followupsOf, nativeCallToText, nativeCallsToText, tokenize, parseCommand, matchGlob, callLabel,
     runTool, runTools, formatToolResults, fileInfo, detectType, extractStrings, hexdump, zipEntries, zipRead, zipCreate,
     decodeAxml, decodeIfText, createSseParser, trimHistory, fmtSize, crc32, utf8,

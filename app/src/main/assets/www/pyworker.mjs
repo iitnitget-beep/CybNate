@@ -84,6 +84,7 @@ self.onmessage = async (e) => {
     let cwd = '/work' + (m.cwd ? '/' + m.cwd : '');
     try { FS.stat(cwd); } catch (err) { cwd = '/work'; }
 
+    if (m.env && Object.keys(m.env).length) py.runPython('import os, json; os.environ.update(json.loads(' + JSON.stringify(JSON.stringify(m.env)) + '))');
     let code = 0;
     if (m.mode === 'pip') {
       await py.loadPackage('micropip', { messageCallback: () => {}, errorCallback: emit });

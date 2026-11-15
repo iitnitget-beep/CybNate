@@ -190,3 +190,12 @@ pre{border-radius:14px;color:#e6e6e2}
 #btnModel::after{flex:none;margin-left:9px;transform:rotate(45deg) translateY(-2px)}
 header .title{font-weight:500}
 .mname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.skill{display:flex;align-items:center;gap:10px;padding:12px 0;border-top:1px solid var(--line)}
+.sinfo{flex:1;min-width:0;text-align:left}.sinfo b{display:block;font-weight:500;font-size:17px;word-break:break-word}.sinfo small{display:block;color:var(--dim);font-size:13.5px;word-break:break-word}
+.lite{flex:none;background:#d9dcd3;color:#151614;border-radius:12px;padding:8px 14px;font-weight:500;font-size:15px;border:1px solid rgba(0,0,0,.25)}
+.lite:disabled{opacity:.45}
+.btns .lite{background:#d9dcd3;color:#151614}
+.field.mono{font:13.5px var(--mono)!important}
+.srow.mono span{font:14px var(--mono)}.srow.mono small{color:var(--err)}
+.skill.mine{flex-wrap:wrap;justify-content:flex-end}.skill.mine .sinfo{flex:1 0 100%}
+.skill.mine .sinfo small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}

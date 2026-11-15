@@ -154,3 +154,22 @@ const C = require('../app/src/main/assets/www/core.js');
   assert.ok(/Code Reuse/.test(C2.buildSystemPrompt('coder', '', '', {})));
   console.log('NATIVE TOOL SCHEMA TESTS PASSED');
 })();
+
+// ---- skills
+(function () {
+  const assert = require('assert');
+  const C3 = require('../app/src/main/assets/www/core.js');
+  const k = C3.parseSkill('---\nname: Test Driven Development\ndescription: >\n  Use when writing\n  any feature.\nlicense: MIT\n---\n# TDD\nWrite the test first.\n', 'x');
+  assert.strictEqual(k.name, 'test-driven-development'); assert.strictEqual(k.description, 'Use when writing any feature.'); assert.ok(/^# TDD/.test(k.body));
+  assert.strictEqual(C3.parseSkill('Just do it.\n', 'my skill').name, 'my-skill');
+  const paths = ['README.md', 'skills/react-best-practices/SKILL.md', 'skills/tdd/SKILL.md', 'plugins/x/skills/tdd-extra/SKILL.md', 'skills/engineering/code-review/SKILL.md'];
+  assert.strictEqual(C3.findSkillPath(paths, 'tdd'), 'skills/tdd/SKILL.md');
+  assert.strictEqual(C3.findSkillPath(paths, 'vercel-react-best-practices'), 'skills/react-best-practices/SKILL.md');
+  assert.strictEqual(C3.findSkillPath(paths, 'nothing-here'), '');
+  const withSkills = C3.buildSystemPrompt('coder', '', '', { skills: [{ name: 'tdd', description: 'Use for features' }], secrets: ['API_KEY'] });
+  assert.ok(/# Skills[\s\S]*- tdd: Use for features/.test(withSkills) && /<load_skill name=/.test(withSkills) && /API_KEY/.test(withSkills));
+  assert.ok(!/load_skill/.test(C3.buildSystemPrompt('coder', '', '', {})));
+  const calls = C3.parseToolCalls('<load_skill name="tdd"/>', C3.AGENTS.coder.tools);
+  assert.strictEqual(calls[0].name, 'load_skill');
+  C3.runTools(calls, new C3.Workspace(), { skill: (n) => 'BODY ' + n }).then((p) => { assert.ok(p[0].ok && /BODY tdd/.test(p[0].text)); console.log('SKILL TESTS PASSED'); });
+})();

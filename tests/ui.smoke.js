@@ -92,7 +92,7 @@ const requests = [];
 
   // settings sheet renders, persistence survived
   d.getElementById('dSettings').click();
-  assert.strictEqual(d.querySelectorAll('#sheetBody .srow').length, 7);
+  assert.strictEqual(d.querySelectorAll('#sheetBody .srow').length, 9);
   [...d.querySelectorAll('#sheetBody .srow')].find((b) => /Model Providers/.test(b.textContent)).click();
   assert.strictEqual(d.querySelectorAll('#sheetBody .card').length, Object.keys(w.__cyb.C.PROVIDERS).length);
   w.onNativeBack();
