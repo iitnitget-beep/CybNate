@@ -268,7 +268,8 @@
     // providers that reject them fall through to the plain-text tool protocol.
     const useTools = tools && tools.length && settings.nativeTools !== false;
     const variants = [() => [messages, true], () => [messages, false], () => { const m = merged(); return m ? [m, true] : null; }];
-    if (useTools) variants.unshift(() => [messages, true, tools]);
+    // One protocol per request: with function definitions attached, the system prompt carries the function-calling rules, not the tag rules.
+    if (useTools) variants.unshift(() => [messages.map((m) => (m.role === 'system' ? { role: 'system', content: C.toNativePrompt(m.content) } : m)), true, tools]);
     let r = null, waits = 0, toolRetries = 0;
     for (let v = 0; v < variants.length; v++) {
       const args = variants[v](); if (!args) continue;
@@ -394,6 +395,11 @@
     if (signal && signal.aborted) throw abortError();
     const pc = C.parseCommand(cmd);
     if (pc.kind === 'note') return { code: pc.code || 0, out: pc.text, files: [] };
+    // built-in tools (cli.js, webtest.js): a simplified git, npm install from CDN builds, curl/wget, page tests
+    if (pc.kind === 'git') return cli.git(pc.argv, signal);
+    if (pc.kind === 'curl') return cli.curl(pc.prog, pc.argv, pc.cwd, signal);
+    if (pc.kind === 'npm') return cli.npm(Object.assign({ timeout: timeoutSec }, pc), signal);
+    if (pc.kind === 'webtest') return testWebapp(pc.path, pc.script, timeoutSec, signal);
     let r;
     if (pc.kind === 'sh') {
       if (!canShell) return { code: 127, out: 'Shell commands run only in the installed Android app. In this browser preview you can run `python …` and `node …`.', files: [] };
@@ -430,6 +436,75 @@
     (r.deleted || []).forEach((p) => ws.remove(p));
     r.files = (r.changed || []).map((c) => c.path).concat((r.deleted || []).map((p) => p + ' (deleted)'));
     return r;
+  }
+  // ---- storage for the built-in git (snapshots can be large, so IndexedDB rather than localStorage)
+  const kv = (() => {
+    const mem = {}; let dbp = null;
+    const db = () => dbp || (dbp = new Promise((res, rej) => { const rq = indexedDB.open('cybnate', 1); rq.onupgradeneeded = () => rq.result.createObjectStore('kv'); rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error); }));
+    const tx = (mode, fn) => db().then((d) => new Promise((res, rej) => { const t = d.transaction('kv', mode), rq = fn(t.objectStore('kv')); t.oncomplete = () => res(rq.result); t.onerror = t.onabort = () => rej(t.error); }));
+    return {
+      get: (k) => (window.indexedDB ? tx('readonly', (st) => st.get(k)).catch(() => mem[k]) : Promise.resolve(mem[k])),
+      set: (k, v) => { mem[k] = v; return window.indexedDB ? tx('readwrite', (st) => (v == null ? st.delete(k) : st.put(v, k))).catch(() => {}) : Promise.resolve(); },
+    };
+  })();
+  /** A whole HTTP exchange as text, for curl / npm / http_request. The native bridge is used when present (no CORS limits). */
+  async function httpFull(url, opt) {
+    let text = ''; const onChunk = (c) => { if (text.length < 8 * 1048576) text += c; };
+    const o = { method: opt.method || 'GET', headers: Object.assign({ 'User-Agent': UA }, opt.headers || {}), body: opt.body, signal: opt.signal };
+    let res;
+    if (Native) res = await nativeStream(url, o, onChunk);
+    else {
+      try { res = await httpStream(url, { method: o.method, headers: opt.headers, body: o.body, signal: o.signal }, onChunk); }
+      catch (e) { if (e.name === 'AbortError') throw e; throw new Error('Could not connect. In a browser, cross-site requests need the installed Android app (CORS).'); }
+    }
+    return { status: res.status, ctype: res.ctype || '', headers: res.headers || {}, text };
+  }
+  const cli = Cli.create({
+    ws, kv, http: httpFull, GitHub, matchGlob: C.matchGlob,
+    getRepo: () => repoBase, setRepo: (b) => { repoBase = b; save('cyb.repo', repoBase); },
+    token: () => (settings.keys.github || '').trim(),
+    blob: async (sha) => {
+      let raw = ''; const h = { Accept: 'application/vnd.github+json' }; if ((settings.keys.github || '').trim()) h.Authorization = 'Bearer ' + settings.keys.github.trim();
+      const r = await httpFull('https://api.github.com/repos/' + repoBase.owner + '/' + repoBase.repo + '/git/blobs/' + sha, { headers: h }); raw = r.text;
+      if (r.status >= 400) throw new Error('HTTP ' + r.status);
+      const bytes = unb64(JSON.parse(raw).content.replace(/\s+/g, '')); const t = C.decodeIfText(bytes); return t != null ? t : bytes;
+    },
+    // a push always asks, in every permission mode
+    approvePush: async (req) => (await askApproval({ kind: 'push', repo: req.repo, branch: req.branch, files: req.files.concat(['', 'Commit message: ' + req.message.split('\n')[0]]) })) === 'allow',
+    confirm: async (text) => confirm(text),
+    run: (cmd, t, signal) => runCommandRaw(cmd, t, signal, []),
+  });
+  /** Test a workspace page: load it where it cannot reach the app, collect console output, errors and layout problems, run the optional script. */
+  let ntSeq = 0; const ntReqs = {};
+  window.__nt = (id, rep) => { const r = ntReqs[id]; if (r) { delete ntReqs[id]; r(rep); } };
+  async function testWebapp(path, script, timeoutSec, signal) {
+    if (!ws.has(path)) return { code: 2, out: 'test_webapp: file not found: ' + path + '. HTML files in the workspace: ' + (ws.list().filter((p) => /\.html?$/i.test(p)).slice(0, 12).join(', ') || 'none'), files: [] };
+    if (!/\.html?$/i.test(path) || ws.isBinary(path)) return { code: 2, out: 'test_webapp needs an HTML file (got ' + path + '). Test other code with python or node.', files: [] };
+    const id = 't' + (++ntSeq), limit = Math.max(3, Math.min(timeoutSec || 20, 45)) * 1000;
+    const html = WebTest.instrument(buildPreview(path), script, 600, id);
+    let rep = null;
+    if (Native) {
+      // In the app an iframe is not safe: Android gives every frame the native bridge. The page runs in a separate WebView without one.
+      if (!Native.testPage) return { code: 127, out: 'test_webapp needs a newer build of the app (this one has no page tester). Ask the user to open the page with the Run button and report what they see.', files: [] };
+      rep = await new Promise((resolve, reject) => {
+        const stop = () => { delete ntReqs[id]; reject(abortError()); };
+        if (signal) { if (signal.aborted) return stop(); signal.addEventListener('abort', stop, { once: true }); }
+        ntReqs[id] = resolve; Native.testPage(id, html, limit);
+      });
+    } else {
+      rep = await new Promise((resolve, reject) => {
+        const f = document.createElement('iframe'); f.setAttribute('sandbox', 'allow-scripts allow-forms'); f.setAttribute('aria-hidden', 'true');
+        f.style.cssText = 'position:fixed;left:-10000px;top:0;width:412px;height:800px;border:0;visibility:hidden';
+        const end = (v, err) => { clearTimeout(timer); window.removeEventListener('message', onMsg); if (signal) signal.removeEventListener('abort', onAbort); f.remove(); if (err) reject(err); else resolve(v); };
+        const onMsg = (e) => { if (e.source === f.contentWindow && e.data && e.data.cybTest === id) end(e.data.report); };
+        const onAbort = () => end(null, abortError());
+        const timer = setTimeout(() => end(null), limit);
+        window.addEventListener('message', onMsg); if (signal) { if (signal.aborted) return onAbort(); signal.addEventListener('abort', onAbort); }
+        f.srcdoc = html; document.body.appendChild(f);
+      });
+    }
+    const r = WebTest.format(rep, path);
+    return { code: r.code, out: r.out, files: [] };
   }
   function unb64(s) { const bin = atob(s); const out = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; }
 
@@ -616,7 +691,7 @@
     const via = chain ? { chain, onModel: (t, note) => { step.model = t.model; if (note) step.note = note; tlDraw(); } } : undefined;
     const env = { mode: permMode, approve: (r) => askApproval(r, signal), exec: (c, t, sec) => helperExec(type, c, t, signal, sec), search: (q) => webSearch(q, signal), readUrl: (u) => readUrl(u, signal), skill: loadSkill,
       writeError: (q) => O.subWriteError(type, q) };
-    let last = '';
+    let last = '', acts = 0;
     try {
       for (let n = 0; n < 8; n++) {
         const sys = C.buildSystemPrompt(type, ws.summary(), extraPrompt(), caps({ noSpawn: true }));
@@ -624,8 +699,9 @@
         last = await chatStream([{ role: 'system', content: sys }].concat(C.trimHistory(msgs, Math.min(40000, O.historyBudget(ctxOf(via && via.chain), sys.length, 40000)))), (t) => setStatus(agent.icon + ' ' + type + ' ' + t.length + ' chars'), signal, toolsFor(agent).filter((t) => t !== 'spawn_agent'), via);
         msgs.push({ role: 'assistant', content: last });
         const calls = C.parseToolCalls(last, agent.tools).filter((c) => C.PASSIVE.indexOf(c.name) < 0 && c.name !== 'spawn_agent');
-        if (!calls.length) { step.status = 'ok'; tlDraw(); return C.displayText(last).trim(); }
-        const parts = await C.runTools(calls, ws, env, (l) => setStatus(agent.icon + ' ' + type + ': ' + l));
+        if (!calls.length) { step.status = 'ok'; if (acts) step.note = acts + ' tool call' + (acts > 1 ? 's' : '') + ' · done'; tlDraw(); return C.displayText(last).trim(); }
+        const parts = await C.runTools(calls, ws, env, (l) => { setStatus(agent.icon + ' ' + type + ': ' + l); step.note = l.slice(0, 70); tlDraw(); });
+        acts += calls.length; step.note = acts + ' tool call' + (acts > 1 ? 's' : '') + ', last: ' + (parts.length ? parts[parts.length - 1].label.slice(0, 50) + (parts[parts.length - 1].ok ? '' : ' ✗') : ''); tlDraw();
         msgs.push({ role: 'user', content: C.formatToolResults(parts) });
       }
       step.status = 'ok'; step.note = 'step limit'; tlDraw();
@@ -725,7 +801,7 @@
       s.appendChild(document.createTextNode(parts.length ? parts.map((p) => p.label).join(' · ') : 'note to agent'));
       d.appendChild(s); d.appendChild(el('pre', '', parts.length ? parts.map((p) => '[' + p.label + ']\n' + p.text).join('\n\n') : m.content));
       n.appendChild(d);
-    } else if (m.role === 'user') n.textContent = m.content;
+    } else if (m.role === 'user') n.textContent = m.shown || m.content;
     else if (m.role === 'error') n.textContent = '⚠ ' + m.content;
     else {
       const a = C.AGENTS[m.agent] || C.AGENTS.coder;
@@ -736,8 +812,8 @@
   }
 
   const SUGGEST = {
-    auto: ['Build a pomodoro timer as a single-page web app', 'Plan a notes app with tags and search', 'Explain async/await with a small example'],
-    coder: ['Build a pomodoro timer as a single-page web app', 'Write a Python script that finds duplicate files, with unit tests, and run them', 'Review my workspace code, fix the bugs you find and verify the fix'],
+    auto: ['Write a Python CLI that finds duplicate files, with unit tests, and run them', 'Build an expense tracker: Python + SQLite back end with tests', '/interview a habit tracker app', 'Explain async/await with a small example'],
+    coder: ['Write a Python CLI that finds duplicate files, with unit tests, and run them', 'Build a REST client for a public JSON API in Node.js and test it', 'Create a SQLite schema for a library, load sample data and run 3 report queries', 'Build a pomodoro timer web app and check it with test_webapp', 'Review my workspace code, fix the bugs you find and verify the fix'],
     planner: ['Plan a notes app with tags and search', 'Plan how to add dark mode to my project'],
     reviewer: ['Review all files in my workspace for bugs', 'Check my code for security problems'],
     reverse: ['Analyse the APK I imported: permissions, libraries, URLs', 'Explain this decompiled function (paste it below)', 'Find hard-coded keys and endpoints in the imported file'],
@@ -808,7 +884,9 @@
   }
   function apiHistory(chain, reserved) {
     const out = [];
-    current.messages.filter((m) => m.role === 'user' || m.role === 'assistant').forEach((m) => {
+    // after /compact the summary stands in for everything before it
+    const from = current.compactAt > 0 && current.messages[current.compactAt] && current.messages[current.compactAt].compact ? current.compactAt : 0;
+    current.messages.slice(from).filter((m) => m.role === 'user' || m.role === 'assistant').forEach((m) => {
       const last = out[out.length - 1];
       // a request followed by a helper's report: one user turn, since some providers reject two in a row
       if (last && last.role === 'user' && m.role === 'user') last.content += '\n\n' + m.content; else out.push({ role: m.role, content: m.content });
@@ -824,7 +902,7 @@
     const box = $('messages'), agent = C.AGENTS[agentId];
     const maxSteps = agent.tools.length ? Math.max(1, settings.maxSteps | 0) : 1;
     const via = chain ? { chain, onModel: (t, note) => { if (stepRow) { stepRow.model = t.model; if (note) stepRow.note = note; tlDraw(); } } } : undefined;
-    let badCalls = 0;
+    let badCalls = 0, lastFail = '', warned = '';
     for (let step = 0; step < maxSteps; step++) {
       const sys = C.buildSystemPrompt(agentId, ws.summary(), extraPrompt(), caps());
       const msg = { role: 'assistant', content: '', agent: agentId, model: (chain && chain[0] ? chain[0].model : settings.model) };
@@ -862,21 +940,45 @@
         const env = { mode: permMode, approve: (r) => askApproval(r, sig), exec: (c, t, sec) => runCommand(c, t, sig, sec), search: (q) => webSearch(q, sig), readUrl: (u) => readUrl(u, sig), spawn: (type, p) => askAgent(type, p, sig), skill: loadSkill,
           serial: !!(task && task.single) };
         const parts = await C.runTools(calls, ws, env, (label) => setStatus(label.slice(0, 60) + '…'));
+        let extra = '';
         calls.forEach((c, k) => {
           const ok = parts[k] && parts[k].ok;
-          if (['write_file', 'edit_file', 'delete_file'].indexOf(c.name) >= 0 && ok) { st.wrote = true; st.proof = null; }
-          if (c.name === 'run_terminal_command') st.proof = { cmd: String(c.body || '').trim().split('\n')[0].slice(0, 60), ok };
+          if (['write_file', 'edit_file', 'delete_file'].indexOf(c.name) >= 0 && ok) { st.wrote = true; st.proof = null; if (isCodeFile((c.attrs || {}).path)) { st.code = true; st.checked = false; } }
+          // a run of the code, its tests or the page counts as proof; looking around (git, curl, ls, cat) does not
+          if (c.name === 'run_terminal_command' && isProofRun(c)) { st.proof = { cmd: C.callLabel(c).replace(/^\$ /, '').slice(0, 60), ok }; st.checked = true; }
+          if (c.name === 'get_diagnostics') st.checked = true;
+          // the same call failing twice in a row: the agent is stuck, make it step back
+          const sig2 = c.name + '|' + JSON.stringify(c.attrs || {}) + '|' + (c.body || '') + '|' + JSON.stringify(c.edits || c.diffText || '');
+          if (!ok) { if (sig2 === lastFail && warned !== sig2) { warned = sig2; extra = STUCK_NOTE; } lastFail = sig2; } else if (sig2 === lastFail) lastFail = '';
         });
-        toolMsg = { role: 'user', tool: true, parts, content: C.formatToolResults(parts) };
+        toolMsg = { role: 'user', tool: true, parts, content: C.formatToolResults(parts) + extra };
       } else if (new RegExp('<(' + C.BODY_TOOLS.join('|') + ')\\b[^>]*>(?![\\s\\S]*<\\/\\1\\s*>)').test(C.stripThink(full))) {
         toolMsg = { role: 'user', tool: true, parts: [], content: 'Your last reply was cut off before a closing tool tag, so that tool did not run. Send it again; if a file is long, split the work into smaller files or use edit_file.' };
       } else if (/\(The model (tried to call an unknown tool|sent a malformed call)/.test(full) && ++badCalls <= 3) {
         toolMsg = { role: 'user', tool: true, parts: [], content: 'That tool does not exist or the call was malformed, so nothing ran. Use only these tools, written as the XML tags described in your instructions: ' + agent.tools.join(', ') + '.' };
+      } else if (st.code && !st.checked && !st.gated && agent.tools.indexOf('run_terminal_command') >= 0 && (C.isFinalReply(full) || {}).kind !== 'ask' && (!task || task.budget.left() >= 2)) {
+        // verification gate: code was changed and nothing was run since. Said once per run.
+        st.gated = true;
+        toolMsg = { role: 'user', tool: true, parts: [], content: VERIFY_NOTE };
       } else break;
       current.messages.push(toolMsg); box.appendChild(msgNode(toolMsg));
       box.scrollTop = box.scrollHeight; saveSessions(); updateBadge();
       if (step === maxSteps - 1) pushError('Stopped after ' + maxSteps + ' steps. Send "continue" to keep going.');
     }
+  }
+  const VERIFY_NOTE = 'You modified code files but have not verified them yet. Run the code, unit tests, or test_webapp to verify your changes work before finishing. If this code truly cannot run on this device, say so in one line and why.';
+  const STUCK_NOTE = '\n\n<TROUBLESHOOTING>\nThe same tool call has now failed twice in a row with the same input. Do not send it a third time. Step back: ' +
+    'reflect on 5-7 different possible sources of the problem, assess the likelihood of each, and address the most likely one first. ' +
+    'Read the exact error text above, re-read the file or check the command\'s assumptions (path, working directory, missing package, tool not available here), then try a different approach.\n</TROUBLESHOOTING>';
+  const isCodeFile = (p) => !!p && !/\.(md|markdown|txt|rst|csv|log|gitignore|env|lock)$|(^|\/)(LICENSE|NOTICE|README)[^/]*$/i.test(String(p));
+  /** Does this command exercise the code (run it, test it, load the page)? */
+  function isProofRun(c) {
+    if (c.via === 'http_request') return false;
+    const pc = C.parseCommand(String(c.body || ''));
+    if (pc.kind === 'python' || pc.kind === 'node' || pc.kind === 'webtest') return pc.mode !== 'check';
+    if (pc.kind === 'npm') return pc.sub === 'run';
+    if (pc.kind === 'sh') return !/^\s*(cd\s+\S+\s*&&\s*)?(ls|cat|head|tail|pwd|echo|find|grep|wc|mkdir|touch|rm|cp|mv|tree|stat|du|df|which|env|date|whoami|sed|awk|sort|uniq|diff|file|chmod)\b/.test(String(c.body || ''));
+    return false;
   }
   /** Put a helper's report into the conversation as untrusted data, with a note that says how to use it. */
   function pushReport(label, text, note) {
@@ -891,12 +993,18 @@
 
   async function send() {
     if (busy) { if (abortCtl) abortCtl.abort(); return; }
-    const text = $('input').value.trim();
-    if (!text) return;
-    const forced = forceRoute; forceRoute = '';
-    $('input').value = ''; autoGrow();
-    if (!current.messages.length) current.title = text.slice(0, 60);
-    current.messages.push({ role: 'user', content: text });
+    const typed = $('input').value.trim();
+    if (!typed) return;
+    let forced = forceRoute; forceRoute = '';
+    const slash = slashCommand(typed);
+    if (slash && slash.local) { $('input').value = ''; autoGrow(); hideMentions(); return slash.local(); }
+    if (slash && slash.error) return toast(slash.error);
+    if (slash && slash.agent) forced = slash.agent;
+    const att = attachMentions(slash ? slash.prompt : typed);
+    const text = att.text;
+    $('input').value = ''; autoGrow(); hideMentions();
+    if (!current.messages.length) current.title = typed.slice(0, 60);
+    current.messages.push(text === typed ? { role: 'user', content: text } : { role: 'user', content: text, shown: typed + (att.files.length ? '\n📎 ' + att.files.join(', ') : '') });
     current.updated = Date.now();
     sessions = [current].concat(sessions.filter((s) => s !== current));
     renderMessages();
@@ -907,7 +1015,7 @@
     let failed = '';
     try {
       const oldChips = $('messages').querySelector('.followups'); if (oldChips) oldChips.remove();
-      if (current.agent === 'auto' || forced) await runAuto(text, forced, checkpoint, abortCtl.signal);
+      if (current.agent === 'auto' || forced) await runAuto(text, forced, checkpoint, abortCtl.signal, !!slash);
       else await agentLoop(current.agent, null, { wrote: false, proof: null });
     } catch (e) {
       failed = e.name === 'AbortError' ? 'stop' : 'fail';
@@ -921,6 +1029,88 @@
       current.updated = Date.now(); saveSessions();
     }
   }
+  // ---------------------------------------------------- slash commands, @file
+  const SLASH_HELP = '/plan <task>: plan first, no code\n/implement: build the plan above, then run and test it\n/review: review the current changes for bugs\n/interview <idea>: I ask 3-5 questions, then write a spec\n/init: study the project and write AGENTS.md\n/compact: replace the older part of this chat with a summary\n@path/to/file: attach a workspace file to your message';
+  /** Returns null for ordinary text, or {agent, prompt} / {local} / {error}. */
+  function slashCommand(typed) {
+    const m = /^\/([a-z]+)(?:\s+([\s\S]*))?$/i.exec(typed); if (!m) return null;
+    const cmd = m[1].toLowerCase(), arg = (m[2] || '').trim();
+    const info = (t) => () => { const msg = { role: 'info', tool: true, parts: [{ label: 'commands', ok: true, text: t }], content: t }; current.messages.push(msg); const node = msgNode(msg); const d = node.querySelector('details'); if (d) d.open = true; $('messages').appendChild(node); $('messages').scrollTop = $('messages').scrollHeight; };
+    switch (cmd) {
+      case 'help': case 'commands': return { local: info(SLASH_HELP) };
+      case 'plan':
+        if (!arg) return { error: 'Usage: /plan <what you want built>' };
+        return { agent: 'planner', prompt: '/plan ' + arg + '\n\nWrite an implementation plan for the task above. Read the relevant parts of the workspace first. Give: the goal in one line, the files to create or change (with what goes in each), the order of work, how it will be run and tested on this device, and open questions if any. Do not write the code and do not change files.' };
+      case 'implement':
+        return { agent: 'coder', prompt: '/implement' + (arg ? ' ' + arg : '') + '\n\nImplement the plan above step by step' + (arg ? ' (' + arg + ')' : '') + '. Write the real files with the file tools, then run the code or its tests and fix what fails. Finish with what was run and its exact result.' };
+      case 'review':
+        return { agent: 'reviewer', prompt: '/review' + (arg ? ' ' + arg : '') + '\n\nReview ' + (arg || 'the current changes in the workspace') + '. Start with `git status` and `git diff` when the workspace is a git repository, otherwise read the files that matter. Run the code or tests when that helps. List each real bug or risk with file, line and a concrete fix, most serious first. Skip style nitpicks. If nothing is wrong, say "LGTM" and what you checked.' };
+      case 'interview':
+        if (!arg) return { error: 'Usage: /interview <your idea>' };
+        return { agent: 'planner', prompt: '/interview ' + arg + '\n\nI want to build the idea above. Before any plan or code, interview me: ask 3 to 5 short, numbered questions about what you most need to know (users, must-have features, data and storage, platform or language, what is out of scope). Ask them all in one message and stop. After I answer, write a one-page specification and wait for my go-ahead.' };
+      case 'init':
+        return { agent: 'coder', prompt: '/init\n\nStudy this workspace (list files, read the main ones, use list_code_definition_names) and create or update AGENTS.md at the top level. It must be short and factual: what the project is, the folder layout, the exact commands to run it and to run its tests on this device, coding conventions seen in the code, and things an agent must not do. Write only what you verified by reading or running. Change no other file.' };
+      case 'compact': return { local: compactChat };
+    }
+    return null; // not one of ours: send it as ordinary text
+  }
+  /** `@path` in a message: attach the file (or a folder listing) so the agent does not have to read it first. */
+  function attachMentions(text) {
+    const files = [], blocks = []; let total = 0;
+    (text.match(/(^|[\s(])@([\w./-]+)/g) || []).forEach((raw) => {
+      const p = C.Workspace.norm(raw.replace(/^[\s(]?@/, '').replace(/[.,;:]+$/, ''));
+      if (!p || files.indexOf(p) >= 0) return;
+      if (ws.has(p)) {
+        if (ws.isBinary(p)) { blocks.push('<file path="' + p + '" binary="true" size="' + ws.size(p) + '"/>'); files.push(p); return; }
+        const body = ws.get(p), room = Math.max(0, Math.min(16000, 40000 - total)); if (!room) return;
+        const cut = body.length > room; total += Math.min(body.length, room);
+        blocks.push('<file path="' + p + '"' + (cut ? ' truncated="true" total_lines="' + body.split('\n').length + '"' : '') + '>\n' + (cut ? body.slice(0, room) : body) + '\n</file>'); files.push(p);
+      } else {
+        const inside = ws.list().filter((q) => q.indexOf(p + '/') === 0);
+        if (inside.length) { blocks.push('<folder path="' + p + '">\n' + inside.slice(0, 80).map((q) => q + ' (' + C.fmtSize(ws.size(q)) + ')').join('\n') + (inside.length > 80 ? '\n… and ' + (inside.length - 80) + ' more' : '') + '\n</folder>'); files.push(p + '/'); }
+      }
+    });
+    return { text: blocks.length ? text + '\n\n<attached_files>\n' + blocks.join('\n') + '\n</attached_files>' : text, files };
+  }
+  function hideMentions() { const b = $('mentions'); if (b) b.hidden = true; }
+  function showMentions() {
+    const t = $('input'), upto = t.value.slice(0, t.selectionStart), m = /(^|[\s(])@([\w./-]*)$/.exec(upto);
+    let box = $('mentions');
+    const sl = !m && /^\/[a-z]*$/i.test(t.value) ? t.value.slice(1).toLowerCase() : null;
+    if (!m && sl == null) return hideMentions();
+    if (!box) { box = el('div', 'mentions'); box.id = 'mentions'; const comp = t.closest('.composer') || t.parentNode; comp.parentNode.insertBefore(box, comp); }
+    box.innerHTML = '';
+    if (sl != null) {
+      SLASH_HELP.split('\n').filter((l) => l[0] === '/' && l.slice(1).indexOf(sl) === 0).forEach((l) => { const i = l.indexOf(':'), b = el('button', 'mention'); b.appendChild(el('b', '', l.slice(0, i))); b.appendChild(el('span', '', l.slice(i + 1))); b.onclick = () => { t.value = l.slice(0, i).split(' ')[0] + ' '; hideMentions(); autoGrow(); t.focus(); }; box.appendChild(b); });
+    } else {
+      const q = m[2].toLowerCase();
+      const hits = ws.list().filter((p) => p.indexOf('node_modules/') < 0 && p.toLowerCase().indexOf(q) >= 0).sort((a, b) => (a.toLowerCase().indexOf(q) - b.toLowerCase().indexOf(q)) || a.length - b.length).slice(0, 6);
+      hits.forEach((p) => { const b = el('button', 'mention', p); b.onclick = () => { const start = upto.length - m[2].length; t.value = t.value.slice(0, start) + p + ' ' + t.value.slice(t.selectionStart); hideMentions(); autoGrow(); t.focus(); }; box.appendChild(b); });
+    }
+    box.hidden = !box.children.length;
+  }
+  /** /compact: one model call turns the conversation so far into a structured summary; later requests send the summary instead of the old turns. */
+  async function compactChat() {
+    if (busy) return toast('Wait for the current run to finish');
+    const hist = apiHistory(null, 4000);
+    if (hist.length < 4) return toast('Nothing to compact yet');
+    busy = true; abortCtl = new AbortController(); setStatus('compacting…');
+    task = { budget: O.createBudget(3, () => {}), asks: 0, roles: null, single: '', tl: null, tlNode: null };
+    try {
+      const ask = 'Summarise this conversation so that work can continue from the summary alone. Use exactly these headings:\n## Goal\n## Decisions and constraints\n## Files (path: what it contains / what changed)\n## Commands run and their results\n## Open problems\n## Next steps\nBe specific: keep file paths, function names, exact error texts and the user\'s own wording of requirements. No preamble.';
+      const sum = await chatStream([{ role: 'system', content: 'You write precise working summaries of software sessions. You only summarise; you do not continue the work and you call no tools.' }].concat(hist, [{ role: 'user', content: ask }]), (t) => setStatus('compacting… ' + t.length + ' chars'), abortCtl.signal, null);
+      const clean = C.displayText(sum).trim();
+      if (clean.length < 80) throw new Error('the model returned no usable summary');
+      const before = hist.reduce((n, m) => n + m.content.length, 0);
+      const mark = { role: 'user', content: '[The conversation above was compacted. Summary of everything so far:]\n\n' + clean, shown: '/compact', compact: true };
+      const ack = { role: 'assistant', content: 'Understood. I will continue from this summary.', agent: current.agent === 'auto' ? 'coder' : current.agent, model: settings.model };
+      current.messages.push(mark, ack); current.compactAt = current.messages.indexOf(mark);
+      const info = { role: 'info', tool: true, parts: [{ label: 'compacted: ' + before + ' → ' + (mark.content.length + ack.content.length) + ' characters sent from now on', ok: true, text: clean }], content: clean };
+      current.messages.push(info); renderMessages(); saveSessions();
+    } catch (e) { if (e.name !== 'AbortError') pushError('Compact failed: ' + (e.message || e) + '. The conversation was left as it is.'); }
+    finally { task = null; busy = false; abortCtl = null; setStatus(''); }
+  }
+
   /** What to tell the user when the request budget (or the provider's daily limit) stops a run. */
   function budgetReport(e, checkpoint) {
     const steps = task && task.tl ? task.tl.steps.map((x) => x.name + ' ' + (x.status === 'run' ? 'stopped' : x.status)).join(', ') : '';
@@ -932,9 +1122,9 @@
   }
 
   /** Auto mode: route the request, then run the stages (Planner → Coder → Reviewer → Coder fix) that fit it. */
-  async function runAuto(text, forced, checkpoint, sig) {
+  async function runAuto(text, forced, checkpoint, sig, direct) {
     const box = $('messages'), files = ws.list();
-    let r = forced ? { agent: forced, reason: 'chosen by you', confident: true, big: forced === 'coder' && O.isBigTask(text), forced: true } : O.route(text, files);
+    let r = forced ? { agent: forced, reason: 'chosen by you', confident: true, big: !direct && forced === 'coder' && O.isBigTask(text), forced: true } : O.route(text, files);
     task.roles = O.assignRoles(modelPool(), health, userTarget(), Date.now());
     task.single = singleMode();
     task.tl = { role: 'timeline', route: { agent: r.agent, reason: r.reason, forced: !!r.forced }, steps: [], used: 0, max: task.budget.max };
@@ -978,7 +1168,7 @@
     }
     if (r.agent !== 'coder' || !st.wrote) return;
     // the last run of the code or tests is the proof that the result works
-    if (!st.proof && task.budget.left() >= 2) {
+    if (!st.proof && !st.gated && task.budget.left() >= 2) {
       pushNote('Before you finish: run the code or its tests now with run_terminal_command and report the exact output. If it cannot run on this device, say so in one line.');
       const row = tlStep('Proof run', task.roles.coder[0].model);
       await agentLoop('coder', task.roles.coder, st, row);
@@ -1203,7 +1393,7 @@
           const res = await GitHub.clone({ token: settings.keys.github, owner: pr.owner, repo: pr.repo, branch: br.value.trim() || pr.branch, onProgress: (d, n) => { cloneBtn.textContent = 'Cloning… ' + d + '/' + n; } });
           ws.list().forEach((p) => ws.remove(p));
           res.files.forEach((v, k) => ws.set(k, v));
-          repoBase = res.base; save('cyb.repo', repoBase);
+          repoBase = res.base; save('cyb.repo', repoBase); await cli.adoptClone(res.base);
           toast('Cloned ' + res.files.size + ' files' + (res.skipped ? ' (' + res.skipped + ' large or binary files left on GitHub)' : ''));
           if ((settings.startup || '').trim()) runStartup();
         } catch (e) { alert(e.message); }
@@ -1233,7 +1423,7 @@
           working = true; pushBtn.textContent = 'Pushing…';
           try {
             const r = await GitHub.push({ token: (settings.keys.github || '').trim(), base: repoBase, ws, message: msg.value.trim() });
-            repoBase = r.base; save('cyb.repo', repoBase); toast('Pushed ' + r.changed + ' file change' + (r.changed > 1 ? 's' : '') + ' · ' + r.commit.slice(0, 7));
+            repoBase = r.base; save('cyb.repo', repoBase); await cli.adoptPush(r.base, msg.value.trim()); toast('Pushed ' + r.changed + ' file change' + (r.changed > 1 ? 's' : '') + ' · ' + r.commit.slice(0, 7));
           } catch (e) { alert(e.message); }
           working = false; drawSheet();
         };
@@ -1649,6 +1839,7 @@
   // ----------------------------------------------------------------- wiring
   function autoGrow() { const t = $('input'); t.style.height = 'auto'; t.style.height = Math.min(150, t.scrollHeight) + 'px'; }
   $('input').addEventListener('input', autoGrow);
+  $('input').addEventListener('input', showMentions);
   $('input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !('ontouchstart' in window)) { e.preventDefault(); send(); } });
   $('btnSend').onclick = send;
   $('btnMenu').onclick = openDrawer; $('scrim').onclick = closeDrawer;
@@ -1686,7 +1877,7 @@
 
   if (!C.PROVIDERS[settings.provider]) { settings.provider = 'pollinations'; settings.model = 'openai-fast'; }
   $('ver').textContent = Native ? 'v' + Native.version() : 'web';
-  window.__cyb = { Native, nativeStream, fetchModels, C, ws, settings, limiter, health, usageReport, openUsage, freeCheck, metaOf, apiHistory, modelPool, spawnAgent, helperExec, rerunAs, get task() { return task; }, askApproval, openPreview, offerUndo, namedSecrets, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
+  window.__cyb = { cli, testWebapp, slashCommand, attachMentions, compactChat, kv, Native, nativeStream, fetchModels, C, ws, settings, limiter, health, usageReport, openUsage, freeCheck, metaOf, apiHistory, modelPool, spawnAgent, helperExec, rerunAs, get task() { return task; }, askApproval, openPreview, offerUndo, namedSecrets, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
   window.addEventListener('error', (e) => { console.log('CYBERR ' + e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno); });
   window.addEventListener('unhandledrejection', (e) => { console.log('CYBERR promise ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)); });
 

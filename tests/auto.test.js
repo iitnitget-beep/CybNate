@@ -82,12 +82,14 @@ async function boot() {
   };
   r = await say('fix the bug in calc.py');
   assert.ok(/^Auto → Coder/.test(r.chip), r.chip);
-  assert.deepStrictEqual(calls.map((c) => c.role), ['coder', 'coder', 'reviewer', 'coder', 'coder'], 'no planner for a small task, one review round');
+  // the coder said "Fixed" without running anything: the verification gate sends it back once, it writes a test and runs it
+  assert.deepStrictEqual(calls.map((c) => c.role), ['coder', 'coder', 'coder', 'coder', 'reviewer', 'coder'], 'no planner for a small task, verification gate, one review round');
+  assert.ok(/You modified code files but have not verified them yet/.test(calls[2].messages[calls[2].messages.length - 1].content), 'the gate note reaches the coder');
   const rev = calls.find((c) => c.role === 'reviewer'), cod = calls.find((c) => c.role === 'coder');
   assert.strictEqual(cod.model, 'qwen/qwen3-coder:free'); assert.notStrictEqual(fam(rev.model), fam(cod.model), 'reviewer model from another family: ' + rev.model);
-  assert.ok(/<untrusted_data source="reviewer agent">\nBug: calc\.py/.test(calls[3].messages[calls[3].messages.length - 1].content), 'review reaches the coder as untrusted data');
+  assert.ok(/<untrusted_data source="reviewer agent">\nBug: calc\.py/.test(calls[5].messages[calls[5].messages.length - 1].content), 'review reaches the coder as untrusted data');
   assert.ok(has(r.rows, /Coder.*qwen3-coder/) && has(r.rows, /Reviewer/) && has(r.rows, /Coder fix/) && has(r.rows, /Proof.*\$ python test_calc\.py/), r.rows.join(' | '));
-  assert.strictEqual(r.reqs, 'requests used: 5/30'); assert.strictEqual(T.ws.get('calc.py'), 'def add(a, b):\n    return a + b\n');
+  assert.strictEqual(r.reqs, 'requests used: 6/30'); assert.strictEqual(T.ws.get('calc.py'), 'def add(a, b):\n    return a + b\n');
   assert.ok(stats.sheets >= 2 && stats.maxSheets === 1, 'approvals were asked, one sheet at a time');
   assert.ok(/Coder ✓ → Reviewer ✓ → Coder fix ✓/.test(r.tl.querySelector('summary').textContent), r.tl.querySelector('summary').textContent);
 
