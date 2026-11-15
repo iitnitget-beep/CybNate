@@ -483,7 +483,7 @@
       }
       box.appendChild(w);
     } else { current.messages.forEach((m) => box.appendChild(msgNode(m))); renderFollowups(); }
-    box.scrollTop = box.scrollHeight;
+    box.scrollTop = current.messages.length ? box.scrollHeight : 0;
     $('title').textContent = current.title || 'New chat';
   }
   /** Next-step suggestions from the agent's last reply, as tappable chips. */
