@@ -1,4 +1,4 @@
-CybNate on-device self test (2026-11-15T08:00Z, Android 14, versionName=113.0.5672.136)
+CybNate on-device self test (2026-11-15T08:10Z, Android 14, versionName=113.0.5672.136)
 CYBTEST START ua=Mozilla/5.0 (Linux; Android 14; sdk_gphone64_x86_64 Build/UE1A.230829.050; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/113.0.5672.136 Mobile Safari/537.36
 CYBTEST PASS shell echo + workspace mirror :: hello.py lib main.js 34 done 
 CYBTEST PASS shell writes file back into workspace :: main.js,gen/a.txt,lib/add.js (deleted)
@@ -9,3 +9,27 @@ CYBTEST PASS python error exit code :: traceback ok
 CYBTEST PASS python numpy from CDN :: 15 
 CYBTEST PASS pip install pure package :: cowsay ok
 CYBTEST PASS node runs + require + fs :: node says 5 
+CYBTEST PASS timeout kills runaway python :: 5626 ms incl. restart
+CYBTEST PASS pollinations model list :: 1 models: openai-fast
+CYBTEST PASS pollinations chat (keyless) :: model=openai-fast reply=CYB-OK
+CYBTEST PASS agent tool call from real model :: variant=0 write_file:ping.txt
+CYBTEST PASS full agent run through the UI :: 5s approvals=2 tools=[✓ write_file fizz.py | ✓ $ python fizz.py] errors=[] final=⌨ coder · openai-fast Last line: FizzBuzz
+CYBTEST PASS web search :: 8 results; first: Pyodide — Version 314.0.8 https://pyodide.org/
+CYBTEST PASS read url :: # Example Domain https://example.com This domain is for use in documentation ex
+CYBTEST PASS github api reachable (CORS) :: CodebuffAI/freebuff
+CYBTEST PASS gate: denied shell command does not run :: refused
+CYBTEST PASS gate: function-call and alias routes are gated :: 2 routes refused, allowed one ran
+CYBTEST PASS gate: read-only command needs no approval :: ls ran, not asked
+CYBTEST PASS approval sheet: one at a time, Deny, Stop cancels :: ok
+CYBTEST PASS secrets reach a command only when named :: default none; named passed and masked in output
+CYBTEST PASS injection page stays inside untrusted_data :: wrapped
+CYBTEST PASS checkpoint undo restores changed, deleted and new files :: {"restored":2,"removed":1,"skipped":[]}
+CYBTEST PASS preview cannot reach the native bridge :: probe:blocked-undefined, no file written
+CYBTEST PASS Stop ends a running shell command :: stopped after 606 ms, exit 130
+CYBTEST PASS large shell output file is kept on disk and reported :: kept, reported, forgotten after rm
+CYBTEST PASS auto: routing rules pick the agent :: apk→reverse, question→chat, plan→planner, fix→coder
+CYBTEST PASS auto: limiter (2 at a time) and task budget cap :: peak 2, budget stops at 2/2
+CYBTEST PASS router: pace follows provider replies; paid model refused before sending :: waits 20 s when asked, refuses a 1 h wait, paid model not sent
+CYBTEST PASS router: rate-limit headers reach the app through the native bridge :: HTTP 200, limit 60, remaining 48, resets in 13 min
+CYBTEST PASS auto: helper agents cannot change project files through the shell :: reviewer: 2 undone; reverse: analysis/ kept, outside undone
+CYBTEST DONE pass=32 fail=0
