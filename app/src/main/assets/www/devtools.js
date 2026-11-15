@@ -98,7 +98,14 @@
       if (ls < m.start && /^\s/.test(search) && /^[ \t]+$/.test(text.slice(ls, m.start))) m.start = ls;
     } else {
       rep = trimBlankEdges(replace.split('\n')).join('\n');
-      if (m.stage >= 3) rep = reindent(rep, m.searchIndent, m.fileIndent);
+      if (m.stage >= 3) {
+        // learn how each indentation of the search text looks in the file (tabs vs spaces, another width) and write the replacement the same way
+        const lead = (l) => /^[ \t]*/.exec(l)[0];
+        const fl = text.slice(m.start, m.end).split('\n'), sl = trimBlankEdges(search.split('\n')), map = new Map();
+        for (let j = 0; j < sl.length && j < fl.length; j++) if (!blank(sl[j]) && !blank(fl[j]) && !map.has(lead(sl[j]))) map.set(lead(sl[j]), lead(fl[j]));
+        const shifted = reindent(rep, m.searchIndent, m.fileIndent).split('\n');
+        rep = rep.split('\n').map((l, j) => (blank(l) ? l : map.has(lead(l)) ? map.get(lead(l)) + l.slice(lead(l).length) : shifted[j])).join('\n');
+      }
     }
     return { text: text.slice(0, m.start) + rep + text.slice(m.end), stage: m.stage };
   }

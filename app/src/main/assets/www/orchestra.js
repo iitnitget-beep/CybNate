@@ -97,7 +97,7 @@
     coder: [[/coder|codestral|devstral|code\b|codex/i, 5], [/kimi|deepseek|gpt-oss|sonnet|qwen3|glm-4\.[5-9]|gpt-5|gemini-2\.5|grok-code/i, 3], [/70b|120b|large|pro\b/i, 1], [/[138]b\b|tiny|nano|guard|vision|embed|tts|whisper|audio|image/i, -4]],
     fast: [[/fast|instant|flash|mini|nano|lite|small|haiku|turbo|[3489]b\b|12b|20b/i, 4], [/r1|reason|think|opus|405b|235b|pro\b|large/i, -3]],
   };
-  const ROLE_TRAIT = { planner: 'reasoning', thinker: 'reasoning', coder: 'coder', reverse: 'coder', reviewer: 'reasoning', explorer: 'fast', researcher: 'fast', chat: 'fast', router: 'fast' };
+  const ROLE_TRAIT = { planner: 'reasoning', thinker: 'reasoning', coder: 'coder', reverse: 'coder', reviewer: 'reasoning', explorer: 'fast', file_picker: 'fast', basher: 'fast', editor: 'coder', researcher: 'fast', chat: 'fast', router: 'fast' };
   function traitScore(trait, model) { let n = 0; (TRAITS[trait] || []).forEach((t) => { if (t[0].test(model)) n += t[1]; }); return n; }
 
   /** 0..1 from recorded results; unknown models start in the middle. A recent failure puts a model on cool-down. */
@@ -365,7 +365,7 @@
     return /^\W*(lgtm|looks good|no (real |major |critical |significant )?(issues|problems|bugs)|the (code|change) (is|looks) (fine|good|correct)|approved)\b/i.test(String(text || '').trim().slice(0, 200));
   }
 
-  const ASK_TYPES = ['explorer', 'thinker', 'reviewer', 'researcher', 'planner', 'reverse', 'chat'];
+  const ASK_TYPES = ['file_picker', 'explorer', 'editor', 'basher', 'thinker', 'reviewer', 'researcher', 'planner', 'reverse', 'chat'];
   const MAX_ASKS = 3;
   function normPath(p) {
     const parts = [];
@@ -377,7 +377,7 @@
    * Returns '' when the path may be written, otherwise the reason.
    */
   function subWriteError(type, path) {
-    if (type === 'coder') return '';
+    if (type === 'coder' || type === 'editor') return ''; // the editor helper applies one precise change for the coder; the approval gate still applies
     if (type === 'reverse') return normPath(path).indexOf('analysis/') === 0 ? '' : 'the reverse helper may write only inside the analysis/ folder (got "' + path + '")';
     return 'the ' + type + ' helper is read-only and cannot change files';
   }

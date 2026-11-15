@@ -98,7 +98,7 @@ const AUTO = { mode: 'auto' }; // these older tests exercise the tools themselve
   assert.strictEqual(C.parseCommand('python a.py | head').kind, 'sh');
   assert.strictEqual(C.parseCommand('ls -la').kind, 'sh');
   assert.deepStrictEqual(C.parseCommand('pip install -U requests rich').argv, ['requests', 'rich']);
-  assert.strictEqual(C.parseCommand('git push').code, 127);
+  assert.strictEqual(C.parseCommand('git push').kind, 'git'); // git is built in now (app.js runs it against snapshots + the GitHub API)
   assert.ok(C.matchGlob('**/*.js', 'a/b/c.js') && C.matchGlob('*.js', 'a/c.js') && !C.matchGlob('src/*.js', 'src/a/b.js') && C.matchGlob('src/**/*.{ts,js}', 'src/a/b.ts'));
   const env = { mode: 'auto', exec: async (c, t) => ({ code: c === 'false' ? 1 : 0, out: 'ran ' + c + ' ' + t, files: ['x.txt'] }), search: async (q) => [{ title: 'T', url: 'https://u', snippet: q }], readUrl: async (u) => 'page ' + u, spawn: async (t, p) => t + ' report: ' + p };
   calls = C.parseToolCalls('<run_terminal_command timeout="5">\nls &amp;&amp; echo hi\n</run_terminal_command><run_terminal_command>false</run_terminal_command><web_search query="q1"/><read_url url="https://a"/><spawn_agent type="thinker">why</spawn_agent><spawn_agent type="nope">x</spawn_agent><find_files pattern="*.html"/><write_todos>\n- [ ] a\n</write_todos>', C.AGENTS.coder.tools);
