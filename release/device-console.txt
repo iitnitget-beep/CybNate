@@ -1,2 +1,4 @@
 CYBUI ready agents=5 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:982)
+CYBUI layout header=56 welcome=1262 win=0x0 (https://appassets.androidplatform.net/assets/www/app.js:983)
 CybNateJS: CYBUI ready agents=5 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:982)
+CybNateJS: CYBUI layout header=56 welcome=436 win=320x616 (https://appassets.androidplatform.net/assets/www/app.js:983)
