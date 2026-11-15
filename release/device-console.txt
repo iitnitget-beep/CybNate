@@ -1,12 +1,13 @@
-CYBUI ready agents=5 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:1148)
-CYBUI layout t=1500 header=56 welcome=452 frames=0 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:1166)
-CYBUI layout t=6000 header=56 welcome=452 frames=213 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:1166)
-CYBUI layout t=12000 header=56 welcome=452 frames=563 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:1166)
-CYBUI layout t=25000 header=56 welcome=452 frames=1332 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:1166)
-FOCUS1   mCurrentFocus=Window{2f13556 u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{2724867 u0 com.cybnate.app/.MainActivity t8} 
-  mCurrentFocus=Window{2f13556 u0 com.cybnate.app/com.cybnate.app.MainActivity}
-  mFocusedApp=ActivityRecord{2724867 u0 com.cybnate.app/.MainActivity t8}
-11-15 02:29:00.672   524   546 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +4s583ms
+FOCUS1   mCurrentFocus=Window{ac878f6 u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{514b497 u0 com.cybnate.app/.MainActivity t8} 
+  mCurrentFocus=Window{ac878f6 u0 com.cybnate.app/com.cybnate.app.MainActivity}
+  mFocusedApp=ActivityRecord{514b497 u0 com.cybnate.app/.MainActivity t8}
+11-15 02:57:04.687  3160  3326 E chromium: [ERROR:simple_file_enumerator.cc(21)] opendir /data/user/0/com.cybnate.app/cache/WebView/Default/HTTP Cache/Code Cache/wasm: No such file or directory (2)
+11-15 02:57:04.687  3160  3326 E chromium: [ERROR:simple_index_file.cc(614)] Could not reconstruct index from disk
+11-15 02:57:04.687  3160  3320 E chromium: [ERROR:simple_file_enumerator.cc(21)] opendir /data/user/0/com.cybnate.app/cache/WebView/Default/HTTP Cache/Code Cache/js: No such file or directory (2)
+11-15 02:57:04.687  3160  3320 E chromium: [ERROR:simple_index_file.cc(614)] Could not reconstruct index from disk
+11-15 02:57:06.524   529   548 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +5s861ms
 CybNateJS: CYBUI ready agents=5 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:1148)
-CybNateJS: CYBUI layout t=1500 header=56 welcome=452 frames=3 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:1166)
-CybNateJS: CYBUI layout t=6000 header=56 welcome=452 frames=240 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:1166)
+CybNateJS: CYBUI layout t=1500 header=56 welcome=452 frames=5 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:1166)
+CybNateJS: CYBUI layout t=6000 header=56 welcome=452 frames=5 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:1166)
+CybNateJS: CYBUI layout t=12000 header=56 welcome=452 frames=5 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:1166)
+CybNateJS: CYBUI layout t=25000 header=56 welcome=452 frames=5 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:1166)
