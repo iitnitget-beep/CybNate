@@ -77,7 +77,9 @@ const AUTO = { mode: 'auto' }; // these older tests exercise the tools themselve
 
   // --- history trimming
   const h = C.trimHistory([{ role: 'user', content: 'x'.repeat(50) }, { role: 'assistant', content: 'y'.repeat(50) }, { role: 'user', content: 'z' }], 60);
-  assert.strictEqual(h[h.length - 1].content, 'z'); assert.strictEqual(h[0].role, 'user');
+  assert.ok(h[h.length - 1].content.endsWith('\n\nz')); assert.strictEqual(h[0].role, 'user'); assert.strictEqual(h.length, 1);
+  assert.ok(/compacted/.test(h[0].content) && /User requests so far:\n- x{50}/.test(h[0].content), 'dropped turns are replaced by a digest, not lost');
+  assert.strictEqual(C.trimHistory([{ role: 'user', content: 'a' }, { role: 'assistant', content: 'b' }], 1000)[0].content, 'a', 'nothing is added when everything fits');
 
   // --- real APK analysis (uses the CI-built APK when present)
   const apk = path.join(__dirname, '..', 'release', 'CybNate.apk');

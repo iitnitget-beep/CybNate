@@ -46,6 +46,7 @@ public class MainActivity extends Activity {
 
     private WebView web;
     private PreviewPane preview;
+    private PageTester tester;
     private final ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicBoolean> shells = new ConcurrentHashMap<>();
     private ValueCallback<Uri[]> fileCallback;
     private final ConcurrentHashMap<String, HttpURLConnection> requests = new ConcurrentHashMap<>();
@@ -59,6 +60,7 @@ public class MainActivity extends Activity {
         root.addView(web);
         setContentView(root);
         preview = new PreviewPane(this, root);
+        tester = new PageTester(this, root);
 
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
@@ -426,6 +428,33 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void closePreview() {
             runOnUiThread(new Runnable() { @Override public void run() { preview.close(); } });
+        }
+
+        /**
+         * Loads a page in an invisible WebView without a native bridge and reports what its test harness collected.
+         * Answers with window.__nt(id, reportJsonOrNull).
+         */
+        @JavascriptInterface
+        public void testPage(final String id, final String html, final int timeoutMs) {
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    try {
+                        tester.run(html, timeoutMs, new PageTester.Done() {
+                            @Override public void result(String json) {
+                                js("window.__nt && window.__nt(" + JSONObject.quote(id) + "," + json + ")");
+                            }
+                        });
+                    } catch (Exception e) {
+                        js("window.__nt && window.__nt(" + JSONObject.quote(id) + "," + JSONObject.quote("{\"error\":" + JSONObject.quote(String.valueOf(e)) + "}") + ")");
+                    }
+                }
+            });
+        }
+
+        /** Console messages of the page in the preview view, newest last. */
+        @JavascriptInterface
+        public String previewConsole() {
+            return preview.consoleText();
         }
 
         /** Title of the page in the preview view; the self test reads its probe result from here. */

@@ -139,6 +139,7 @@
     roles.planner = pickChain('planner', pool, health, o); roles.thinker = roles.planner;
     roles.reviewer = pickChain('reviewer', pool, health, Object.assign({ avoidFamily: fam }, o));
     roles.explorer = pickChain('explorer', pool, health, o); roles.researcher = roles.explorer; roles.router = roles.explorer;
+    roles.file_picker = roles.explorer; roles.basher = roles.explorer; roles.editor = roles.coder;
     roles.reviewerSameFamily = !roles.reviewer.length || roles.reviewer[0].family === fam;
     return roles;
   }

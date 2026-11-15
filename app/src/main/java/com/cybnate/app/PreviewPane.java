@@ -6,6 +6,7 @@ import android.graphics.Color;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.webkit.ConsoleMessage;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
@@ -13,6 +14,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 /**
@@ -26,6 +28,23 @@ final class PreviewPane {
     private LinearLayout pane;
     private WebView view;
     volatile String title = "";
+    private final StringBuffer console = new StringBuffer();
+    private int consoleCount, consoleErrors;
+    private TextView consoleBtn, consoleText;
+    private ScrollView consoleBox;
+
+    String consoleText() {
+        return console.toString();
+    }
+
+    private void drawConsole() {
+        if (consoleBtn == null) return;
+        consoleBtn.setText("Console " + consoleCount + (consoleErrors > 0 ? "  \u26A0 " + consoleErrors : ""));
+        consoleBtn.setTextColor(consoleErrors > 0 ? 0xFFFF8A80 : 0xFFB9D4A8);
+        if (consoleText != null && consoleBox != null && consoleBox.getVisibility() == View.VISIBLE) {
+            consoleText.setText(console.length() == 0 ? "No console output yet." : console.toString());
+        }
+    }
 
     PreviewPane(Activity act, FrameLayout root) {
         this.act = act;
@@ -40,6 +59,9 @@ final class PreviewPane {
     void open(String name, String html) {
         close();
         title = "";
+        console.setLength(0);
+        consoleCount = 0;
+        consoleErrors = 0;
         pane = new LinearLayout(act);
         pane.setOrientation(LinearLayout.VERTICAL);
         pane.setBackgroundColor(0xFF1C1C1C);
@@ -55,6 +77,16 @@ final class PreviewPane {
         label.setTextColor(Color.WHITE);
         label.setSingleLine(true);
         bar.addView(label, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        consoleBtn = new TextView(act);
+        consoleBtn.setPadding(pad, pad, pad, pad);
+        consoleBtn.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                if (consoleBox == null) return;
+                consoleBox.setVisibility(consoleBox.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
+                drawConsole();
+            }
+        });
+        bar.addView(consoleBtn);
         TextView x = new TextView(act);
         x.setText("Close \u2715");
         x.setTextColor(0xFFB9D4A8);
@@ -68,13 +100,27 @@ final class PreviewPane {
         view = new WebView(act);
         WebSettings s = view.getSettings();
         s.setJavaScriptEnabled(true);
-        s.setDomStorageEnabled(false);
+        // localStorage for the previewed page. It lives under the preview origin, apart from the app's own storage.
+        s.setDomStorageEnabled(true);
         s.setAllowFileAccess(false);
         s.setAllowContentAccess(false);
         s.setTextZoom(100);
         // Deliberately no addJavascriptInterface here: this is the whole point of the separate view.
         view.setWebChromeClient(new WebChromeClient() {
             @Override public void onReceivedTitle(WebView v, String t) { title = t == null ? "" : t; }
+            @Override public boolean onConsoleMessage(ConsoleMessage m) {
+                boolean err = m.messageLevel() == ConsoleMessage.MessageLevel.ERROR;
+                consoleCount++;
+                if (err) consoleErrors++;
+                if (console.length() < 60000) {
+                    console.append(err ? "\u2717 " : m.messageLevel() == ConsoleMessage.MessageLevel.WARNING ? "! " : "\u203A ")
+                            .append(m.message());
+                    if (err && m.lineNumber() > 0) console.append("  (line ").append(m.lineNumber()).append(")");
+                    console.append('\n');
+                }
+                drawConsole();
+                return true;
+            }
         });
         view.setWebViewClient(new WebViewClient() {
             @Override
@@ -87,6 +133,18 @@ final class PreviewPane {
             }
         });
         pane.addView(view, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        consoleText = new TextView(act);
+        consoleText.setTextColor(0xFFE0E0E0);
+        consoleText.setTextSize(12);
+        consoleText.setTypeface(android.graphics.Typeface.MONOSPACE);
+        consoleText.setTextIsSelectable(true);
+        consoleText.setPadding(pad, pad / 2, pad, pad / 2);
+        consoleBox = new ScrollView(act);
+        consoleBox.setBackgroundColor(0xFF101010);
+        consoleBox.addView(consoleText);
+        consoleBox.setVisibility(View.GONE);
+        pane.addView(consoleBox, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (int) (180 * act.getResources().getDisplayMetrics().density)));
+        drawConsole();
         root.addView(pane, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         view.loadDataWithBaseURL(ORIGIN, html == null ? "" : html, "text/html", "utf-8", null);
     }
@@ -98,5 +156,8 @@ final class PreviewPane {
         if (view != null) { view.stopLoading(); view.destroy(); }
         view = null;
         pane = null;
+        consoleBtn = null;
+        consoleText = null;
+        consoleBox = null;
     }
 }
