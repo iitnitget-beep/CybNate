@@ -45,6 +45,8 @@
     must(T.ws.has('fizz.py'), 'fizz.py was not created. errors=' + errs + ' tools=' + tools + ' last=' + lastMsg.slice(0, 200));
     must(/python/.test(tools), 'the agent did not run the script. tools=' + tools);
     must(sheets >= 1, 'Ask mode showed no approval sheet during the run');
+    const chip = ([...document.querySelectorAll('.routechip')].pop() || {}).textContent || '', reqs = ([...document.querySelectorAll('.msg.timeline .reqs')].pop() || {}).textContent || '';
+    must(/^Auto → Coder/.test(chip), 'Auto mode did not route to Coder: ' + chip); must(/requests used: \d+\/30/.test(reqs), 'no request counter: ' + reqs);
     return Math.round((Date.now() - t0) / 1000) + 's approvals=' + sheets + ' tools=[' + tools + '] errors=[' + errs + '] final=' + lastMsg.replace(/\s+/g, ' ').slice(-140);
   });
   await test('web search', async () => { const r = await T.webSearch('pyodide documentation'); must(r.length > 0, 'no results'); return r.length + ' results; first: ' + r[0].title + ' ' + r[0].url; });
@@ -134,6 +136,31 @@
     must(JSON.parse(localStorage.getItem('cyb.diskOnly') || '[]').indexOf('big.bin') >= 0, 'not remembered');
     const r2 = await T.runCommand('rm big.bin && ls', 30);
     must(JSON.parse(localStorage.getItem('cyb.diskOnly') || '[]').indexOf('big.bin') < 0, 'not forgotten after delete'); return 'kept, reported, forgotten after rm';
+  });
+
+  await test('auto: routing rules pick the agent', async () => {
+    const O = T.C.Orchestra, r = (t, f) => O.route(t, f || []).agent;
+    must(r('Analyse the APK I imported', ['app.apk']) === 'reverse' && r('decompile this') === 'reverse', 'APK should go to Reverse');
+    must(r('Explain async/await') === 'chat' && r('Plan a notes app') === 'planner' && r('fix the bug in a.py', ['a.py']) === 'coder', 'chat/planner/coder');
+    must(O.route('pomodoro', []).confident === false, 'unclear request must not be confident');
+    return 'apk→reverse, question→chat, plan→planner, fix→coder';
+  });
+  await test('auto: limiter (2 at a time) and task budget cap', async () => {
+    const O = T.C.Orchestra, lim = O.createLimiter({ limits: { p: { concurrent: 2, rpm: 600, daily: 5 } }, loadDaily: () => null });
+    let live = 0, peak = 0;
+    await Promise.all([1, 2, 3, 4, 5].map(async () => { const rel = await lim.acquire('p'); live++; peak = Math.max(peak, live); await new Promise((r) => setTimeout(r, 30)); live--; rel(); }));
+    must(peak === 2, 'peak ' + peak);
+    const b = O.createBudget(2); b.take(); b.take(); let err = ''; try { b.take(); } catch (e) { err = e.name + ':' + e.code; }
+    must(err === 'BudgetError:task', err); return 'peak ' + peak + ', budget stops at 2/2';
+  });
+  await test('auto: helper agents cannot change project files through the shell', async () => {
+    T.ws.set('keep.txt', 'original');
+    const r1 = await T.helperExec('reviewer', 'echo changed > keep.txt; echo new > made-by-reviewer.txt; echo ran', 30);
+    must(/ran/.test(r1.out) && /undone/.test(r1.out), r1.out); must(T.ws.get('keep.txt') === 'original' && !T.ws.has('made-by-reviewer.txt'), 'reviewer changes were kept');
+    const r2 = await T.helperExec('reverse', 'mkdir -p analysis; echo y > analysis/r.txt; echo z > outside.txt', 30);
+    must(T.ws.has('analysis/r.txt') && !T.ws.has('outside.txt'), 'reverse rule: ' + r2.out);
+    const sh = await T.runCommand('cat keep.txt; ls', 30); must(/original/.test(sh.out) && !/made-by-reviewer|outside\.txt/.test(sh.out), 'disk not restored: ' + sh.out);
+    T.ws.remove('keep.txt'); T.ws.remove('analysis/r.txt'); return 'reviewer: 2 undone; reverse: analysis/ kept, outside undone';
   });
 
   const fails = lines.filter((l) => /FAIL/.test(l)).length;

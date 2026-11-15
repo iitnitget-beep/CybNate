@@ -155,7 +155,11 @@
   /** Every model the user can call right now: providers without a key requirement or with a key set. */
   function modelPool() {
     const pool = [];
-    Object.keys(C.PROVIDERS).filter(usable).forEach((id) => (modelsFor(id) || []).slice(0, 60).forEach((m) => pool.push({ provider: id, model: m })));
+    // the keyless Pollinations tier answers once every 45 s: used only when it is the chosen provider or the only one
+    const slow = (id) => id === 'pollinations' && !(settings.keys.pollinations || '').trim();
+    let ids = Object.keys(C.PROVIDERS).filter(usable);
+    if (ids.some((id) => !slow(id))) ids = ids.filter((id) => !slow(id) || id === settings.provider);
+    ids.forEach((id) => (modelsFor(id) || []).slice(0, 60).forEach((m) => pool.push({ provider: id, model: m })));
     const u = userTarget(); if (!pool.some((t) => O.keyOf(t) === O.keyOf(u))) pool.unshift(u);
     return pool;
   }
@@ -1604,7 +1608,7 @@
 
   if (!C.PROVIDERS[settings.provider]) { settings.provider = 'pollinations'; settings.model = 'openai-fast'; }
   $('ver').textContent = Native ? 'v' + Native.version() : 'web';
-  window.__cyb = { C, ws, settings, limiter, health, modelPool, spawnAgent, rerunAs, get task() { return task; }, askApproval, openPreview, offerUndo, namedSecrets, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
+  window.__cyb = { C, ws, settings, limiter, health, modelPool, spawnAgent, helperExec, rerunAs, get task() { return task; }, askApproval, openPreview, offerUndo, namedSecrets, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
   window.addEventListener('error', (e) => { console.log('CYBERR ' + e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno); });
   window.addEventListener('unhandledrejection', (e) => { console.log('CYBERR promise ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)); });
 
