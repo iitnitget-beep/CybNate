@@ -47,6 +47,15 @@ const replies = [
   }, replies);
   await page.goto(URL0, { waitUntil: 'networkidle0' });
   await page.screenshot({ path: shots + '/1-welcome.png' });
+  await page.click('#modeBtn'); await page.screenshot({ path: shots + '/1b-mode.png' });
+  assert.ok(await page.$eval('#agents', (n) => !n.hidden));
+  await page.click('#agents .pill'); assert.ok(await page.$eval('#agents', (n) => n.hidden));
+  await page.click('#btnModel'); await page.screenshot({ path: shots + '/1c-models.png' }); await page.click('#sheetBack');
+  await page.click('#btnMenu'); await page.click('#dSettings'); await page.screenshot({ path: shots + '/1d-settings.png' });
+  await page.evaluate(() => [...document.querySelectorAll('.srow')].find((b) => /General/.test(b.textContent)).click()); await page.screenshot({ path: shots + '/1e-general.png' });
+  await page.click('#sheetBack');
+  await page.evaluate(() => [...document.querySelectorAll('.srow')].find((b) => /Model Providers/.test(b.textContent)).click()); await page.screenshot({ path: shots + '/1f-providers.png' });
+  await page.click('#sheetBack'); await page.click('#sheetBack');
 
   await page.type('#input', 'Build a small calc module with tests and run them');
   await page.click('#btnSend');

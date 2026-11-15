@@ -36,7 +36,8 @@ const requests = [];
   assert.deepStrictEqual(errors, []);
   assert.ok(d.querySelector('.welcome'), 'welcome screen');
   assert.strictEqual(d.querySelectorAll('#agents .pill').length, 5);
-  assert.ok(/pollinations \/ openai/.test(d.getElementById('btnModel').textContent));
+  assert.ok(/^openai/.test(d.getElementById('btnModel').textContent));
+  assert.ok(d.getElementById('modeBtn') && /Coder/.test(d.getElementById('btnMode').textContent), 'mode selector');
 
   d.getElementById('input').value = 'Build a timer';
   d.getElementById('btnSend').click();
@@ -91,7 +92,15 @@ const requests = [];
 
   // settings sheet renders, persistence survived
   d.getElementById('dSettings').click();
-  assert.strictEqual(d.querySelectorAll('#sheetBody .card').length, 7);
+  assert.strictEqual(d.querySelectorAll('#sheetBody .srow').length, 7);
+  [...d.querySelectorAll('#sheetBody .srow')].find((b) => /Model Providers/.test(b.textContent)).click();
+  assert.strictEqual(d.querySelectorAll('#sheetBody .card').length, Object.keys(w.__cyb.C.PROVIDERS).length);
+  w.onNativeBack();
+  [...d.querySelectorAll('#sheetBody .srow')].find((b) => /Appearance/.test(b.textContent)).click();
+  [...d.querySelectorAll('#sheetBody .model')].find((b) => b.textContent === 'Light').click();
+  assert.strictEqual(d.documentElement.dataset.theme, 'light');
+  [...d.querySelectorAll('#sheetBody .model')].find((b) => b.textContent === 'Dark').click();
+  w.onNativeBack(); w.onNativeBack();
   w.onNativeBack(); d.getElementById('dGit').click();
   assert.ok(/Access token/.test(d.getElementById('sheetBody').textContent));
   assert.ok(JSON.parse(w.localStorage.getItem('cyb.sessions'))[0].messages.length >= 6);

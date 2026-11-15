@@ -66,7 +66,8 @@
       };
     });
   }
-  function updateBadge() { const n = ws.list().length; $('fileBadge').hidden = !n; $('fileBadge').textContent = n; }
+  let sendIcon = '';
+  function updateBadge() { const n = ws.list().length; $('fileBadge').hidden = !n; $('fileBadge').textContent = n; $('dCount').textContent = n ? n + (n === 1 ? ' file' : ' files') : ''; }
 
   // ------------------------------------------------------------------ http
   let nativeSeq = 0; const nativeReqs = {};
@@ -391,12 +392,21 @@
   const caps = (extra) => Object.assign({ shell: canShell, repo: repoBase ? repoBase.owner + '/' + repoBase.repo : '' }, extra || {});
 
   /** Run a helper agent with its own context and return its final report. */
+  /** User instructions plus the project's AGENTS.md / CLAUDE.md when enabled. */
+  function extraPrompt() {
+    let t = settings.extra || '';
+    if (settings.agentsMd !== false) {
+      const f = ['AGENTS.md', 'CLAUDE.md', 'agents.md'].find((n) => ws.has(n) && !ws.isBinary(n));
+      if (f) t += '\n\nProject instructions from ' + f + ':\n' + String(ws.get(f)).slice(0, 6000);
+    }
+    return t;
+  }
   async function spawnAgent(type, prompt, signal) {
     const agent = C.AGENTS[type], msgs = [{ role: 'user', content: prompt }];
     const env = { exec: (c, t) => runCommand(c, t, signal), search: (q) => webSearch(q, signal), readUrl: (u) => readUrl(u, signal) };
     let last = '';
     for (let step = 0; step < 8; step++) {
-      const sys = C.buildSystemPrompt(type, ws.summary(), settings.extra, caps({ noSpawn: true }));
+      const sys = C.buildSystemPrompt(type, ws.summary(), extraPrompt(), caps({ noSpawn: true }));
       setStatus(agent.icon + ' ' + type + (step ? ' step ' + (step + 1) : '') + '…');
       last = await chatStream([{ role: 'system', content: sys }].concat(C.trimHistory(msgs, 40000)), (t) => setStatus(agent.icon + ' ' + type + ' ' + t.length + ' chars'), signal, agent.tools.filter((t) => t !== 'spawn_agent'));
       msgs.push({ role: 'assistant', content: last });
@@ -462,9 +472,9 @@
     if (!current.messages.length) {
       const a = C.AGENTS[current.agent];
       const w = el('div', 'welcome');
-      w.appendChild(el('div', 'big', '❯_'));
-      w.appendChild(el('h1', '', 'CybNate'));
-      w.appendChild(el('div', '', 'Free AI coding agent. It reads, writes and runs code, searches the web and reviews its own work. ' + a.icon + ' ' + a.name + ': ' + a.blurb.toLowerCase() + '.'));
+      w.appendChild($('tplLogo').content.cloneNode(true));
+      const mp = el('button', 'modepill', a.icon + ' ' + a.name); mp.id = 'modeBtn'; mp.onclick = openModeMenu; w.appendChild(mp);
+      w.appendChild(el('div', 'blurb', a.blurb + '. Free models, runs on your phone.'));
       (SUGGEST[current.agent] || []).forEach((t) => { const b = el('button', 'sugg', t); b.onclick = () => { $('input').value = t; autoGrow(); $('input').focus(); }; w.appendChild(b); });
       const p = providerCfg();
       if (p.needsKey && !(settings.keys[settings.provider] || '').trim()) {
@@ -492,13 +502,16 @@
     const nav = $('agents'); nav.innerHTML = '';
     Object.keys(C.AGENTS).filter((id) => !C.AGENTS[id].sub).forEach((id) => {
       const a = C.AGENTS[id], b = el('button', 'pill' + (current.agent === id ? ' on' : ''), a.icon + ' ' + a.name);
-      b.onclick = () => { if (busy) return; current.agent = id; saveSessions(); renderAgents(); if (!current.messages.length) renderMessages(); $('input').placeholder = placeholder(); };
+      b.appendChild(el('small', '', a.blurb));
+      b.onclick = () => { closeDrawer(); if (busy) return; current.agent = id; saveSessions(); renderAgents(); if (!current.messages.length) renderMessages(); };
       nav.appendChild(b);
     });
     $('input').placeholder = placeholder();
+    $('btnMode').textContent = C.AGENTS[current.agent].name;
   }
+  function openModeMenu() { if (busy) return toast('Wait for the current reply or stop it'); $('agents').hidden = false; $('scrim').hidden = false; }
   const placeholder = () => ({ coder: 'Ask CybNate to build…', planner: 'What should we plan?', reviewer: 'What should I review?', reverse: 'Import a file, then ask…', chat: 'Message CybNate…' })[current.agent];
-  function renderModelChip() { $('btnModel').textContent = C.PROVIDERS[settings.provider].name.toLowerCase() + ' / ' + settings.model + ' ▾'; }
+  function renderModelChip() { $('btnModel').textContent = settings.model; $('btnModel').title = C.PROVIDERS[settings.provider].name + ' / ' + settings.model; }
   function setStatus(t) { $('status').textContent = t || ''; }
 
   // -------------------------------------------------------------- sessions
@@ -526,7 +539,7 @@
     sessions = [current].concat(sessions.filter((s) => s !== current));
     renderMessages();
     busy = true; abortCtl = new AbortController();
-    $('btnSend').classList.add('stop'); $('btnSend').textContent = '■';
+    $('btnSend').classList.add('stop'); sendIcon = sendIcon || $('btnSend').innerHTML; $('btnSend').textContent = '■';
     const box = $('messages');
     try {
       const agent = C.AGENTS[current.agent];
@@ -534,7 +547,7 @@
       const oldChips = box.querySelector('.followups'); if (oldChips) oldChips.remove();
       let badCalls = 0;
       for (let step = 0; step < maxSteps; step++) {
-        const sys = C.buildSystemPrompt(current.agent, ws.summary(), settings.extra, caps());
+        const sys = C.buildSystemPrompt(current.agent, ws.summary(), extraPrompt(), caps());
         const msg = { role: 'assistant', content: '', agent: current.agent, model: settings.model };
         const node = msgNode(msg); node.classList.add('cursor'); box.appendChild(node);
         box.scrollTop = box.scrollHeight;
@@ -582,7 +595,7 @@
       if (e.name !== 'AbortError') pushError(e.message || String(e)); else toast('Stopped');
     } finally {
       busy = false; abortCtl = null; setStatus(''); renderFollowups();
-      $('btnSend').classList.remove('stop'); $('btnSend').textContent = '➤';
+      $('btnSend').classList.remove('stop'); $('btnSend').innerHTML = sendIcon;
       current.updated = Date.now(); saveSessions();
     }
   }
@@ -795,10 +808,21 @@
   }
 
   // -------------------------------------------------------------- settings
-  function openSettings() {
-    closeDrawer();
-    openSheet('Settings', (body) => {
-      body.appendChild(el('div', 'label', 'AI providers (all free)'));
+  function applyTheme() {
+    const t = settings.theme || 'dark';
+    const light = t === 'light' || (t === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+    document.documentElement.dataset.theme = light ? 'light' : 'dark';
+  }
+  function switchRow(title, sub, get, set) {
+    const r = el('div', 'trow'), d = el('div'); d.appendChild(el('b', '', title)); if (sub) d.appendChild(el('small', '', sub));
+    const sw = el('button', 'switch' + (get() ? ' on' : '')); sw.setAttribute('role', 'switch');
+    sw.onclick = () => { set(!get()); saveSettings(); sw.classList.toggle('on', !!get()); };
+    r.appendChild(d); r.appendChild(sw); return r;
+  }
+  function settingsRow(label, value, fn, plain) { const b = el('button', 'srow' + (plain ? ' plain' : '')); b.appendChild(el('span', '', label)); if (value) b.appendChild(el('small', '', value)); if (fn) b.onclick = fn; return b; }
+  function openProviders() {
+    openSheet('Model Providers', (body) => {
+      body.appendChild(el('div', 'empty', 'Every provider here is free. Pollinations works with no key; the others give a free key in a minute and are much faster.')).style.cssText = 'text-align:left;padding:0 4px 12px';
       Object.keys(C.PROVIDERS).forEach((id) => {
         const p = C.PROVIDERS[id], card = el('div', 'card' + (settings.provider === id ? ' on' : ''));
         const h = el('h3', '', p.name + ' '); h.appendChild(el('span', 'tag', settings.provider === id ? 'active' : p.needsKey ? 'key' : 'no key')); card.appendChild(h);
@@ -816,18 +840,48 @@
         use.onclick = () => { openModels(id); }; card.appendChild(use);
         body.appendChild(card);
       });
-      body.appendChild(el('div', 'label', 'Agent'));
-      const c2 = el('div', 'card');
+    });
+  }
+  function openGeneral() {
+    openSheet('General', (body) => {
+      const c1 = el('div', 'card'); c1.appendChild(el('div', 'ctitle', 'Agent'));
+      c1.appendChild(switchRow('Native tool calls', 'Send tool definitions to the model. Turn off if a model misbehaves.', () => settings.nativeTools !== false, (v) => { settings.nativeTools = v; }));
+      c1.appendChild(switchRow('Include AGENTS.md', 'Include the workspace\u2019s AGENTS.md or CLAUDE.md from your next message.', () => settings.agentsMd !== false, (v) => { settings.agentsMd = v; }));
+      body.appendChild(c1);
+      const c2 = el('div', 'card'); c2.appendChild(el('div', 'ctitle', 'Agent instructions'));
       c2.appendChild(el('p', '', 'Custom instructions added to every agent (optional)'));
       const ex = el('textarea', 'field'); ex.rows = 3; ex.value = settings.extra; ex.placeholder = 'e.g. Always answer in Hinglish. Prefer Python.'; ex.onchange = () => { settings.extra = ex.value; saveSettings(); }; c2.appendChild(ex);
-      c2.appendChild(el('p', '', 'Maximum tool steps per message'));
+      c2.appendChild(el('p', '', 'Maximum tool steps per message')).style.marginTop = '12px';
       const ms = el('input', 'field'); ms.type = 'text'; ms.inputMode = 'numeric'; ms.value = settings.maxSteps; ms.onchange = () => { settings.maxSteps = Math.min(80, Math.max(1, parseInt(ms.value, 10) || 25)); ms.value = settings.maxSteps; saveSettings(); }; c2.appendChild(ms);
       body.appendChild(c2);
-      body.appendChild(el('div', 'label', 'Data'));
-      const c3 = el('div', 'card');
+      const c3 = el('div', 'card'); c3.appendChild(el('div', 'ctitle', 'Data'));
       c3.appendChild(el('p', '', 'Chats, files and keys are stored only on this device. Messages are sent directly to the provider you select.'));
       const del = el('button', 'wide danger', 'Delete all chats'); del.onclick = () => { if (confirm('Delete all chats?')) { sessions = []; current = null; newSession(); saveSessions(); toast('Chats deleted'); } }; c3.appendChild(del);
       body.appendChild(c3);
+      const c4 = el('div', 'card'); c4.appendChild(settingsRow('Version', Native ? Native.version() : 'web', null, true)); body.appendChild(c4);
+    });
+  }
+  function openAppearance() {
+    openSheet('Appearance', (body) => {
+      const c = el('div', 'card');
+      [['system', 'System'], ['dark', 'Dark'], ['light', 'Light']].forEach((o) => {
+        const b = el('button', 'model' + ((settings.theme || 'dark') === o[0] ? ' on' : ''), o[1]);
+        b.onclick = () => { settings.theme = o[0]; saveSettings(); applyTheme(); drawSheet(); }; c.appendChild(b);
+      });
+      body.appendChild(c);
+    });
+  }
+  function openSettings() {
+    closeDrawer();
+    openSheet('Settings', (body) => {
+      const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+      body.appendChild(settingsRow('General', '', openGeneral));
+      body.appendChild(settingsRow('Model Providers', C.PROVIDERS[settings.provider].name, openProviders));
+      body.appendChild(settingsRow('Model', settings.model.length > 18 ? settings.model.slice(0, 17) + '\u2026' : settings.model, () => openModels()));
+      body.appendChild(settingsRow('Appearance', cap(settings.theme || 'dark'), openAppearance));
+      body.appendChild(settingsRow('Workspace files', ws.list().length + '', openFiles));
+      body.appendChild(settingsRow('Terminal', '', openTerminal));
+      body.appendChild(settingsRow('GitHub', '', openGitHub));
     });
   }
 
@@ -848,12 +902,13 @@
         n.onclick = () => { sheetStack = []; openSettings(); }; body.appendChild(n);
       }
       if (p.custom && !p.chatUrl) { const n = el('div', 'note', 'Set the server URL in Settings first.'); n.onclick = () => { sheetStack = []; openSettings(); }; body.appendChild(n); }
-      const add = el('input', 'field'); add.type = 'text'; add.placeholder = 'Or type a model id and press Enter'; add.autocapitalize = 'off'; add.style.marginBottom = '8px';
+      const add = el('input', 'field'); add.type = 'text'; add.placeholder = 'Search models, or type an id and press Enter'; add.autocapitalize = 'off'; add.style.marginBottom = '8px';
       add.onkeydown = (e) => { if (e.key === 'Enter' && add.value.trim()) pick(add.value.trim()); }; body.appendChild(add);
+      add.oninput = () => { const q = add.value.trim().toLowerCase(); body.querySelectorAll('.model').forEach((n) => { n.hidden = !!q && n.textContent.toLowerCase().indexOf(q) < 0; }); };
       const pick = (m) => {
         settings.provider = id; settings.model = m;
         const cur = modelsFor(id); if (cur.indexOf(m) < 0) settings.models[id] = [m].concat(cur);
-        saveSettings(); sheetStack = []; drawSheet(); renderAll(); toast('Using ' + m);
+        saveSettings(); sheetStack.pop(); if (sheetStack.length && sheetStack[sheetStack.length - 1].title === 'Model Providers') sheetStack.pop(); drawSheet(); renderAll(); toast('Using ' + m);
       };
       const list = modelsFor(id);
       if (!list.length) body.appendChild(el('div', 'empty', 'No models listed yet. Tap ↻ Refresh.'));
@@ -865,7 +920,8 @@
   // ---------------------------------------------------------------- drawer
   function openDrawer() {
     const list = $('chatList'); list.innerHTML = '';
-    sessions.filter((s) => s.messages.length).forEach((s) => {
+    const q = ($('dFilter').hidden ? '' : $('dFilter').value).trim().toLowerCase();
+    sessions.filter((s) => s.messages.length && (!q || (s.title || '').toLowerCase().indexOf(q) >= 0)).forEach((s) => {
       const row = el('div', 'chat-item' + (s === current ? ' on' : ''));
       const name = el('button', 'name', (C.AGENTS[s.agent] || C.AGENTS.coder).icon + ' ' + (s.title || 'Untitled'));
       name.onclick = () => { if (busy) return toast('Wait for the current reply or stop it'); current = s; closeDrawer(); renderAll(); };
@@ -873,10 +929,10 @@
       del.onclick = () => { if (busy && s === current) return; sessions = sessions.filter((x) => x !== s); saveSessions(); if (s === current) { current = null; newSession(); } openDrawer(); };
       row.appendChild(name); row.appendChild(del); list.appendChild(row);
     });
-    if (!list.children.length) list.appendChild(el('div', 'empty', 'No chats yet'));
+    if (!list.children.length) list.appendChild(el('div', 'empty', q ? 'No matching chats' : 'No chats yet'));
     $('drawer').hidden = false; $('scrim').hidden = false;
   }
-  function closeDrawer() { $('drawer').hidden = true; $('scrim').hidden = true; }
+  function closeDrawer() { $('drawer').hidden = true; $('scrim').hidden = true; $('agents').hidden = true; }
 
   // ----------------------------------------------------------------- wiring
   function autoGrow() { const t = $('input'); t.style.height = 'auto'; t.style.height = Math.min(150, t.scrollHeight) + 'px'; }
@@ -890,6 +946,18 @@
   $('dSettings').onclick = openSettings;
   $('btnTerm').onclick = openTerminal; $('dTerm').onclick = openTerminal; $('dGit').onclick = openGitHub;
   $('btnModel').onclick = () => openModels();
+  $('btnMode').onclick = openModeMenu;
+  $('dSearch').onclick = () => { const f = $('dFilter'); f.hidden = !f.hidden; if (f.hidden) { f.value = ''; openDrawer(); } else f.focus(); };
+  $('dFilter').oninput = openDrawer;
+  $('dProject').onclick = () => {
+    if (busy) return toast('Stop the current reply first');
+    closeDrawer();
+    if (ws.list().length && !confirm('Start a new project? This removes the ' + ws.list().length + ' files in the current workspace. Export or push them first if you need them.')) return;
+    ws.list().forEach((p) => ws.remove(p)); repoBase = null; save('cyb.repo', null);
+    newSession(); openGitHub(); toast('Empty workspace. Clone a repo here, or just ask the agent to build.');
+  };
+  applyTheme();
+  if (window.matchMedia) { try { window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', applyTheme); } catch (e) { /* old WebView */ } }
   $('sheetBack').onclick = closeSheet;
   $('btnAttach').onclick = () => pickFiles((names) => {
     updateBadge(); const t = $('input');
@@ -898,7 +966,7 @@
   });
   window.onNativeBack = () => {
     if (sheetStack.length) { closeSheet(); return true; }
-    if (!$('drawer').hidden) { closeDrawer(); return true; }
+    if (!$('drawer').hidden || !$('agents').hidden) { closeDrawer(); return true; }
     return false;
   };
 

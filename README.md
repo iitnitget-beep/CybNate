@@ -71,4 +71,5 @@ CI also installs the APK on an Android emulator and runs the in-app self test; r
 - `scripts/fetch-vendor.sh` – downloads the Python runtime at build time
 
 Third-party: marked, DOMPurify, highlight.js, Pyodide. CybNate contains no Freebuff code; its agent workflow is modelled on Freebuff's (Apache-2.0).
+- Interface: neutral dark theme with a card composer, mode and model selectors, drawer and a settings list (General, Model Providers, Appearance).
 - Agent guidelines adapted from Codebuff/Freebuff (Apache-2.0), see `NOTICE`. Models receive native function definitions, with a text-tag fallback.
