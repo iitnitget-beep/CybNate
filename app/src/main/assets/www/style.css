@@ -123,7 +123,7 @@ footer{border-top:0;padding:4px 12px calc(12px + env(safe-area-inset-bottom))}
 .msg.assistant .who{color:var(--dim)}
 .msg.tool details{border-radius:14px}.msg.tool pre{border-radius:0 0 14px 14px}
 .msg.error{border-radius:14px}
-.md a{color:var(--acc)}html[data-theme=light] .md a,html[data-theme=light] .msg.tool .ok,html[data-theme=light] #sheetActions button{color:var(--acc2)}
+.md a{color:var(--acc)}.md a,.msg.tool .ok,#sheetActions button{color:var(--link,var(--acc))}
 pre{border-radius:14px;color:#e6e6e2}
 .welcome{min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:10px 0 20px;text-align:center}
 .welcome .mark{color:#6d6f6b;width:64px;height:64px;margin-bottom:14px}
@@ -199,3 +199,18 @@ header .title{font-weight:500}
 .srow.mono span{font:14px var(--mono)}.srow.mono small{color:var(--err)}
 .skill.mine{flex-wrap:wrap;justify-content:flex-end}.skill.mine .sinfo{flex:1 0 100%}
 .skill.mine .sinfo small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.seg{display:flex;background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:3px;margin-top:8px}
+.seg button{flex:1;padding:10px;border-radius:11px;color:var(--dim);font-size:16px}.seg button.on{background:#cfd2c9;color:#151614}
+.themes{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px}
+.theme{text-align:left}.swatch{display:block;position:relative;height:84px;border-radius:14px;border:1px solid;overflow:hidden}
+.theme.on .swatch{outline:2px solid var(--acc);outline-offset:2px}
+.swatch i{position:absolute;left:12px;height:4px;border-radius:2px}.swatch i:nth-child(1){top:30px;width:34px}.swatch i:nth-child(2){top:40px;width:50px;opacity:.6}
+.swatch em{position:absolute;right:12px;bottom:12px;width:16px;height:16px;border-radius:4px}
+.tname{display:block;margin-top:6px;font-size:15px}
+.lite2{flex:none;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:8px 14px;font-size:15px}
+.clamp2{display:-webkit-box!important;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.grp{color:var(--dim);font-weight:600;font-size:14px;margin:16px 0 2px}
+kbd{flex:none;font:14px var(--sans);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+.chat-item .arc{padding:8px 6px;display:flex;align-items:center}
+html[data-style="3d"] .card,html[data-style="3d"] .composer,html[data-style="3d"] .lite2,html[data-style="3d"] .modepill,html[data-style="3d"] kbd{box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 2px 0 rgba(0,0,0,.28)}
+html[data-style="3d"] .wide,html[data-style="3d"] .lite,html[data-style="3d"] #btnSend,html[data-style="3d"] .seg button.on{box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 2px 0 rgba(0,0,0,.35)}

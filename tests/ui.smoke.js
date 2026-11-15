@@ -92,14 +92,20 @@ const requests = [];
 
   // settings sheet renders, persistence survived
   d.getElementById('dSettings').click();
-  assert.strictEqual(d.querySelectorAll('#sheetBody .srow').length, 9);
+  assert.strictEqual(d.querySelectorAll('#sheetBody .srow').length, 11);
   [...d.querySelectorAll('#sheetBody .srow')].find((b) => /Model Providers/.test(b.textContent)).click();
   assert.strictEqual(d.querySelectorAll('#sheetBody .card').length, Object.keys(w.__cyb.C.PROVIDERS).length);
   w.onNativeBack();
   [...d.querySelectorAll('#sheetBody .srow')].find((b) => /Appearance/.test(b.textContent)).click();
-  [...d.querySelectorAll('#sheetBody .model')].find((b) => b.textContent === 'Light').click();
+  assert.strictEqual(d.querySelectorAll('#sheetBody .theme').length, 8);
+  d.querySelector('#sheetBody .theme[data-id=peach]').click();
   assert.strictEqual(d.documentElement.dataset.theme, 'light');
-  [...d.querySelectorAll('#sheetBody .model')].find((b) => b.textContent === 'Dark').click();
+  assert.strictEqual(d.documentElement.style.getPropertyValue('--acc'), '#d9644a');
+  [...d.querySelectorAll('#sheetBody .seg button')].find((b) => b.textContent === 'Flat').click();
+  assert.strictEqual(d.documentElement.dataset.style, 'flat');
+  [...d.querySelectorAll('#sheetBody .seg button')].find((b) => b.textContent === '3D').click();
+  d.querySelector('#sheetBody .theme[data-id=dark]').click();
+  assert.strictEqual(d.documentElement.dataset.theme, 'dark');
   w.onNativeBack(); w.onNativeBack();
   w.onNativeBack(); d.getElementById('dGit').click();
   assert.ok(/Access token/.test(d.getElementById('sheetBody').textContent));

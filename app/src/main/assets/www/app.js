@@ -819,11 +819,32 @@
   }
 
   // -------------------------------------------------------------- settings
-  function applyTheme() {
-    const t = settings.theme || 'dark';
-    const light = t === 'light' || (t === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
-    document.documentElement.dataset.theme = light ? 'light' : 'dark';
+  // name, light?, bg, panel, panel2, line, text, dim, accent, accent-dark
+  const THEMES = {
+    dark: ['Dark', 0, '#1c1c1c', '#232524', '#2d2f2d', '#363836', '#ededeb', '#9b9d98', '#b9d4a8', '#7f9a70'],
+    light: ['Light', 1, '#f6f6f3', '#ffffff', '#ecece8', '#dcdcd6', '#1b1c1a', '#6b6d67', '#b9d4a8', '#6f8a60'],
+    shine: ['OG Shine', 0, '#080808', '#111211', '#1b1d1c', '#2a2d2b', '#f0f2f0', '#8f9591', '#5eecb5', '#3fbf8e'],
+    peach: ['Peach', 1, '#fbeeea', '#fff8f5', '#f3dfd9', '#e6cdc5', '#3a2622', '#8a6a62', '#d9644a', '#b54a33'],
+    midnight: ['Midnight', 0, '#12121f', '#191a2b', '#23243a', '#30324c', '#e6e7f5', '#9193b3', '#7f8fc9', '#6272b0'],
+    lilac: ['Lilac', 1, '#e4e1ee', '#f1eff7', '#d6d2e4', '#c3bed6', '#221f33', '#666180', '#4f3f93', '#4f3f93'],
+    cocoa: ['Cocoa', 0, '#1d1716', '#261e1c', '#322826', '#40332f', '#f0e6e2', '#a39088', '#b08a6e', '#8f6c52'],
+    moss: ['Moss', 1, '#dfe3df', '#eef1ee', '#cfd5cf', '#b9c1b9', '#1a211c', '#5d685f', '#24452f', '#24452f'],
+  };
+  function themeId() {
+    if (settings.theme === 'system') { settings.theme = 'dark'; settings.matchDevice = true; }
+    if (settings.matchDevice) return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    return THEMES[settings.theme] ? settings.theme : 'dark';
   }
+  function applyTheme() {
+    const t = THEMES[themeId()], r = document.documentElement, dark = !t[1];
+    r.dataset.theme = t[1] ? 'light' : 'dark';
+    r.dataset.style = settings.flat ? 'flat' : '3d';
+    ['--bg', '--panel', '--panel2', '--line', '--text', '--dim', '--acc', '--acc2'].forEach((k, n) => r.style.setProperty(k, t[n + 2]));
+    const lum = (h) => { const n = parseInt(h.slice(1), 16); return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255; };
+    r.style.setProperty('--on', lum(t[8]) > 0.55 ? '#10140e' : '#ffffff');
+    r.style.setProperty('--link', dark ? t[8] : t[9]);
+  }
+  if (window.matchMedia) { try { window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => applyTheme()); } catch (e) { /* old WebView */ } }
   function switchRow(title, sub, get, set) {
     const r = el('div', 'trow'), d = el('div'); d.appendChild(el('b', '', title)); if (sub) d.appendChild(el('small', '', sub));
     const sw = el('button', 'switch' + (get() ? ' on' : '')); sw.setAttribute('role', 'switch');
@@ -874,12 +895,62 @@
   }
   function openAppearance() {
     openSheet('Appearance', (body) => {
-      const c = el('div', 'card');
-      [['system', 'System'], ['dark', 'Dark'], ['light', 'Light']].forEach((o) => {
-        const b = el('button', 'model' + ((settings.theme || 'dark') === o[0] ? ' on' : ''), o[1]);
-        b.onclick = () => { settings.theme = o[0]; saveSettings(); applyTheme(); drawSheet(); }; c.appendChild(b);
+      const c0 = el('div', 'card'); c0.appendChild(el('div', 'ctitle', 'Style'));
+      const seg = el('div', 'seg');
+      [['Flat', true], ['3D', false]].forEach((o) => { const b = el('button', (!!settings.flat === o[1] ? 'on' : ''), o[0]); b.onclick = () => { settings.flat = o[1]; saveSettings(); applyTheme(); drawSheet(); }; seg.appendChild(b); });
+      c0.appendChild(seg); body.appendChild(c0);
+      const c1 = el('div', 'card');
+      const md = el('button', 'model' + (settings.matchDevice ? ' on' : ''), 'Match device');
+      md.onclick = () => { settings.matchDevice = !settings.matchDevice; saveSettings(); applyTheme(); drawSheet(); };
+      c1.appendChild(md); body.appendChild(c1);
+      const c2 = el('div', 'card'); c2.appendChild(el('div', 'ctitle', 'Themes'));
+      const grid = el('div', 'themes'); const cur = themeId();
+      Object.keys(THEMES).forEach((id) => {
+        const t = THEMES[id], b = el('button', 'theme' + (cur === id ? ' on' : '')); b.dataset.id = id;
+        const sw = el('span', 'swatch'); sw.style.background = t[2]; sw.style.borderColor = t[5];
+        const l1 = el('i'), l2 = el('i'), dot = el('em'); l1.style.background = t[6]; l2.style.background = t[7]; dot.style.background = t[8];
+        sw.appendChild(l1); sw.appendChild(l2); sw.appendChild(dot); b.appendChild(sw); b.appendChild(el('span', 'tname', t[0]));
+        b.onclick = () => { settings.theme = id; settings.matchDevice = false; saveSettings(); applyTheme(); drawSheet(); };
+        grid.appendChild(b);
       });
-      body.appendChild(c);
+      c2.appendChild(grid); body.appendChild(c2);
+    });
+  }
+  function openArchived() {
+    openSheet('Archived', (body) => {
+      const list = sessions.filter((x) => x.archived);
+      if (!list.length) body.appendChild(el('p', 'empty', 'No archived chats. Archive a chat from the chat list.'));
+      list.forEach((x) => {
+        const row = el('div', 'skill'); const info = el('div', 'sinfo'); info.appendChild(el('b', 'clamp2', x.title || 'Untitled'));
+        const r = el('button', 'lite2', 'Restore'); r.onclick = () => { delete x.archived; saveSessions(); drawSheet(); };
+        const d = el('button', 'del', '✕'); d.onclick = () => { if (!confirm('Delete this chat?')) return; sessions = sessions.filter((y) => y !== x); saveSessions(); drawSheet(); };
+        row.appendChild(info); row.appendChild(r); row.appendChild(d); body.appendChild(row);
+      });
+    });
+  }
+  // Shortcuts for a connected hardware keyboard.
+  const SHORTCUTS = [
+    ['Panels', 'Toggle left sidebar', ['Ctrl', 'B'], () => { if ($('drawer').hidden) openDrawer(); else closeDrawer(); }],
+    ['Panels', 'Open terminal', ['Ctrl', '`'], () => openTerminal()],
+    ['Navigation', 'Search chats', ['Ctrl', 'K'], () => { openDrawer(); $('dFilter').hidden = false; $('dFilter').focus(); }],
+    ['Navigation', 'Open settings', ['Ctrl', ','], () => openSettings()],
+    ['Chats', 'New chat', ['Ctrl', 'Alt', 'N'], () => { if (!busy) { closeDrawer(); newSession(); } }],
+  ];
+  document.addEventListener('keydown', (e) => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    const k = (e.key || '').toLowerCase();
+    const hit = SHORTCUTS.find((x) => x[2][x[2].length - 1].toLowerCase() === k && (x[2].indexOf('Alt') >= 0) === e.altKey);
+    if (hit) { e.preventDefault(); hit[3](); }
+  });
+  function openShortcuts() {
+    openSheet('Keyboard shortcuts', (body) => {
+      body.appendChild(el('p', 'empty', 'These work when a keyboard is connected to the phone.'));
+      let group = '';
+      SHORTCUTS.forEach((x) => {
+        if (x[0] !== group) { group = x[0]; body.appendChild(el('div', 'grp', group)); }
+        const row = el('div', 'skill'); const info = el('div', 'sinfo'); info.appendChild(el('b', '', x[1])); row.appendChild(info);
+        x[2].forEach((k) => row.appendChild(el('kbd', '', k))); body.appendChild(row);
+      });
     });
   }
 
@@ -937,7 +1008,7 @@
     ['tdd', 'mattpocock/skills'], ['review', 'mattpocock/skills'], ['improve-codebase-architecture', 'mattpocock/skills'], ['setup-pre-commit', 'mattpocock/skills'],
     ['tailwind-design-system', 'wshobson/agents'], ['typescript-advanced-types', 'wshobson/agents'], ['nodejs-backend-patterns', 'wshobson/agents'], ['nextjs-app-router-patterns', 'wshobson/agents'],
     ['api-design-principles', 'wshobson/agents'], ['python-performance-optimization', 'wshobson/agents'], ['python-testing-patterns', 'wshobson/agents'], ['rust-async-patterns', 'wshobson/agents'],
-    ['git-commit', 'github/awesome-copilot'], ['multi-stage-dockerfile', 'github/awesome-copilot'], ['documentation-writer', 'github/awesome-copilot'],
+    ['security-review', 'getsentry/skills'], ['excalidraw-diagram-generator', 'github/awesome-copilot'], ['git-commit', 'github/awesome-copilot'], ['multi-stage-dockerfile', 'github/awesome-copilot'], ['documentation-writer', 'github/awesome-copilot'],
     ['supabase-postgres-best-practices', 'supabase/agent-skills'], ['stripe-best-practices', 'stripe/ai'], ['wrangler', 'cloudflare/skills'], ['workers-best-practices', 'cloudflare/skills'],
   ];
   const repoTrees = {};
@@ -1044,7 +1115,9 @@
       body.appendChild(settingsRow('Model', settings.model.length > 18 ? settings.model.slice(0, 17) + '\u2026' : settings.model, () => openModels()));
       body.appendChild(settingsRow('Project settings', '', openProject));
       body.appendChild(settingsRow('Skills', (settings.skills || []).length ? (settings.skills || []).length + '' : '', () => openSkills(!(settings.skills || []).length)));
-      body.appendChild(settingsRow('Appearance', cap(settings.theme || 'dark'), openAppearance));
+      body.appendChild(settingsRow('Appearance', settings.matchDevice ? 'Match device' : THEMES[themeId()][0], openAppearance));
+      body.appendChild(settingsRow('Keyboard shortcuts', '', openShortcuts));
+      body.appendChild(settingsRow('Archived', sessions.filter((x) => x.archived).length ? sessions.filter((x) => x.archived).length + '' : '', openArchived));
       body.appendChild(settingsRow('Workspace files', ws.list().length + '', openFiles));
       body.appendChild(settingsRow('Terminal', '', openTerminal));
       body.appendChild(settingsRow('GitHub', '', openGitHub));
@@ -1087,13 +1160,15 @@
   function openDrawer() {
     const list = $('chatList'); list.innerHTML = '';
     const q = ($('dFilter').hidden ? '' : $('dFilter').value).trim().toLowerCase();
-    sessions.filter((s) => s.messages.length && (!q || (s.title || '').toLowerCase().indexOf(q) >= 0)).forEach((s) => {
+    sessions.filter((s) => s.messages.length && !s.archived && (!q || (s.title || '').toLowerCase().indexOf(q) >= 0)).forEach((s) => {
       const row = el('div', 'chat-item' + (s === current ? ' on' : ''));
       const name = el('button', 'name', (C.AGENTS[s.agent] || C.AGENTS.coder).icon + ' ' + (s.title || 'Untitled'));
       name.onclick = () => { if (busy) return toast('Wait for the current reply or stop it'); current = s; closeDrawer(); renderAll(); };
       const del = el('button', 'del', '✕');
       del.onclick = () => { if (busy && s === current) return; sessions = sessions.filter((x) => x !== s); saveSessions(); if (s === current) { current = null; newSession(); } openDrawer(); };
-      row.appendChild(name); row.appendChild(del); list.appendChild(row);
+      const arc = el('button', 'del arc', ''); arc.title = 'Archive'; arc.setAttribute('aria-label', 'Archive'); arc.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="5" rx="1.5"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M10 13h4"/></svg>';
+      arc.onclick = () => { if (busy && s === current) return; s.archived = true; saveSessions(); if (s === current) { current = null; newSession(); } openDrawer(); toast('Archived. Restore it in Settings → Archived.'); };
+      row.appendChild(name); row.appendChild(arc); row.appendChild(del); list.appendChild(row);
     });
     if (!list.children.length) list.appendChild(el('div', 'empty', q ? 'No matching chats' : 'No chats yet'));
     $('drawer').hidden = false; $('scrim').hidden = false;
@@ -1143,7 +1218,7 @@
   window.addEventListener('unhandledrejection', (e) => { console.log('CYBERR promise ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)); });
 
   // Draw the UI first; stored files load in the background so a slow database can never leave a blank screen.
-  current = sessions[0] || null;
+  current = sessions.find((x) => !x.archived) || null;
   if (!current) newSession(); else renderAll();
   console.log('CYBUI ready agents=' + $('agents').children.length + ' model=' + settings.model);
   // Safety net: if the page still has no size after a few seconds, reload it once.
