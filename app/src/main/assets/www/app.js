@@ -1158,7 +1158,7 @@
     lastW = window.innerWidth;
   });
   // Count drawn frames: a WebView that lays the page out but never draws it runs no animation frames.
-  let frames = 0; const tick = () => { frames++; if (frames < 5) requestAnimationFrame(tick); }; requestAnimationFrame(tick);
+  let frames = 0; const tick = () => { frames++; if (performance.now() < 8000) requestAnimationFrame(tick); }; requestAnimationFrame(tick);
   window.__frames = () => frames;
   setTimeout(() => {
     try { if (Native && !frames && document.visibilityState === 'visible' && !busy && !sessionStorage.getItem('cyb.reloaded')) { sessionStorage.setItem('cyb.reloaded', '1'); console.log('CYBUI reload (no frames drawn)'); location.reload(); } } catch (e) { /* ignore */ }
