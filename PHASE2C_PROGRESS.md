@@ -11,6 +11,6 @@ Branch: arena/702e73e1-cybnate. Tick a line when it is done and committed.
 - [x] 7. Safety: sub-agents through the same approval gate, approvals one at a time, shell serial, sub-agent output in untrusted_data
 - [x] 8. UI: collapsible timeline with model and status per step
 - [x] 9a. Tests: tests/orchestra.test.js and tests/auto.test.js (routing, budget cap, limiter, parallel approvals, fallback) pass locally
-- [ ] 9b. Emulator self test on the new build
+- [x] 9b. Emulator self test on the new build: pass=30 fail=0 (27 earlier + 3 Auto mode tests; the UI run went through Auto → Coder)
 
 ## Notes
