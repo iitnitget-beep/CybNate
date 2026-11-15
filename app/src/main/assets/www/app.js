@@ -1157,7 +1157,13 @@
     if (!lastW && window.innerWidth) { const b = document.body; b.style.display = 'none'; void b.offsetHeight; b.style.display = ''; }
     lastW = window.innerWidth;
   });
-  [1500, 6000, 12000, 25000].forEach((ms) => setTimeout(() => { const w = document.querySelector('.welcome'), h = document.querySelector('header'); console.log('CYBUI layout t=' + ms + ' header=' + (h ? h.offsetHeight : -1) + ' welcome=' + (w ? w.offsetHeight : -1) + ' win=' + window.innerWidth + 'x' + window.innerHeight + ' vis=' + document.visibilityState); }, ms));
+  // Count drawn frames: a WebView that lays the page out but never draws it runs no animation frames.
+  let frames = 0; const tick = () => { frames++; if (frames < 100000) requestAnimationFrame(tick); }; requestAnimationFrame(tick);
+  window.__frames = () => frames;
+  setTimeout(() => {
+    try { if (Native && !frames && document.visibilityState === 'visible' && !busy && !sessionStorage.getItem('cyb.reloaded')) { sessionStorage.setItem('cyb.reloaded', '1'); console.log('CYBUI reload (no frames drawn)'); location.reload(); } } catch (e) { /* ignore */ }
+  }, 2500);
+  [1500, 6000, 12000, 25000].forEach((ms) => setTimeout(() => { const w = document.querySelector('.welcome'), h = document.querySelector('header'); console.log('CYBUI layout t=' + ms + ' header=' + (h ? h.offsetHeight : -1) + ' welcome=' + (w ? w.offsetHeight : -1) + ' frames=' + frames + ' win=' + window.innerWidth + 'x' + window.innerHeight + ' vis=' + document.visibilityState); }, ms));
   openDb().then(() => {
     syncDisk(); updateBadge();
     if (/[?&]selftest=1/.test(location.search)) { const sc = document.createElement('script'); sc.src = 'selftest.js'; document.body.appendChild(sc); }
