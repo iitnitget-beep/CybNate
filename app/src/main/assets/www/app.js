@@ -511,7 +511,7 @@
   }
   function openModeMenu() { if (busy) return toast('Wait for the current reply or stop it'); $('agents').hidden = false; $('scrim').hidden = false; }
   const placeholder = () => ({ coder: 'Ask CybNate to build…', planner: 'What should we plan?', reviewer: 'What should I review?', reverse: 'Import a file, then ask…', chat: 'Message CybNate…' })[current.agent];
-  function renderModelChip() { $('btnModel').textContent = settings.model; $('btnModel').title = C.PROVIDERS[settings.provider].name + ' / ' + settings.model; }
+  function renderModelChip() { $('btnModel').innerHTML = ''; $('btnModel').appendChild(el('span', 'mname', settings.model)); $('btnModel').title = C.PROVIDERS[settings.provider].name + ' / ' + settings.model; }
   function setStatus(t) { $('status').textContent = t || ''; }
 
   // -------------------------------------------------------------- sessions

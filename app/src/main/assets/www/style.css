@@ -183,3 +183,10 @@ pre{border-radius:14px;color:#e6e6e2}
 .termrow{border-radius:14px}
 #toast{border-color:var(--line);border-radius:12px;background:var(--panel2)}
 .followups .sugg{color:var(--text)}
+.welcome{justify-content:flex-start}
+.welcome::before,.welcome::after{content:"";flex:1 0 8px}
+.welcome .mark{flex:none}
+#btnModel{max-width:46%;display:inline-flex;align-items:center}
+#btnModel::after{flex:none;margin-left:9px;transform:rotate(45deg) translateY(-2px)}
+header .title{font-weight:500}
+.mname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
