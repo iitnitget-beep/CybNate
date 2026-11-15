@@ -24,6 +24,6 @@ Rollback point: tag `v3.4-baseline` (commit eaea03e).
 - [x] Read-only whitelist audit (outside-workspace paths, writing/following/exec options, .git protected)
 - [x] Undo warning for files over 5 MB
 - [x] README safety section
-- [ ] Emulator self test on the follow-up build
+- [x] Emulator self test on the follow-up build: pass=27 fail=0 (24 + preview isolation, Stop kills shell, large file kept)
 
 ## Notes
