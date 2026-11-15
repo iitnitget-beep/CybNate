@@ -94,14 +94,33 @@ const sse = (text) => 'data: ' + JSON.stringify({ choices: [{ delta: { content: 
   const go = async () => { d.getElementById('intGo').click(); for (let i = 0; i < 80; i++) { await tick(25); if (d.getElementById('intGo') && !d.getElementById('intGo').disabled) break; } };
   const back = () => d.getElementById('sheetBack') ? d.getElementById('sheetBack').click() : d.querySelector('#sheet .back, #sheet header button').click();
 
-  // 1. the list: every service of the catalogue, by category, with search
+  // 1. three tabs: Discover (groups, three each, arrow opens the group), Connectors (Active / Inactive), Skills; plus search
+  const tabBtn = (t) => d.querySelector('.inttab[data-tab="' + t + '"]');
+  const ids = () => [...d.querySelectorAll('.introw[data-id]')].map((x) => x.dataset.id);
+  const openAll = async () => { tabBtn('connectors').click(); await tick(); [...d.querySelectorAll('.inthead')].find((h) => /^Inactive/.test(h.textContent)).click(); await tick(); };
   d.getElementById('dInt').click(); await tick();
-  assert.strictEqual(d.querySelectorAll('.introw').length, 74);
-  assert.strictEqual(d.querySelectorAll('.intlist .label').length, 10);
-  assert.ok(/Connect/.test(row('slack').textContent) && /Not on a phone/.test(row('docker').textContent) && /Built in/.test(row('github').textContent) && /Needs sign-in/.test(row('google').textContent) && /Planned/.test(row('memory').textContent));
+  assert.ok(tabBtn('discover').classList.contains('on') && tabBtn('connectors') && tabBtn('skills'));
+  assert.strictEqual(d.querySelectorAll('.inthead').length, 10, 'ten groups'); assert.strictEqual(ids().length, 30, 'three per group');
+  assert.ok(ids().indexOf('gitlab') >= 0 && ids().indexOf('filesystem') < 0, 'connectable services come first in a group');
+  assert.ok(/^\+$/.test(row('gitlab').querySelector('.intact').textContent) && /Read projects, issues/.test(row('gitlab').textContent) && row('gitlab').querySelector('.intbadge').textContent === 'G');
+  [...d.querySelectorAll('.inthead')].find((h) => /Databases/.test(h.textContent)).click(); await tick();
+  assert.deepStrictEqual(ids(), ['supabase', 'firebase', 'postgres', 'mongodb', 'mysql', 'upstash', 'neon', 'planetscale', 'prisma', 'convex'], 'the arrow opens the whole group');
+  assert.ok(/Not on a phone/.test(row('postgres').textContent) && row('postgres').querySelector('.intact').textContent === 'ⓘ');
+  d.getElementById('intBack').click(); await tick();
+  tabBtn('connectors').click(); await tick();
+  assert.ok(/Active \(3\)/.test(d.getElementById('sheetBody').textContent) && /Inactive \(71\)/.test(d.getElementById('sheetBody').textContent), 'built-in ones count as active');
+  assert.ok(row('github').classList.contains('on') && row('github').querySelector('.intact').textContent === '⋯');
+  tabBtn('skills').click(); await tick();
+  assert.ok(/Tell the agent how you like things done/.test(d.getElementById('sheetBody').textContent) && /No skills yet/.test(d.getElementById('sheetBody').textContent) && d.getElementById('intSkills'));
+  d.getElementById('intSearchBtn').click(); await tick();
+  assert.strictEqual(ids().length, 74, 'search starts with every service');
   const q = d.getElementById('intSearch'); q.value = 'pay'; q.dispatchEvent(new w.Event('input'));
-  assert.deepStrictEqual([...d.querySelectorAll('.introw')].map((x) => x.dataset.id), ['clerk', 'auth0', 'nextauth', 'stripe', 'lemonsqueezy', 'razorpay'], 'search matches the category name');
-  q.value = ''; q.dispatchEvent(new w.Event('input'));
+  assert.deepStrictEqual(ids(), ['clerk', 'auth0', 'nextauth', 'stripe', 'lemonsqueezy', 'razorpay'], 'search matches name, description and group');
+  q.value = 'zzz'; q.dispatchEvent(new w.Event('input')); assert.ok(/No service matches/.test(d.getElementById('sheetBody').textContent));
+  d.getElementById('intSearchBtn').click(); await tick();
+  await openAll();
+  assert.strictEqual(ids().length, 71);
+  assert.ok(/Not on a phone/.test(row('docker').textContent) && /Needs sign-in/.test(row('google').textContent) && /Planned/.test(row('memory').textContent));
 
   // 2. a service that cannot be connected explains itself and has no key field
   row('docker').click(); await tick();
@@ -123,7 +142,10 @@ const sse = (text) => 'data: ' + JSON.stringify({ choices: [{ delta: { content: 
   assert.strictEqual(d.querySelector('input[data-env="SLACK_BOT_TOKEN"]').value, '', 'a saved secret is never shown again');
   assert.ok(d.getElementById('intOff'), 'disconnect button');
   back(); await tick();
-  assert.ok(/● Connected · Acme/.test(row('slack').textContent) && row('slack').classList.contains('on'));
+  assert.ok(!row('slack'), 'a connected service leaves the Inactive list');
+  d.getElementById('intBack').click(); await tick();
+  assert.ok(/Active \(4\)/.test(d.getElementById('sheetBody').textContent) && /Connected · Acme/.test(row('slack').textContent) && row('slack').querySelector('.intact').textContent === '⋯');
+  await openAll();
 
   // 5. HTTP 401 and a 3-field form with shared values
   row('gitlab').click(); await tick(); type('GITLAB_TOKEN', 'glpat-bad'); await go();
@@ -145,7 +167,8 @@ const sse = (text) => 'data: ' + JSON.stringify({ choices: [{ delta: { content: 
   // 7. a service without a check says so
   row('aws').click(); await tick(); type('AWS_ACCESS_KEY_ID', 'AKIA1'); type('AWS_SECRET_ACCESS_KEY', 'sec'); type('AWS_REGION', 'ap-south-1'); await go();
   assert.ok(/✓ Saved\. Saved without a check/.test(d.getElementById('intMsg').textContent)); back(); await tick();
-  assert.ok(/\(not checked\)/.test(row('aws').textContent));
+  d.getElementById('intBack').click(); await tick(); [...d.querySelectorAll('.inthead')].find((h) => /^Active/.test(h.textContent)).click(); await tick();
+  assert.ok(/\(not checked\)/.test(row('aws').textContent) && ids().indexOf('jira') >= 0 && ids().indexOf('confluence') < 0);
   while (!d.getElementById('sheet').hidden) { back(); await tick(); }
 
   // 8. the agent: it is told what is connected (names only), uses the secret through http_request, the user is asked, the value never reaches the model

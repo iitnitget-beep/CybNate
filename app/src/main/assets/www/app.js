@@ -1394,34 +1394,80 @@
     entry.fields.forEach((fd) => { if (!still[fd.env]) setSecret(fd.env, ''); });
     saveSettings();
   }
-  function openIntegrations() {
+  /** Colour for the round letter badge of a service: the same name always gets the same colour. */
+  const badgeHue = (name) => { let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360; return h; };
+  function openIntegrations(startTab) {
     closeDrawer();
-    let filter = '';
-    const KIND = { built: 'Built in', lib: 'Code library', no: 'Not on a phone', oauth: 'Needs sign-in' };
+    let tab = typeof startTab === 'string' ? startTab : 'discover', filter = '', searching = false, view = null; // view: null | 'active' | 'inactive' | a category id
+    const KIND = { built: 'Built in', lib: 'Library', no: 'Not on a phone', oauth: 'Needs sign-in' };
+    const catName = (id) => (Integrations.CATEGORIES.find((c) => c[0] === id) || [])[1] || '';
     openSheet('Integrations', (body) => {
-      const conn = settings.integrations || {}; const n = connectedIds().length;
-      body.appendChild(el('p', '', (n ? n + ' connected. ' : '') + 'Paste a key from the service to connect it. Keys stay on this phone, the model sees only their names, and every use asks you first.'));
-      const q = el('input', 'field'); q.type = 'search'; q.placeholder = 'Search services'; q.value = filter; q.autocapitalize = 'off'; q.autocomplete = 'off'; q.id = 'intSearch'; body.appendChild(q);
-      const listBox = el('div', 'intlist'); body.appendChild(listBox);
-      const draw = () => {
-        listBox.innerHTML = ''; const f = filter.trim().toLowerCase(); let shown = 0;
-        Integrations.CATEGORIES.forEach((c) => {
-          const items = Integrations.LIST.filter((e) => e.cat === c[0] && (!f || (e.name + ' ' + c[1]).toLowerCase().indexOf(f) >= 0));
-          if (!items.length) return;
-          listBox.appendChild(el('div', 'label', c[1]));
-          items.forEach((e) => {
-            shown++;
-            const on = !!conn[e.id]; const row = el('button', 'srow introw' + (on ? ' on' : '') + (e.kind === 'key' ? '' : ' dimmed')); row.dataset.id = e.id;
-            row.appendChild(el('span', '', e.name));
-            row.appendChild(el('small', '', on ? '● Connected' + (conn[e.id].who ? ' · ' + conn[e.id].who : conn[e.id].checked ? '' : ' (not checked)') : e.kind === 'key' ? 'Connect' : e.planned ? 'Planned' : KIND[e.kind]));
-            row.onclick = () => openIntegration(e);
-            listBox.appendChild(row);
-          });
-        });
-        if (!shown) listBox.appendChild(el('p', 'note', 'No service matches "' + filter + '".'));
+      const conn = settings.integrations || {};
+      const isOn = (e) => !!conn[e.id] || e.kind === 'built';
+      const rowOf = (e) => {
+        const on = isOn(e); const row = el('button', 'introw' + (on ? ' on' : '') + (e.kind === 'key' || e.kind === 'built' ? '' : ' dimmed')); row.dataset.id = e.id;
+        const b = el('span', 'intbadge', e.name.replace(/[^A-Za-z0-9]/g, '').slice(0, 1).toUpperCase()); b.style.background = 'hsl(' + badgeHue(e.name) + ' 45% 38%)'; row.appendChild(b);
+        const mid = el('span', 'intmid'); mid.appendChild(el('span', 'intname', e.name));
+        mid.appendChild(el('small', '', conn[e.id] ? 'Connected' + (conn[e.id].who ? ' · ' + conn[e.id].who : conn[e.id].checked ? '' : ' (not checked)') : e.kind === 'key' ? e.desc : (e.planned ? 'Planned' : KIND[e.kind]) + ' · ' + e.desc));
+        row.appendChild(mid);
+        const act = el('span', 'intact', on ? '⋯' : e.kind === 'key' ? '+' : 'ⓘ'); act.setAttribute('aria-label', on ? 'Manage' : e.kind === 'key' ? 'Connect' : 'About'); row.appendChild(act);
+        row.onclick = () => openIntegration(e);
+        return row;
       };
-      q.oninput = () => { filter = q.value; draw(); };
-      draw();
+      const head = (text, n, fn) => { const h = el('button', 'inthead'); h.appendChild(el('span', '', text + (n != null ? ' (' + n + ')' : ''))); if (fn) { h.appendChild(el('span', 'chev', '›')); h.onclick = fn; } else h.disabled = true; return h; };
+      // top row: tabs + search
+      const tabs = el('div', 'inttabs');
+      [['discover', 'Discover'], ['connectors', 'Connectors'], ['skills', 'Skills']].forEach((t) => { const b = el('button', 'inttab' + (tab === t[0] && !view ? ' on' : ''), t[1]); b.dataset.tab = t[0]; b.onclick = () => { tab = t[0]; view = null; filter = ''; searching = false; drawSheet(); }; tabs.appendChild(b); });
+      const sb = el('button', 'inttab search', '🔍'); sb.id = 'intSearchBtn'; sb.setAttribute('aria-label', 'Search'); sb.onclick = () => { searching = !searching; filter = ''; drawSheet(); }; tabs.appendChild(sb);
+      body.appendChild(tabs);
+      const listBox = el('div', 'intlist');
+      if (searching) {
+        const q = el('input', 'field'); q.type = 'search'; q.placeholder = 'Search services'; q.value = filter; q.autocapitalize = 'off'; q.autocomplete = 'off'; q.id = 'intSearch'; body.appendChild(q);
+        const draw = () => {
+          listBox.innerHTML = ''; const f = filter.trim().toLowerCase();
+          const items = Integrations.LIST.filter((e) => !f || (e.name + ' ' + e.desc + ' ' + catName(e.cat)).toLowerCase().indexOf(f) >= 0);
+          items.forEach((e) => listBox.appendChild(rowOf(e)));
+          if (!items.length) listBox.appendChild(el('p', '', 'No service matches "' + filter + '".'));
+        };
+        q.oninput = () => { filter = q.value; draw(); }; draw(); body.appendChild(listBox); setTimeout(() => { try { q.focus(); } catch (e) {} }, 0);
+        return;
+      }
+      body.appendChild(listBox);
+      if (view) {
+        const items = view === 'active' ? Integrations.LIST.filter(isOn) : view === 'inactive' ? Integrations.LIST.filter((e) => !isOn(e)) : Integrations.LIST.filter((e) => e.cat === view);
+        const back = el('button', 'inthead back'); back.appendChild(el('span', '', '‹ ' + (view === 'active' ? 'Active' : view === 'inactive' ? 'Inactive' : catName(view)))); back.id = 'intBack'; back.onclick = () => { view = null; drawSheet(); }; listBox.appendChild(back);
+        items.forEach((e) => listBox.appendChild(rowOf(e)));
+        if (!items.length) listBox.appendChild(el('p', '', 'Nothing here yet.'));
+        return;
+      }
+      if (tab === 'discover') {
+        listBox.appendChild(el('div', 'inttitle', 'Customise your agent')); listBox.appendChild(el('p', 'intsub', 'Connect the services your projects use'));
+        Integrations.CATEGORIES.forEach((c) => {
+          const items = Integrations.LIST.filter((e) => e.cat === c[0]);
+          listBox.appendChild(head(c[1], null, () => { view = c[0]; drawSheet(); }));
+          // connectable services first, three per group; the arrow opens the whole group
+          items.slice().sort((a, b) => (a.kind === 'key' ? 0 : 1) - (b.kind === 'key' ? 0 : 1)).slice(0, 3).forEach((e) => listBox.appendChild(rowOf(e)));
+        });
+      } else if (tab === 'connectors') {
+        const active = Integrations.LIST.filter(isOn), inactive = Integrations.LIST.filter((e) => !isOn(e));
+        listBox.appendChild(el('div', 'inttitle', 'Connectors')); listBox.appendChild(el('p', 'intsub', 'Keys stay on this phone. The model sees only their names, and every use asks you first.'));
+        listBox.appendChild(head('Active', active.length, () => { view = 'active'; drawSheet(); }));
+        active.slice(0, 4).forEach((e) => listBox.appendChild(rowOf(e)));
+        listBox.appendChild(head('Inactive', inactive.length, () => { view = 'inactive'; drawSheet(); }));
+        inactive.filter((e) => e.kind === 'key').slice(0, 5).forEach((e) => listBox.appendChild(rowOf(e)));
+      } else {
+        const mine = settings.skills || [];
+        listBox.appendChild(el('div', 'inttitle', 'Skills')); listBox.appendChild(el('p', 'intsub', 'Tell the agent how you like things done'));
+        listBox.appendChild(head('Added', mine.length, null));
+        mine.forEach((k) => {
+          const row = el('button', 'introw' + (k.on !== false ? ' on' : '')); row.dataset.skill = k.name;
+          const b = el('span', 'intbadge', '✦'); b.style.background = 'hsl(' + badgeHue(k.name) + ' 45% 38%)'; row.appendChild(b);
+          const mid = el('span', 'intmid'); mid.appendChild(el('span', 'intname', k.name)); mid.appendChild(el('small', '', (k.on !== false ? 'On' : 'Off') + (k.description ? ' · ' + k.description : ''))); row.appendChild(mid);
+          row.appendChild(el('span', 'intact', '⋯')); row.onclick = () => openSkills(false); listBox.appendChild(row);
+        });
+        if (!mine.length) listBox.appendChild(el('p', '', 'No skills yet.'));
+        const add = el('button', 'wide ghost', 'Browse and add skills'); add.id = 'intSkills'; add.onclick = () => openSkills(true); listBox.appendChild(add);
+      }
     });
   }
   function openIntegration(e) {
@@ -1951,7 +1997,7 @@
   $('dNew').onclick = () => { if (busy) return; closeDrawer(); newSession(); };
   $('btnFiles').onclick = openFiles; $('dFiles').onclick = () => { closeDrawer(); openFiles(); };
   $('dSettings').onclick = openSettings;
-  $('btnTerm').onclick = openTerminal; $('dTerm').onclick = openTerminal; $('dGit').onclick = openGitHub; $('dInt').onclick = openIntegrations;
+  $('btnTerm').onclick = openTerminal; $('dTerm').onclick = openTerminal; $('dGit').onclick = openGitHub; $('dInt').onclick = () => openIntegrations();
   $('btnModel').onclick = () => openModels();
   $('btnMode').onclick = openModeMenu;
   $('dSearch').onclick = () => { const f = $('dFilter'); f.hidden = !f.hidden; if (f.hidden) { f.value = ''; openDrawer(); } else f.focus(); };

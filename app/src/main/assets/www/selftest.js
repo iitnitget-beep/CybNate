@@ -252,4 +252,6 @@
   const fails = lines.filter((l) => /FAIL/.test(l)).length;
   console.log('CYBTEST DONE pass=' + (lines.length - fails) + ' fail=' + fails);
   box.textContent = lines.join('\n') + '\n\nDONE pass=' + (lines.length - fails) + ' fail=' + fails;
+  // the results are in the log; the screenshot taken now shows the Integrations screen instead
+  try { box.remove(); T.openIntegrations(); } catch (e) { console.log('CYBUI integrations screen failed: ' + e.message); }
 })();
