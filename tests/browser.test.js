@@ -58,6 +58,8 @@ const replies = [
   await page.click('#sheetBack'); await page.click('#sheetBack');
 
   await page.type('#input', 'Build a small calc module with tests and run them');
+  // Ask mode: allow each approval sheet as a user would, and count them
+  await page.evaluate(() => { window.__sheets = 0; setInterval(() => { const b = document.querySelector('.approval .abtn.allow'); if (b) { window.__sheets++; b.click(); } }, 200); });
   await page.click('#btnSend');
   await page.waitForFunction(() => window.__calls.length >= 6 && !document.querySelector('#btnSend.stop'), { timeout: 150000 });
   const calls = await page.evaluate(() => window.__calls);
@@ -71,7 +73,7 @@ const replies = [
   assert.ok(/strict senior code reviewer/.test(calls[3].messages[0].content) && !/spawn_agent/.test(calls[3].messages[0].content));
   assert.strictEqual(calls[3].messages.length, 2);
   assert.ok(/def add\(a, b\):\n    return a \+ b/.test(lastUser(4)), 'sub-agent read the fixed file');
-  assert.ok(/\[agent reviewer\]\nmean\(\) raises ZeroDivisionError/.test(lastUser(5)), lastUser(5));
+  assert.ok(/<untrusted_data source="agent reviewer">\nmean\(\) raises ZeroDivisionError/.test(lastUser(5)), lastUser(5));
   assert.ok(/# Environment[\s\S]*CPython/.test(calls[0].messages[0].content));
 
   const ui = await page.evaluate(() => ({

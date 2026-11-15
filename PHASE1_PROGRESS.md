@@ -10,6 +10,7 @@ Rollback point: tag `v3.4-baseline` (commit eaea03e).
 - [x] f. Secrets only when a command names them
 - [x] g. Checkpoint before each agent run + one-tap Undo
 - [x] h. Risky-command prompt line replaced
-- [ ] Tests: bypass (3 routes), injection page, core, ui smoke, emulator self test, APK build
+- [x] Tests: tests/safety.test.js (bypass by 5 routes, injection page, checkpoint), core, ui smoke, browser e2e pass locally
+- [ ] Emulator self test + APK build on the new code
 
 ## Notes
