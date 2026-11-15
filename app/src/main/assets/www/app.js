@@ -103,6 +103,8 @@
   /** Streams a response as text chunks. Uses fetch, and falls back to the native bridge when the browser blocks the request (CORS / mixed content). */
   async function httpStream(url, opt, onChunk) {
     let res;
+    // hosts that never allow a browser origin (and one-time sign-in codes that must be sent exactly once) go straight to the native bridge
+    if (opt.direct && Native) return nativeStream(url, opt, onChunk);
     try {
       res = await fetch(url, { method: opt.method || 'GET', headers: opt.headers, body: opt.body, signal: opt.signal });
     } catch (e) {
@@ -131,7 +133,9 @@
     return p;
   }
   function authHeaders(id) {
-    const h = {}; const k = (settings.keys[id] || '').trim();
+    const h = {}; const k = (settings.keys[id] || '').trim(); const api = (C.PROVIDERS[id] || {}).api;
+    if (api === 'codex') return Wire.codexHeaders(settings.codex);
+    if (api === 'anthropic') { if (k) h['x-api-key'] = k; h['anthropic-version'] = '2023-06-01'; return h; }
     if (k) h.Authorization = 'Bearer ' + k;
     return h;
   }
@@ -139,7 +143,8 @@
     let msg = '';
     try { const j = JSON.parse(raw); msg = (j.error && (j.error.message || j.error)) || j.message || j.detail || ''; if (typeof msg !== 'string') msg = JSON.stringify(msg); } catch (e) { msg = raw.replace(/<[^>]+>/g, ' ').trim().slice(0, 300); }
     let hint = '';
-    if (status === 401 || status === 403) hint = p.needsKey ? 'Your ' + p.name + ' key was rejected. Check it in Settings.' : p.name + ' refused the request. It may now require a key; pick another provider in Settings.';
+    if (p.signIn && (status === 401 || status === 403)) hint = p.name + ' refused the sign-in. Open Settings → Model Providers and sign in again.';
+    else if (status === 401 || status === 403) hint = p.needsKey ? 'Your ' + p.name + ' key was rejected. Check it in Settings.' : p.name + ' refused the request. It may now require a key; pick another provider in Settings.';
     else if (status === 402) hint = p.name + ' has stopped serving free replies for now. Add a free Groq, Gemini or OpenRouter key in Settings.';
     else if (status === 429) hint = 'Free rate limit reached on ' + p.name + '. Wait a little, or switch model or provider.';
     else if (status === 404 || status === 400) hint = 'The model "' + settings.model + '" may no longer be available. Tap the model name and refresh the list.';
@@ -174,7 +179,8 @@
     const pool = [];
     // the keyless Pollinations tier answers once every 45 s: used only when it is the chosen provider or the only one
     const slow = (id) => id === 'pollinations' && !(settings.keys.pollinations || '').trim();
-    let ids = Object.keys(C.PROVIDERS).filter(usable);
+    // a plan or a paid key (Codex, Claude) is used only when the user chose that provider, never picked up by Auto on its own
+    let ids = Object.keys(C.PROVIDERS).filter(usable).filter((id) => !C.PROVIDERS[id].manual || id === settings.provider);
     if (ids.some((id) => !slow(id))) ids = ids.filter((id) => !slow(id) || id === settings.provider);
     ids.forEach((id) => (modelsFor(id) || []).slice(0, 60).forEach((m) => { const t = { provider: id, model: m }; if (!freeCheck(t).ok) return; const c = metaOf(t).ctx; if (c) t.ctx = c; pool.push(t); }));
     const u = userTarget(); if (!pool.some((t) => O.keyOf(t) === O.keyOf(u))) pool.unshift(u);
@@ -201,11 +207,13 @@
     } finally { release(); }
   }
   async function requestModelNow(p, messages, onText, signal, stream, tools, target) {
-    const sse = C.createSseParser(); let full = '', raw = '', err = '';
+    const api = p.api || '';
+    if (api) { stream = true; tools = null; }
+    const sse = api ? Wire.parser(api) : C.createSseParser(); let full = '', raw = '', err = '';
     const res = await httpStream(p.chatUrl, {
-      method: 'POST', signal,
-      headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders(target.provider)),
-      body: JSON.stringify(Object.assign({ model: target.model, messages }, stream ? { stream: true } : {}, tools && tools.length ? { tools: C.toolSchemas(tools), tool_choice: 'auto' } : {})),
+      method: 'POST', signal, direct: !!p.direct,
+      headers: Object.assign({ 'Content-Type': 'application/json' }, api ? { Accept: 'text/event-stream' } : {}, authHeaders(target.provider)),
+      body: JSON.stringify(api ? Wire.body(api, target.model, messages) : Object.assign({ model: target.model, messages }, stream ? { stream: true } : {}, tools && tools.length ? { tools: C.toolSchemas(tools), tool_choice: 'auto' } : {})),
     }, (chunk) => {
       if (raw.length < 400000) raw += chunk;
       if (!stream) return;
@@ -254,7 +262,9 @@
   async function chatStreamOne(messages, onText, signal, tools, target) {
     const p = providerCfg(target.provider);
     if (!p.chatUrl) throw new Error('Set the server URL for the Custom provider in Settings.');
-    if (p.needsKey && !(settings.keys[target.provider] || '').trim()) throw new Error('Add your free ' + p.name + ' key in Settings, or switch to Pollinations (no key).');
+    if (p.signIn && !(settings.keys[target.provider] || '').trim()) throw new Error('Sign in first: Settings → Model Providers → ' + p.name + '.');
+    if (p.needsKey && !(settings.keys[target.provider] || '').trim()) throw new Error('Add your ' + (p.paid ? '' : 'free ') + p.name + ' key in Settings, or switch to Pollinations (no key).');
+    if (p.signIn === 'codex') await codexFresh(signal);
     const fc = freeCheck(target);
     if (!fc.ok) throw O.limitError('paid', 'Not sent: "' + target.model + '" on ' + p.name + ' is not a free model (' + fc.reason + '). Pick one from the model list, or turn on "Allow paid models" in Settings → General.');
     // Some free endpoints answer a long prompt with an empty stream. Fall back to a plain
@@ -266,8 +276,9 @@
     };
     // With tools the model gets real function definitions first (what strong free models expect);
     // providers that reject them fall through to the plain-text tool protocol.
-    const useTools = tools && tools.length && settings.nativeTools !== false;
-    const variants = [() => [messages, true], () => [messages, false], () => { const m = merged(); return m ? [m, true] : null; }];
+    const useTools = tools && tools.length && settings.nativeTools !== false && !p.api;
+    // providers with their own wire format (Codex, Claude) have one request shape: streamed, tools as text tags
+    const variants = p.api ? [() => [messages, true]] : [() => [messages, true], () => [messages, false], () => { const m = merged(); return m ? [m, true] : null; }];
     // One protocol per request: with function definitions attached, the system prompt carries the function-calling rules, not the tag rules.
     if (useTools) variants.unshift(() => [messages.map((m) => (m.role === 'system' ? { role: 'system', content: C.toNativePrompt(m.content) } : m)), true, tools]);
     let r = null, waits = 0, toolRetries = 0;
@@ -321,7 +332,19 @@
     const p = providerCfg(id);
     if (!p.modelsUrl) throw new Error('No model list URL for this provider.');
     let raw = '', res = null, netErr = null;
-    try { res = await httpStream(p.modelsUrl, { headers: authHeaders(id) }, (c) => { raw += c; }); } catch (e) { if (e.name === 'AbortError' || !p.custom) throw e; netErr = e; }
+    if (p.signIn === 'codex') {
+      if (!settings.codex) throw new Error('Sign in with ChatGPT first.');
+      await codexFresh();
+      res = await httpStream(p.modelsUrl, { headers: authHeaders(id), direct: true }, (c) => { raw += c; });
+      if (res.status >= 400) throw new Error(explain(res.status, raw, p));
+      const found = Wire.codexModels(JSON.parse(raw));
+      if (!found.length) throw new Error('ChatGPT listed no models for this account.');
+      const keep = {}; found.forEach((m) => { keep[m.id] = { ctx: m.ctx || 0 }; });
+      settings.meta = settings.meta || {}; settings.meta[id] = keep;
+      settings.models[id] = found.map((m) => m.id); saveSettings();
+      return settings.models[id];
+    }
+    try { res = await httpStream(p.modelsUrl, { headers: authHeaders(id), direct: !!p.direct }, (c) => { raw += c; }); } catch (e) { if (e.name === 'AbortError' || !p.custom) throw e; netErr = e; }
     if (p.custom && (netErr || res.status >= 400)) {
       // a plain Ollama address (no /v1): its own list endpoint
       const first = netErr || new Error(explain(res.status, raw, p)); raw = '';
@@ -385,6 +408,7 @@
   /** Secrets whose name appears in a command the user typed. */
   const namedSecrets = (cmd) => Object.keys(secretEnv()).filter((k) => new RegExp('\\b' + k + '\\b').test(String(cmd)));
   async function runCommandNow(cmd, timeoutSec, signal, secretNames) {
+    if (secretNames && secretNames.length) await freshGoogle(secretNames);
     const r = await runCommandRaw(cmd, timeoutSec, signal, secretNames);
     if (r && r.out) r.out = redact(r.out);
     return r;
@@ -1470,6 +1494,152 @@
       }
     });
   }
+  // ---- Google sign-in (Gmail, Drive / Docs / Sheets, Calendar). Play services recognise the app by its package and signing key.
+  let gaSeq = 0; const gaReqs = {};
+  window.__ga = (id, res) => { const r = gaReqs[id]; if (r) { delete gaReqs[id]; r(res); } };
+  const GOOGLE_TOKEN_LIFE = 40 * 60 * 1000; // Google tokens live an hour; renew earlier
+  function googleWhy(j) {
+    const code = String((j && j.code) || ''), said = String((j && j.error) || '');
+    if (code === 'cancelled' || code === '16' || code === '12501') return 'Sign-in was cancelled.';
+    if (code === 'needs_ui') return 'Google wants you to sign in again.';
+    if (code === '10') return 'Google does not recognise this app build (error 10). The package name and SHA-1 of the installed APK must match the Android OAuth client in the Google Cloud project.';
+    if (code === '7') return 'No internet connection to Google.';
+    if (code === '17' || /API_UNAVAILABLE|not available/i.test(said)) return 'Google Play services are missing or too old on this phone.';
+    return 'Google sign-in failed' + (code && code !== 'error' ? ' (code ' + code + ')' : '') + (said && said !== 'null' ? ': ' + said : '') + '.';
+  }
+  /** Ask Google for an access token for these scopes. Shows the account and consent screens unless `silent`. */
+  function googleToken(scopes, silent) {
+    return new Promise((resolve, reject) => {
+      if (!Native || !Native.googleAuth) return reject(new Error('Google sign-in works only in the installed Android app (this build or newer).'));
+      const id = 'g' + (++gaSeq);
+      gaReqs[id] = (res) => { let j = res; if (typeof res === 'string') { try { j = JSON.parse(res); } catch (e) { j = { ok: false, error: res }; } } if (j && j.ok && j.token) resolve(j); else reject(new Error(googleWhy(j))); };
+      // a quiet renewal must never hang a command; the visible sign-in waits for the user as long as it takes
+      if (silent) setTimeout(() => { if (gaReqs[id]) { delete gaReqs[id]; reject(new Error('Google did not answer in time.')); } }, googleToken.silentMs || 15000);
+      try { Native.googleAuth(id, JSON.stringify(scopes), !!silent); } catch (e) { delete gaReqs[id]; reject(new Error('Google sign-in failed: ' + e.message)); }
+    });
+  }
+  /** Sign in, check that the service really answers, then save. Returns { ok, who, why, checked }. */
+  async function googleConnect(e) {
+    const tok = await googleToken(e.scopes, false);
+    const vals = {}; vals[e.fields[0].env] = tok.token;
+    const res = await testIntegration(e, vals);
+    if (res.ok) { saveIntegration(e, vals, res); settings.integrations[e.id].tokenAt = Date.now(); saveSettings(); }
+    else if (/HTTP 403/.test(res.why || '')) res.why += ' If it says the API is disabled, enable it for the CybNate project in Google Cloud Console → APIs & Services → Library.';
+    return res;
+  }
+  /** Before a command gets a Google token, renew it quietly when it is older than 40 minutes. */
+  async function freshGoogle(names) {
+    const conn = settings.integrations || {};
+    for (const id of Object.keys(conn)) {
+      const e = Integrations.BY_ID[id]; if (!e || e.signin !== 'google') continue;
+      const env = e.fields[0].env; if (names && names.indexOf(env) < 0) continue;
+      if (Date.now() - (conn[id].tokenAt || 0) < GOOGLE_TOKEN_LIFE) continue;
+      try { const tok = await googleToken(e.scopes, true); setSecret(env, tok.token); conn[id].tokenAt = Date.now(); saveSettings(); }
+      catch (err) { /* the old token is sent; if Google refuses it the agent sees HTTP 401 and the user signs in again */ }
+    }
+  }
+  function drawGoogleCard(e, card, info, st) {
+    const cur = st.get();
+    card.appendChild(el('div', 'flabel', 'CybNate will be able to'));
+    const ul = el('ul', 'grants'); (e.grants || []).forEach((g) => ul.appendChild(el('li', '', g))); card.appendChild(ul);
+    card.appendChild(el('p', '', 'You choose the Google account on the next screen; it can be any account, not only the one on this phone. The agent asks before each request, and the token stays on this phone.'));
+    const s = cur.state;
+    const msg = el('div', s ? (s.ok ? 'note ok' : 'note err') : 'note', s ? (s.ok ? '✓ Connected' + (s.who ? ' as ' + s.who : '') + '.' : '✗ ' + s.why) : 'Secret for the agent: ' + e.fields[0].env); msg.id = 'intMsg'; card.appendChild(msg);
+    const go = el('button', 'wide', cur.working ? 'Waiting for Google…' : info ? 'Sign in again' : 'Sign in with Google'); go.id = 'intGo'; go.disabled = cur.working; card.appendChild(go);
+    go.onclick = async () => {
+      st.set(null, true); let res;
+      try { res = await googleConnect(e); } catch (err) { res = { ok: false, why: String(err && err.message ? err.message : err) }; }
+      if (res.ok) toast(e.name + ' connected');
+      st.set(res, false);
+    };
+    if (info) {
+      const off = el('button', 'wide danger', 'Disconnect'); off.id = 'intOff'; card.appendChild(off);
+      off.onclick = () => { removeIntegration(e); toast(e.name + ' disconnected'); st.set(null, false); };
+      const a = el('a', '', 'Remove the access in your Google account →'); a.href = e.keyUrl; a.target = '_blank'; a.rel = 'noopener'; a.style.cssText = 'display:inline-block;margin:8px 0'; card.appendChild(a);
+    }
+  }
+
+  // ---- Codex: sign in with a ChatGPT account (device code), then use the plan's models. See wire.js.
+  let codexUi = { step: '', code: '', error: '', ctl: null }, codexRefreshing = null;
+  function setCodex(s) {
+    if (s) { settings.codex = s; settings.keys.codex = s.access; }
+    else { delete settings.codex; delete settings.keys.codex; delete settings.models.codex; if (settings.meta) delete settings.meta.codex; if (settings.provider === 'codex') { settings.provider = 'pollinations'; settings.model = C.PROVIDERS.pollinations.fallbackModels[0]; } }
+    saveSettings();
+  }
+  const wireCall = (r, signal) => httpFull(r.url, { method: r.method, headers: r.headers, body: r.body, signal });
+  /** Renew the access token shortly before it runs out. */
+  function codexFresh(signal) {
+    if (!Wire.codexStale(settings.codex, Date.now())) return Promise.resolve();
+    if (!codexRefreshing) {
+      codexRefreshing = wireCall(Wire.codexRefreshRequest(settings.codex.refresh), signal)
+        .then((r) => { setCodex(Wire.codexSession(r.status, r.text, settings.codex)); })
+        .catch((e) => { if (e && e.name === 'AbortError') throw e; throw new Error('The ChatGPT sign-in has expired. Sign in again in Settings → Model Providers.\n' + e.message); })
+        .finally(() => { codexRefreshing = null; });
+    }
+    return codexRefreshing;
+  }
+  /** The whole sign-in. onState({code, url}) fires once the code to type is known. Returns the session. */
+  async function codexSignIn(onState, signal) {
+    let r = await wireCall(Wire.codexUserCodeRequest(), signal);
+    const dc = Wire.codexUserCode(r.status, r.text);
+    onState({ code: dc.code, url: Wire.CODEX.verifyUrl });
+    const until = Date.now() + Wire.CODEX.maxWaitMs; let got;
+    for (;;) {
+      await sleep(codexSignIn.intervalMs || dc.intervalMs, signal);
+      r = await wireCall(Wire.codexPollRequest(dc), signal);
+      got = Wire.codexPoll(r.status, r.text);
+      if (got !== 'wait') break;
+      if (Date.now() > until) throw new Error('The code expired after 15 minutes. Start again.');
+    }
+    r = await wireCall(Wire.codexExchangeRequest(got), signal);
+    const s = Wire.codexSession(r.status, r.text); s.at = Date.now();
+    setCodex(s);
+    try { await fetchModels('codex'); s.modelsError = ''; } catch (e) { if (e && e.name === 'AbortError') throw e; s.modelsError = e.message; }
+    saveSettings();
+    return s;
+  }
+  function drawCodexCard(card) {
+    const s = settings.codex, ui = codexUi;
+    const redraw = () => { if (sheetStack.length && sheetStack[sheetStack.length - 1].title === 'Model Providers') drawSheet(); };
+    const start = async () => {
+      if (ui.ctl) ui.ctl.abort();
+      const ctl = new AbortController(); codexUi = { step: 'start', code: '', error: '', ctl }; redraw();
+      try {
+        const got = await codexSignIn((st) => { codexUi.step = 'code'; codexUi.code = st.code; redraw(); }, ctl.signal);
+        codexUi = { step: '', code: '', error: '', ctl: null };
+        const n = (settings.models.codex || []).length;
+        toast(n ? 'Signed in · ' + n + ' models' : 'Signed in');
+        if (n && settings.provider !== 'codex') { settings.provider = 'codex'; settings.model = settings.models.codex[0]; saveSettings(); renderAll(); }
+        void got;
+      } catch (e) {
+        if (codexUi.ctl !== ctl) return;
+        codexUi = { step: '', code: '', error: e && e.name === 'AbortError' ? '' : String(e && e.message ? e.message : e), ctl: null };
+      }
+      redraw();
+    };
+    if (ui.step === 'start') { card.appendChild(el('div', 'note', 'Asking OpenAI for a sign-in code…')); }
+    else if (ui.step === 'code') {
+      card.appendChild(el('div', 'flabel', '1. Open the sign-in page and log in to ChatGPT'));
+      const a = el('a', 'wide linkbtn', 'Open the sign-in page →'); a.id = 'codexOpen'; a.href = Wire.CODEX.verifyUrl; a.target = '_blank'; a.rel = 'noopener'; card.appendChild(a);
+      card.appendChild(el('div', 'flabel', '2. Type this code there'));
+      const code = el('div', 'bigcode', ui.code); code.id = 'codexCode'; card.appendChild(code);
+      const cp = el('button', 'wide ghost', 'Copy the code'); cp.onclick = () => { try { navigator.clipboard.writeText(ui.code); toast('Copied'); } catch (e) { toast('Copy it by hand'); } }; card.appendChild(cp);
+      card.appendChild(el('div', 'note', '3. Come back here. The app connects by itself within a few seconds. The code works for 15 minutes.'));
+      card.appendChild(el('p', 'hint', 'If the page says device codes are off, turn on "Device code authorization for Codex" in ChatGPT → Settings → Security, then start again.'));
+      const x = el('button', 'wide ghost', 'Cancel'); x.id = 'codexCancel'; x.onclick = () => { if (ui.ctl) ui.ctl.abort(); codexUi = { step: '', code: '', error: '', ctl: null }; redraw(); }; card.appendChild(x);
+    } else if (s) {
+      const n = (settings.models.codex || []).length;
+      const ok = el('div', 'note ok', '✓ Connected' + (s.email ? ' as ' + s.email : '') + (s.plan ? ' · plan: ' + Wire.planName(s.plan) : '') + ' · ' + (n ? n + ' model' + (n === 1 ? '' : 's') : 'no model list yet')); ok.id = 'codexState'; card.appendChild(ok);
+      if (s.modelsError) card.appendChild(el('div', 'note err', 'Could not load the model list: ' + s.modelsError.split('\n').join(' ')));
+      const again = el('button', 'wide ghost', 'Sign in again'); again.id = 'codexGo'; again.onclick = start; card.appendChild(again);
+      const out = el('button', 'wide danger', 'Sign out'); out.id = 'codexOut'; out.onclick = () => { setCodex(null); renderAll(); toast('Signed out'); redraw(); }; card.appendChild(out);
+    } else {
+      if (ui.error) card.appendChild(el('div', 'note err', '✗ ' + ui.error));
+      const go = el('button', 'wide', 'Sign in with ChatGPT'); go.id = 'codexGo'; go.onclick = start; card.appendChild(go);
+      card.appendChild(el('p', 'hint', 'Your password is typed on OpenAI\'s page, never in this app. Usage counts against your ChatGPT plan.'));
+    }
+  }
+
   function openIntegration(e) {
     let state = null, working = false; const draft = {};
     openSheet(e.name, (body) => {
@@ -1485,6 +1655,7 @@
       if (e.note) card.appendChild(el('p', '', e.note));
       if (e.money) card.appendChild(el('p', 'awarn', 'This service can charge money. Prefer a test key, and read each approval before you allow it.'));
       const have = secretEnv(); const inputs = {};
+      if (e.signin === 'google') return drawGoogleCard(e, card, info, { get: () => ({ state, working }), set: (s, w) => { state = s; working = w; drawSheet(); } });
       e.fields.forEach((fd) => {
         card.appendChild(el('div', 'flabel', fd.label));
         const i = el('input', 'field mono'); i.type = fd.plain ? 'text' : 'password'; i.autocapitalize = 'off'; i.autocomplete = 'off'; i.spellcheck = false; i.dataset.env = fd.env;
@@ -1617,20 +1788,21 @@
   function settingsRow(label, value, fn, plain) { const b = el('button', 'srow' + (plain ? ' plain' : '')); b.appendChild(el('span', '', label)); if (value) b.appendChild(el('small', '', value)); if (fn) b.onclick = fn; return b; }
   function openProviders() {
     openSheet('Model Providers', (body) => {
-      body.appendChild(el('div', 'empty', 'Every provider here is free. Pollinations works with no key; the others give a free key in a minute and are much faster.')).style.cssText = 'text-align:left;padding:0 4px 12px';
+      body.appendChild(el('div', 'empty', 'Pollinations works with no key; OpenRouter, Groq and Gemini give a free key in a minute and are much faster. Codex uses your ChatGPT plan after a sign-in. Claude needs a paid API key.')).style.cssText = 'text-align:left;padding:0 4px 12px';
       Object.keys(C.PROVIDERS).forEach((id) => {
         const p = C.PROVIDERS[id], card = el('div', 'card' + (settings.provider === id ? ' on' : ''));
-        const h = el('h3', '', p.name + ' '); h.appendChild(el('span', 'tag', settings.provider === id ? 'active' : p.needsKey ? 'key' : 'no key')); card.appendChild(h);
+        const h = el('h3', '', p.name + ' '); h.appendChild(el('span', 'tag', settings.provider === id ? 'active' : p.signIn ? 'sign in' : p.needsKey ? 'key' : 'no key')); card.appendChild(h);
         card.appendChild(el('p', '', p.tag));
+        if (p.signIn === 'codex') { card.dataset.provider = id; drawCodexCard(card); if (settings.codex) { const use = el('button', 'wide ghost', settings.provider === id ? '✓ In use · choose model' : 'Use ' + p.name); use.onclick = () => { openModels(id); }; card.appendChild(use); } body.appendChild(card); return; }
         if (p.custom) {
           const u = el('input', 'field'); u.type = 'text'; u.placeholder = 'http://192.168.1.10:11434/v1'; u.value = settings.customUrl; u.autocapitalize = 'off';
           u.onchange = () => { settings.customUrl = u.value.trim(); saveSettings(); }; card.appendChild(u);
         }
         if (p.needsKey || p.custom) {
-          const k = el('input', 'field'); k.type = 'password'; k.placeholder = p.custom ? 'API key (optional)' : 'Paste your free ' + p.name + ' API key'; k.value = settings.keys[id] || ''; k.autocomplete = 'off';
+          const k = el('input', 'field'); k.type = 'password'; k.dataset.key = id; k.placeholder = p.custom ? 'API key (optional)' : p.paid ? 'Paste your Anthropic API key (sk-ant-…)' : 'Paste your free ' + p.name + ' API key'; k.value = settings.keys[id] || ''; k.autocomplete = 'off';
           k.onchange = () => { settings.keys[id] = k.value.trim(); saveSettings(); toast('Key saved on this device'); }; card.appendChild(k);
         }
-        if (p.keyUrl) { const a = el('a', '', 'Get a free key →'); a.href = p.keyUrl; a.target = '_blank'; a.rel = 'noopener'; a.style.display = 'inline-block'; a.style.marginTop = '8px'; card.appendChild(a); }
+        if (p.keyUrl) { const a = el('a', '', p.paid ? 'Get an API key →' : 'Get a free key →'); a.href = p.keyUrl; a.target = '_blank'; a.rel = 'noopener'; a.style.display = 'inline-block'; a.style.marginTop = '8px'; card.appendChild(a); }
         const use = el('button', 'wide ghost', settings.provider === id ? '✓ In use · choose model' : 'Use ' + p.name);
         use.onclick = () => { openModels(id); }; card.appendChild(use);
         body.appendChild(card);
@@ -1948,7 +2120,7 @@
       body.appendChild(tabs);
       const p = providerCfg(id);
       if (p.needsKey && !(settings.keys[id] || '').trim()) {
-        const n = el('div', 'note', p.name + ' needs a free API key. Tap here to add it in Settings.'); n.style.marginBottom = '10px';
+        const n = el('div', 'note', p.signIn ? 'Sign in first. Tap here to open Settings.' : p.name + ' needs ' + (p.paid ? 'an' : 'a free') + ' API key. Tap here to add it in Settings.'); n.style.marginBottom = '10px';
         n.onclick = () => { sheetStack = []; openSettings(); }; body.appendChild(n);
       }
       if (p.custom && !p.chatUrl) { const n = el('div', 'note', 'Set the server URL in Settings first.'); n.onclick = () => { sheetStack = []; openSettings(); }; body.appendChild(n); }
@@ -2027,7 +2199,7 @@
 
   if (!C.PROVIDERS[settings.provider]) { settings.provider = 'pollinations'; settings.model = 'openai-fast'; }
   $('ver').textContent = Native ? 'v' + Native.version() : 'web';
-  window.__cyb = { openIntegrations, testIntegration, saveIntegration, removeIntegration, connectedIds, extraPrompt, cli, testWebapp, slashCommand, attachMentions, compactChat, kv, Native, nativeStream, fetchModels, C, ws, settings, limiter, health, usageReport, openUsage, freeCheck, metaOf, apiHistory, modelPool, spawnAgent, helperExec, rerunAs, get task() { return task; }, askApproval, openPreview, offerUndo, namedSecrets, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
+  window.__cyb = { wireCall, codexSignIn, codexFresh, setCodex, googleConnect, googleToken, freshGoogle, fetchModels, openProviders, chatStream, openIntegrations, testIntegration, saveIntegration, removeIntegration, connectedIds, extraPrompt, cli, testWebapp, slashCommand, attachMentions, compactChat, kv, Native, nativeStream, fetchModels, C, ws, settings, limiter, health, usageReport, openUsage, freeCheck, metaOf, apiHistory, modelPool, spawnAgent, helperExec, rerunAs, get task() { return task; }, askApproval, openPreview, offerUndo, namedSecrets, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
   window.addEventListener('error', (e) => { console.log('CYBERR ' + e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno); });
   window.addEventListener('unhandledrejection', (e) => { console.log('CYBERR promise ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)); });
 

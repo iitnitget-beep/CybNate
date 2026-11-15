@@ -47,6 +47,7 @@ public class MainActivity extends Activity {
     private WebView web;
     private PreviewPane preview;
     private PageTester tester;
+    private GoogleAuth google;
     private final ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicBoolean> shells = new ConcurrentHashMap<>();
     private ValueCallback<Uri[]> fileCallback;
     private final ConcurrentHashMap<String, HttpURLConnection> requests = new ConcurrentHashMap<>();
@@ -61,6 +62,12 @@ public class MainActivity extends Activity {
         setContentView(root);
         preview = new PreviewPane(this, root);
         tester = new PageTester(this, root);
+        google = new GoogleAuth(this, new GoogleAuth.Callback() {
+            @Override
+            public void result(String id, String json) {
+                js("window.__ga && window.__ga(" + JSONObject.quote(id) + "," + json + ")");
+            }
+        });
 
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
@@ -167,6 +174,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == GoogleAuth.REQUEST) {
+            google.onActivityResult(resultCode, data);
+            return;
+        }
         if (requestCode != REQ_FILE || fileCallback == null) return;
         Uri[] result = null;
         if (resultCode == RESULT_OK && data != null) {
@@ -494,6 +505,17 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 return "ERR:" + e.getMessage();
             }
+        }
+
+        /** Google sign-in for a list of scopes; answers through window.__ga(id, {ok, token, scopes} | {ok:false, code, error}). */
+        @JavascriptInterface
+        public void googleAuth(final String id, final String scopesJson, final boolean silent) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    google.start(id, scopesJson, silent);
+                }
+            });
         }
 
         @JavascriptInterface

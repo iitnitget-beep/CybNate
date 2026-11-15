@@ -21,7 +21,7 @@ I.LIST.forEach((e) => {
   assert.ok(e.fields.filter((f) => !f.optional && !f.plain).every((f) => (r.url + JSON.stringify(r.headers)).indexOf('v-' + f.env) >= 0 || /b64/.test(JSON.stringify(e.test))), 'the secret is used by the check: ' + e.id);
 });
 ['github', 'gitlab', 'vercel', 'aws', 'supabase', 'postgres', 'openai', 'gemini', 'brave', 'playwright', 'stripe', 'razorpay', 'notion', 'google', 'slack', 'telegram', 'figma', 'docker', 'e2b', 'memory'].forEach((id) => assert.ok(I.BY_ID[id], id));
-assert.strictEqual(I.LIST.length, 74);
+assert.strictEqual(I.LIST.length, 76);
 // templates and input clean-up
 assert.strictEqual(I.testRequest(I.BY_ID.twilio, { TWILIO_ACCOUNT_SID: 'AC1', TWILIO_AUTH_TOKEN: 'tok' }).headers.Authorization, 'Basic ' + Buffer.from('AC1:tok').toString('base64'));
 assert.strictEqual(I.testRequest(I.BY_ID.telegram, { TELEGRAM_BOT_TOKEN: '12:ab' }).url, 'https://api.telegram.org/bot12:ab/getMe');
@@ -108,19 +108,19 @@ const sse = (text) => 'data: ' + JSON.stringify({ choices: [{ delta: { content: 
   assert.ok(/Not on a phone/.test(row('postgres').textContent) && row('postgres').querySelector('.intact').textContent === 'ⓘ');
   d.getElementById('intBack').click(); await tick();
   tabBtn('connectors').click(); await tick();
-  assert.ok(/Active \(3\)/.test(d.getElementById('sheetBody').textContent) && /Inactive \(71\)/.test(d.getElementById('sheetBody').textContent), 'built-in ones count as active');
+  assert.ok(/Active \(3\)/.test(d.getElementById('sheetBody').textContent) && /Inactive \(73\)/.test(d.getElementById('sheetBody').textContent), 'built-in ones count as active');
   assert.ok(row('github').classList.contains('on') && row('github').querySelector('.intact').textContent === '⋯');
   tabBtn('skills').click(); await tick();
   assert.ok(/Tell the agent how you like things done/.test(d.getElementById('sheetBody').textContent) && /No skills yet/.test(d.getElementById('sheetBody').textContent) && d.getElementById('intSkills'));
   d.getElementById('intSearchBtn').click(); await tick();
-  assert.strictEqual(ids().length, 74, 'search starts with every service');
+  assert.strictEqual(ids().length, 76, 'search starts with every service');
   const q = d.getElementById('intSearch'); q.value = 'pay'; q.dispatchEvent(new w.Event('input'));
   assert.deepStrictEqual(ids(), ['clerk', 'auth0', 'nextauth', 'stripe', 'lemonsqueezy', 'razorpay'], 'search matches name, description and group');
   q.value = 'zzz'; q.dispatchEvent(new w.Event('input')); assert.ok(/No service matches/.test(d.getElementById('sheetBody').textContent));
   d.getElementById('intSearchBtn').click(); await tick();
   await openAll();
-  assert.strictEqual(ids().length, 71);
-  assert.ok(/Not on a phone/.test(row('docker').textContent) && /Needs sign-in/.test(row('google').textContent) && /Planned/.test(row('memory').textContent));
+  assert.strictEqual(ids().length, 73);
+  assert.ok(/Not on a phone/.test(row('docker').textContent) && /Drive files/.test(row('google').textContent) && /Planned/.test(row('memory').textContent));
 
   // 2. a service that cannot be connected explains itself and has no key field
   row('docker').click(); await tick();

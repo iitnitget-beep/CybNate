@@ -249,6 +249,19 @@
     return I.LIST.length + ' services; GitLab: ' + r.why.slice(0, 70) + ' | Telegram: ' + r2.why.slice(0, 60);
   });
 
+  await test('sign-in: Google bridge answers without hanging, OpenAI device-code endpoint is read', async () => {
+    const W = window.Wire; must(W && T.C.PROVIDERS.codex && T.C.PROVIDERS.anthropic, 'sign-in providers missing');
+    must(T.Native && typeof T.Native.googleAuth === 'function', 'this build has no Google sign-in bridge');
+    // no Google account on a test device: a quiet request must come back with a readable reason, not hang and not crash
+    let g = ''; try { await T.googleToken(['https://www.googleapis.com/auth/gmail.readonly'], true); g = 'a token (unexpected on a test device)'; } catch (e) { g = e.message; }
+    must(g && g.length > 8, 'no reason given');
+    // the real OpenAI endpoint: when it answers 200 the app must be able to read the code out of it
+    let o = ''; const rq = W.codexUserCodeRequest(); const r = await T.wireCall(rq);
+    if (r.status === 200) { const dc = W.codexUserCode(r.status, r.text); must(/^[A-Z0-9-]{6,}$/i.test(dc.code) && dc.id, 'unreadable device code answer: ' + r.text.slice(0, 120)); o = 'HTTP 200, code of ' + dc.code.length + ' characters, poll every ' + dc.intervalMs / 1000 + 's'; }
+    else o = 'HTTP ' + r.status + ' (not verified from this machine): ' + r.text.replace(/\s+/g, ' ').slice(0, 80);
+    return 'Google: ' + g.slice(0, 90) + ' | OpenAI: ' + o;
+  });
+
   const fails = lines.filter((l) => /FAIL/.test(l)).length;
   console.log('CYBTEST DONE pass=' + (lines.length - fails) + ' fail=' + fails);
   box.textContent = lines.join('\n') + '\n\nDONE pass=' + (lines.length - fails) + ' fail=' + fails;
