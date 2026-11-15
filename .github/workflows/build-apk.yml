@@ -93,3 +93,5 @@ jobs:
           git commit -m "test: on-device self test #${{ github.run_number }} [skip ci]" || exit 0
           git pull --rebase origin "${{ github.ref_name }}"
           git push origin "HEAD:${{ github.ref_name }}"
+      - name: Fail when the self test did not finish clean
+        run: grep -q "CYBTEST DONE pass=[0-9]* fail=0" release/selftest.txt
