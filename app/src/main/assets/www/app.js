@@ -43,13 +43,22 @@
     }
     updateBadge();
   });
+  /** Paths that exist only on disk because they are too large for the in-app workspace. */
+  const diskOnly = () => { try { return JSON.parse(localStorage.getItem('cyb.diskOnly') || '[]'); } catch (e) { return []; } };
+  function keepOnDisk(paths, on) {
+    if (!paths.length) return;
+    const set = new Set(diskOnly()); const n = set.size;
+    paths.forEach((p) => { if (on) set.add(p); else set.delete(p); });
+    if (on || set.size !== n) localStorage.setItem('cyb.diskOnly', JSON.stringify([...set]));
+  }
   /** Bring the on-disk copy used by shell commands in line with the workspace. */
   function syncDisk() {
     if (!canShell) return;
     try {
-      const disk = JSON.parse(Native.wsList() || '{}');
-      ws.list().forEach((p) => { const b = ws.bytes(p); if (disk[p] !== b.length && b.length <= 20 * 1048576) Native.wsWrite(p, b64(b)); });
-      Object.keys(disk).forEach((p) => { if (!ws.has(p)) Native.wsDelete(p); });
+      const disk = JSON.parse(Native.wsList() || '{}'), keep = new Set(diskOnly());
+      keepOnDisk([...keep].filter((p) => !(p in disk)), false);
+      ws.list().forEach((p) => { const b = ws.bytes(p); if (!keep.has(p) && disk[p] !== b.length && b.length <= 20 * 1048576) Native.wsWrite(p, b64(b)); });
+      Object.keys(disk).forEach((p) => { if (!ws.has(p) && !keep.has(p)) Native.wsDelete(p); });
     } catch (e) { /* ignore */ }
   }
   function openDb() {
@@ -239,8 +248,14 @@
   // ------------------------------------------------------------- execution
   let nxSeq = 0; const nxReqs = {};
   window.__nx = (id, res) => { const r = nxReqs[id]; if (r) { delete nxReqs[id]; r(res); } };
-  function nativeExec(cmd, timeoutSec) {
-    return new Promise((resolve) => { const id = 'x' + (++nxSeq); nxReqs[id] = resolve; Native.exec(id, cmd, timeoutSec | 0); });
+  function nativeExec(cmd, timeoutSec, signal) {
+    return new Promise((resolve) => {
+      const id = 'x' + (++nxSeq);
+      const stop = () => { try { if (Native.execAbort) Native.execAbort(id); } catch (e) { /* older build */ } };
+      nxReqs[id] = (res) => { if (signal) signal.removeEventListener('abort', stop); resolve(res); };
+      if (signal) signal.addEventListener('abort', stop);
+      Native.exec(id, cmd, timeoutSec | 0);
+    });
   }
 
   let pyWorker = null, pyLoaded = false;
@@ -290,8 +305,16 @@
     if (pc.kind === 'sh') {
       if (!canShell) return { code: 127, out: 'Shell commands run only in the installed Android app. In this browser preview you can run `python …` and `node …`.', files: [] };
       const exp = Object.keys(senv).filter((k) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)).map((k) => 'export ' + k + "='" + String(senv[k]).replace(/'/g, "'\\''") + "'; ").join('');
-      r = await nativeExec(exp + cmd, timeoutSec);
+      r = await nativeExec(exp + cmd, timeoutSec, signal);
+      if (signal && signal.aborted) r.out = (r.out || '') + '\n[stopped by the user]';
       const changed = (r.changed || []).filter((c) => !c.tooBig);
+      // Files too large to load stay on disk for shell commands. Remember them so the next start does not delete them.
+      const big = (r.changed || []).filter((c) => c.tooBig).map((c) => c.path);
+      if (big.length) {
+        keepOnDisk(big, true);
+        r.out = (r.out || '') + '\nNote: too large to load into the workspace, kept on disk for shell commands only (not in Files, Undo or GitHub push): ' + big.join(', ');
+      }
+      keepOnDisk(changed.map((c) => c.path).concat(r.deleted || []), false);
       mirror = false;
       try {
         changed.forEach((c) => { const bytes = unb64(c.b64); const t = C.decodeIfText(bytes); ws.set(c.path, t != null ? t : bytes); });
@@ -414,7 +437,11 @@
     const pre = (t, cls) => { const p = el('pre', 'apre' + (cls ? ' ' + cls : '')); p.textContent = t; body.appendChild(p); };
     if (req.kind === 'shell') {
       pre(req.command);
-      if (req.secrets && req.secrets.length) body.appendChild(el('p', 'awarn', 'This command will receive your secrets: ' + req.secrets.join(', ')));
+      if (req.secrets && req.secrets.length) {
+        body.appendChild(el('div', 'afile', (req.typed ? 'Your command names' : 'The agent asks for') + ' ' + req.secrets.length + ' secret' + (req.secrets.length > 1 ? 's' : '') + ':'));
+        const row = el('div', 'asecrets'); req.secrets.forEach((n) => row.appendChild(el('span', 'asecret', '🔑 ' + n))); body.appendChild(row);
+        body.appendChild(el('p', 'awarn', 'The command, and any code it runs, can read these values and could send them over the network. Masking in the output does not prevent that. Allow only if you trust this exact command.'));
+      }
       if (req.sensitive) body.appendChild(el('p', 'awarn', 'It names a protected file (CI, licence, settings or secrets).'));
     } else if (req.kind === 'delete') {
       pre(req.path);
@@ -674,12 +701,28 @@
   function offerUndo(cp) {
     const old = $('messages').querySelector('.undo'); if (old) old.remove();
     const changed = S.changedSince(ws, cp);
-    if (!changed.length) return;
+    const oldNote = $('messages').querySelector('.undonote'); if (oldNote) oldNote.remove();
+    // large files are outside the checkpoint; a change in their size (or their removal) is all we can see
+    const lenOf = (p) => { const v = ws.get(p); return v instanceof Uint8Array ? v.length : String(v).length; };
+    const bigChanged = cp.skipped.filter((p) => !ws.has(p) || lenOf(p) !== (cp.skippedSize || {})[p]);
+    if (!changed.length && !bigChanged.length) return;
+    if (!changed.length) {
+      $('messages').appendChild(el('div', 'undonote', '⚠ This run changed ' + bigChanged.length + ' large file' + (bigChanged.length > 1 ? 's' : '') + ' that Undo cannot restore (over 5 MB): ' + bigChanged.slice(0, 5).join(', ')));
+      return;
+    }
     const b = el('button', 'undo', '↶ Undo ' + changed.length + ' file change' + (changed.length > 1 ? 's' : '') + ' from this run');
     b.title = changed.slice(0, 30).join('\n');
+    const skipNote = () => { const o = $('messages').querySelector('.undonote'); if (o) o.remove(); };
+    if (cp.skipped.length) {
+      // large files are not in the checkpoint: say so before the user relies on Undo
+      const mb = (p) => ws.has(p) ? ' (' + (ws.size(p) / 1048576).toFixed(1) + ' MB)' : ' (deleted)';
+      const note = el('div', 'undonote', '⚠ Undo does not cover ' + cp.skipped.length + ' large file' + (cp.skipped.length > 1 ? 's' : '') + ' (over 5 MB each, or past the 40 MB total): '
+        + cp.skipped.slice(0, 5).map((p) => p + mb(p)).join(', ') + (cp.skipped.length > 5 ? ' and ' + (cp.skipped.length - 5) + ' more' : '') + '. Changes to these files stay.');
+      $('messages').appendChild(note);
+    }
     b.onclick = () => {
       if (busy) return toast('Stop the current reply first');
-      const r = S.restoreCheckpoint(ws, cp); b.remove(); updateBadge();
+      const r = S.restoreCheckpoint(ws, cp); b.remove(); skipNote(); updateBadge();
       toast('Undone: ' + r.restored + ' restored, ' + r.removed + ' removed' + (r.skipped.length ? ' (' + r.skipped.length + ' large files were not covered)' : ''));
     };
     $('messages').appendChild(b); $('messages').scrollTop = $('messages').scrollHeight;
@@ -794,6 +837,12 @@
     return html;
   }
   function openPreview(p) {
+    // In the app the page opens in a separate WebView that has no native bridge. An iframe is not enough there:
+    // Android injects the bridge object into every frame, sandboxed or not.
+    if (Native) {
+      if (Native.openPreview) Native.openPreview(p, buildPreview(p)); else toast('Preview needs a newer app build');
+      return;
+    }
     openSheet('▶ ' + p, (body) => {
       const f = el('iframe', 'preview'); f.setAttribute('sandbox', 'allow-scripts allow-modals allow-forms');
       f.srcdoc = buildPreview(p); body.appendChild(f);
@@ -817,7 +866,11 @@
         if (cmd === 'clear') { termLog = ''; inp.value = ''; return show(); }
         inp.value = ''; termLog += '$ ' + cmd + '\n'; show(); running = true; go.textContent = '■'; ctl = new AbortController();
         try {
-          const r = await runCommand(cmd, 300, ctl.signal);
+          // a command you type that names a secret gets it, after you confirm which ones
+          const sec = namedSecrets(cmd); let give = [];
+          if (sec.length) give = (await askApproval({ kind: 'shell', command: cmd, secrets: sec, always: false, typed: true }, ctl.signal)) === 'allow' ? sec : [];
+          if (sec.length && !give.length) termLog += '[secrets not given: ' + sec.join(', ') + ']\n';
+          const r = await runCommand(cmd, 300, ctl.signal, give);
           termLog += (r.out || '').replace(/\s+$/, '') + (r.out && r.out.trim() ? '\n' : '') + (r.code ? '[exit ' + r.code + ']\n' : '');
         } catch (e) { termLog += (e.name === 'AbortError' ? '^C' : 'error: ' + e.message) + '\n'; }
         if (termLog.length > 60000) termLog = termLog.slice(-60000);
@@ -1064,7 +1117,7 @@
       c1.appendChild(run); c1.appendChild(out); body.appendChild(c1);
 
       const c2 = el('div', 'card'); c2.appendChild(el('div', 'ctitle', 'Secrets'));
-      c2.appendChild(el('p', '', 'Stored only on this phone. A command gets a secret only when it names it: the agent must request it and you approve, and your own terminal commands get the ones whose name you type. The model sees the names, never the values.'));
+      c2.appendChild(el('p', '', 'Stored only on this phone. A command gets a secret only when it names it: the agent must request it and you approve, and your own terminal commands get the ones whose name you type. The model is given only the names, and values are masked in command output; but code that you allow to receive a secret can read it, so check the approval sheet.'));
       const list = settings.secrets || (settings.secrets = []);
       if (!list.length) c2.appendChild(el('p', '', 'No secrets yet.'));
       list.forEach((k, i) => { const r = settingsRow(k.name, 'Remove', () => { list.splice(i, 1); saveSettings(); drawSheet(); }, true); r.classList.add('mono'); c2.appendChild(r); });
@@ -1301,7 +1354,7 @@
 
   if (!C.PROVIDERS[settings.provider]) { settings.provider = 'pollinations'; settings.model = 'openai-fast'; }
   $('ver').textContent = Native ? 'v' + Native.version() : 'web';
-  window.__cyb = { C, ws, settings, askApproval, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
+  window.__cyb = { C, ws, settings, askApproval, openPreview, offerUndo, namedSecrets, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
   window.addEventListener('error', (e) => { console.log('CYBERR ' + e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno); });
   window.addEventListener('unhandledrejection', (e) => { console.log('CYBERR promise ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)); });
 
@@ -1329,7 +1382,9 @@
   [1500, 6000, 12000, 25000].forEach((ms) => setTimeout(() => { const w = document.querySelector('.welcome'), h = document.querySelector('header'); console.log('CYBUI layout t=' + ms + ' header=' + (h ? h.offsetHeight : -1) + ' welcome=' + (w ? w.offsetHeight : -1) + ' frames=' + frames + ' win=' + window.innerWidth + 'x' + window.innerHeight + ' vis=' + document.visibilityState); }, ms));
   openDb().then(() => {
     syncDisk(); updateBadge();
-    if (/[?&]selftest=1/.test(location.search)) { const sc = document.createElement('script'); sc.src = 'selftest.js'; document.body.appendChild(sc); }
+    const emptyApp = !ws.list().length && !sessions.some((x) => (x.messages || []).length);
+    if (/[?&]selftest=1/.test(location.search) && !emptyApp) console.log('CYBTEST REFUSED: the self test clears the workspace and runs only on a fresh install');
+    else if (/[?&]selftest=1/.test(location.search)) { const sc = document.createElement('script'); sc.src = 'selftest.js'; document.body.appendChild(sc); }
   });
 
   // Keyless model names change over time: make sure the selected one still exists.

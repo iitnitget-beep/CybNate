@@ -71,4 +71,21 @@ public class ShellRunnerTest {
         } catch (java.io.IOException expected) {
         }
     }
+
+    @Test
+    public void stopCancelsARunningCommand() throws Exception {
+        File root = tmp.newFolder("ws5"), home = tmp.newFolder("home5");
+        final java.util.concurrent.atomic.AtomicBoolean cancel = new java.util.concurrent.atomic.AtomicBoolean();
+        new Thread(new Runnable() {
+            @Override public void run() {
+                try { Thread.sleep(300); } catch (InterruptedException ignored) { }
+                cancel.set(true);
+            }
+        }).start();
+        long t0 = System.currentTimeMillis();
+        ShellRunner.Result r = ShellRunner.run(root, "sleep 20", 30, home, cancel);
+        assertEquals(130, r.code);
+        assertFalse(r.timedOut);
+        assertTrue("stopped early", System.currentTimeMillis() - t0 < 5000);
+    }
 }

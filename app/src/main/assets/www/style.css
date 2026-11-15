@@ -225,3 +225,6 @@ html[data-style="3d"] .wide,html[data-style="3d"] .lite,html[data-style="3d"] #b
 .abtn.allow{background:var(--acc);color:var(--on);font-weight:600}
 .abtn.deny{color:var(--err)}
 .undo{display:block;margin:6px auto;padding:8px 14px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);font-size:14px}
+.asecrets { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.asecret { font: 600 13px ui-monospace, monospace; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--line, #444); }
+.undonote { font-size: 12px; opacity: .85; margin: 6px 0 2px; padding: 8px 10px; border: 1px dashed var(--line, #555); border-radius: 10px; }

@@ -141,6 +141,25 @@ const requests = [];
   ctl.abort(); await assert.rejects(a3, /Stopped/); assert.ok(!d.querySelector('.approval'), 'Stop closes the pending sheet');
   const chained = w.__cyb.askApproval({ kind: 'shell', command: 'pip install x && rm -rf .', always: true });
   await tick(); assert.ok(d.querySelector('.approval'), 'a chained command is not covered by the prefix rule'); d.querySelector('.approval .abtn.deny').click(); await chained;
+  // secret-name sheet: the names are listed and there is no allow-always
+  const sec = w.__cyb.askApproval({ kind: 'shell', command: 'node deploy.js', secrets: ['API_TOKEN', 'DB_PASS'], always: false });
+  await tick();
+  assert.deepStrictEqual([...d.querySelectorAll('.approval .asecret')].map((x) => x.textContent.replace(/^\S+ /, '')), ['API_TOKEN', 'DB_PASS'], 'secret names listed');
+  assert.ok(/could send them over the network/.test(d.querySelector('.approval').textContent) && !d.querySelector('.approval .abtn.always'), 'secret warning, no allow-always');
+  d.querySelector('.approval .abtn.deny').click(); assert.strictEqual(await sec, 'deny');
+  w.__cyb.settings.secrets = [{ name: 'API_TOKEN', value: 'tok-12345' }];
+  assert.strictEqual(String(w.__cyb.namedSecrets('echo $API_TOKEN')), 'API_TOKEN'); assert.strictEqual(w.__cyb.namedSecrets('echo hi').length, 0);
+  w.__cyb.settings.secrets = [];
+  // Undo warns about files over 5 MB that the checkpoint does not hold
+  w.__cyb.ws.set('big.bin', new w.Uint8Array(6 * 1048576)); w.__cyb.ws.set('small.txt', 'one');
+  const cpBig = w.__cyb.C.Safety.makeCheckpoint(w.__cyb.ws);
+  assert.strictEqual(String(cpBig.skipped), 'big.bin');
+  w.__cyb.ws.set('small.txt', 'two'); w.__cyb.offerUndo(cpBig);
+  assert.ok(/Undo does not cover 1 large file/.test(d.querySelector('.undonote').textContent) && /big\.bin \(6\.0 MB\)/.test(d.querySelector('.undonote').textContent), 'large-file warning shown next to Undo');
+  d.querySelector('#messages .undo').click(); assert.strictEqual(w.__cyb.ws.get('small.txt'), 'one'); assert.ok(!d.querySelector('.undonote'));
+  const cpBig2 = w.__cyb.C.Safety.makeCheckpoint(w.__cyb.ws); w.__cyb.ws.set('big.bin', new w.Uint8Array(7 * 1048576)); w.__cyb.offerUndo(cpBig2);
+  assert.ok(!d.querySelector('#messages .undo') && /changed 1 large file that Undo cannot restore/.test(d.querySelector('.undonote').textContent), 'warns when only a large file changed');
+  w.__cyb.ws.remove('big.bin'); w.__cyb.ws.remove('small.txt');
   // permission modes in Settings
   d.getElementById('dSettings').click(); [...d.querySelectorAll('#sheetBody .srow')].find((b) => /^General/.test(b.textContent)).click();
   assert.strictEqual(d.querySelector('.seg.perm button.on').dataset.mode, 'ask', 'Ask is the default mode');

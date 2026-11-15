@@ -28,6 +28,11 @@ public final class ShellRunner {
     }
 
     public static Result run(File root, String command, int timeoutSec, File home) {
+        return run(root, command, timeoutSec, home, null);
+    }
+
+    /** @param cancel set to true from another thread to stop the command early (exit code 130) */
+    public static Result run(File root, String command, int timeoutSec, File home, java.util.concurrent.atomic.AtomicBoolean cancel) {
         final Result r = new Result();
         //noinspection ResultOfMethodCallIgnored
         root.mkdirs();
@@ -68,8 +73,9 @@ public final class ShellRunner {
             reader.start();
 
             long deadline = System.currentTimeMillis() + Math.max(1, timeoutSec) * 1000L;
-            boolean finished = false;
+            boolean finished = false, cancelled = false;
             while (System.currentTimeMillis() < deadline) {
+                if (cancel != null && cancel.get()) { cancelled = true; break; }
                 try {
                     r.code = proc.exitValue();
                     finished = true;
@@ -79,9 +85,9 @@ public final class ShellRunner {
                 }
             }
             if (!finished) {
-                r.timedOut = true;
-                proc.destroy();
-                r.code = 124;
+                r.timedOut = !cancelled;
+                kill(proc);
+                r.code = cancelled ? 130 : 124;
             }
             reader.join(finished ? 3000 : 500);
             synchronized (out) {
@@ -98,6 +104,11 @@ public final class ShellRunner {
         }
         for (String k : before.keySet()) if (!after.containsKey(k)) r.deleted.add(k);
         return r;
+    }
+
+    private static void kill(Process proc) {
+        proc.destroy();
+        try { Process.class.getMethod("destroyForcibly").invoke(proc); } catch (Throwable olderAndroid) { /* API < 26 */ }
     }
 
     /** Relative path to a fingerprint (size plus CRC32 for small files, size plus mtime for large ones). */

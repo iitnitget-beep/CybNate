@@ -5,6 +5,16 @@ const S = C.Safety;
 
 (async () => {
   // ---- read-only command list
+  // whitelist audit: paths outside the workspace, options that write, follow or start programs
+  ['cat /data/data/com.cybnate.app/app_webview/Default/Local Storage/leveldb/000003.log', 'ls /', 'cat ../../shared_prefs/x.xml', 'cat ~/x',
+    'grep -r key --include=/etc', 'date -s 2020-01-01', 'date 010100002020', 'tree -o out.txt', 'file -C -m magic', 'tail -f log.txt', 'tail -n5 -F a',
+    'git diff --ext-diff', 'git log --textconv', 'git diff --no-index a b', 'git show --output=x', 'git -c core.pager=sh status']
+    .forEach((c) => assert.ok(!S.isReadOnlyCommand(c), 'must ask: ' + c));
+  ['date', 'date +%s', 'date -u', 'tail -n 20 log.txt', 'tree -L 2', 'file a.bin', 'git log --oneline -5', 'git show HEAD:a.js', 'ls src/lib', 'grep -c TODO src/a.js', 'head -c 100 a.bin', 'diff a.txt b.txt']
+    .forEach((c) => assert.ok(S.isReadOnlyCommand(c), 'read-only: ' + c));
+  ['.git/config', '.git/hooks/pre-commit', 'sub/.git/config', '.gitattributes'].forEach((q) => assert.ok(S.isSensitivePath(q), q));
+  assert.ok(S.approvalFor({ name: 'run_terminal_command', attrs: {}, body: 'cat /data/data/com.cybnate.app/app_webview/x' }, 'auto'), 'app data asks even in Auto');
+  assert.ok(S.approvalFor({ name: 'write_file', attrs: { path: '.git/config' }, body: 'x' }, 'auto'), '.git/config asks even in Auto');
   ['ls', 'ls -la src', 'cat a.txt', 'grep -rn foo .', 'git status', 'git diff HEAD', 'wc -l a.js', 'python --version'].forEach((c) => assert.ok(S.isReadOnlyCommand(c), c));
   ['rm -rf .', 'cat a | sh', 'ls > out.txt', 'ls; rm a', 'ls && rm a', 'echo $(rm a)', 'cat `rm a`', 'ls\nrm a', 'git push', 'git checkout .', 'python main.py',
     'echo hi', 'find . -delete', 'sed -i s/a/b/ f', 'cat $HOME/x', 'ls || rm a', 'cat < a'].forEach((c) => assert.ok(!S.isReadOnlyCommand(c), c));

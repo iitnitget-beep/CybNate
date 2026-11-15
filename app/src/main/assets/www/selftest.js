@@ -108,6 +108,34 @@
     const sh = await T.runCommand('cat cp-a.txt cp-b.txt', 30); must(/A\s*B/.test(sh.out), 'disk not restored: ' + sh.out); return JSON.stringify(r);
   });
 
+  await test('preview cannot reach the native bridge', async () => {
+    const N = window.Native; must(N && N.openPreview && N.previewTitle, 'no preview bridge in this build');
+    const probe = '<title>loading</title><script>var r; try { r = (typeof Native === "undefined") ? "none" : "PRESENT"; Native.exec("pv1", "echo pwned > pwned.txt", 10); r = "EXEC-RAN"; } catch (e) { r = "blocked-" + (typeof Native); } document.title = "probe:" + r;<\/script>';
+    T.ws.set('probe.html', probe); T.openPreview('probe.html');
+    must(!document.querySelector('iframe'), 'the app page must not host the preview in an iframe');
+    let t = ''; for (let i = 0; i < 40 && !/^probe:/.test(t); i++) { await new Promise((r) => setTimeout(r, 250)); t = N.previewTitle(); }
+    await new Promise((r) => setTimeout(r, 1200));
+    const disk = JSON.parse(N.wsList() || '{}'); N.closePreview(); T.ws.remove('probe.html');
+    must(t === 'probe:blocked-undefined', 'preview saw the bridge: ' + t);
+    must(!('pwned.txt' in disk) && !T.ws.has('pwned.txt'), 'Native.exec ran from the preview');
+    return t + ', no file written';
+  });
+  await test('Stop ends a running shell command', async () => {
+    const ctl = new AbortController(), t0 = Date.now();
+    setTimeout(() => ctl.abort(), 600);
+    const r = await T.runCommand('sleep 20; echo late > late.txt', 30, ctl.signal);
+    const ms = Date.now() - t0; must(ms < 6000, 'took ' + ms + ' ms'); must(r.code === 130, 'code ' + r.code);
+    await new Promise((r2) => setTimeout(r2, 500)); must(!T.ws.has('late.txt'), 'command kept running');
+    return 'stopped after ' + ms + ' ms, exit ' + r.code;
+  });
+  await test('large shell output file is kept on disk and reported', async () => {
+    const r = await T.runCommand('dd if=/dev/zero of=big.bin bs=1048576 count=9 2>/dev/null; ls', 60);
+    must(/too large to load/.test(r.out) && /big\.bin/.test(r.out), r.out); must(!T.ws.has('big.bin'), 'should not be in workspace');
+    must(JSON.parse(localStorage.getItem('cyb.diskOnly') || '[]').indexOf('big.bin') >= 0, 'not remembered');
+    const r2 = await T.runCommand('rm big.bin && ls', 30);
+    must(JSON.parse(localStorage.getItem('cyb.diskOnly') || '[]').indexOf('big.bin') < 0, 'not forgotten after delete'); return 'kept, reported, forgotten after rm';
+  });
+
   const fails = lines.filter((l) => /FAIL/.test(l)).length;
   console.log('CYBTEST DONE pass=' + (lines.length - fails) + ' fail=' + fails);
   box.textContent = lines.join('\n') + '\n\nDONE pass=' + (lines.length - fails) + ' fail=' + fails;

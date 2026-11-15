@@ -19,7 +19,16 @@
     cmd = String(cmd || '').trim();
     if (!cmd || hasShellMeta(cmd)) return false;
     const a = cmd.split(/\s+/), prog = a[0];
-    if (prog === 'git') return RO_GIT.indexOf(a[1]) >= 0 && !a.some((x) => /^--output|^-o$/.test(x));
+    // Audit rules (Phase 1 follow-up):
+    //  - no absolute, home or parent paths: the app's own data folder holds API keys and secrets
+    //  - no option that writes a file, follows a file forever, or makes the tool start another program
+    if (a.slice(1).some((x) => /(^|=|["'])(\/|~)/.test(x) || /\.\./.test(x))) return false;
+    const opt = (re) => a.slice(1).some((x) => re.test(x));
+    if (prog === 'git') return RO_GIT.indexOf(a[1]) >= 0 && !opt(/^(--output|-o$|--ext-diff|--textconv|--no-index|--exec|-c$|-C$|--git-dir|--work-tree)/);
+    if (prog === 'date') return a.slice(1).every((x) => /^(\+[\w%:.\-\/]*|-u|-R|-I\w*|--utc|--iso-8601(=\w+)?|--rfc-\w+(=\w+)?)$/.test(x));
+    if (prog === 'tree' && opt(/^(-o|--output)/)) return false;
+    if (prog === 'file' && opt(/^(-C|--compile|-m|--magic-file)/)) return false;
+    if (prog === 'tail' && opt(/^(-[a-zA-Z0-9]*[fF]|--follow|--retry|--pid)/)) return false;
     if ((prog === 'python' || prog === 'python3' || prog === 'node') && a.length === 2 && /^(--version|-V|-v)$/.test(a[1])) return true;
     return RO_PROGS.indexOf(prog) >= 0;
   }
@@ -34,6 +43,8 @@
     p = normPath(p).toLowerCase();
     const base = p.split('/').pop();
     if (p === '.github' || p.indexOf('.github/') === 0 || p.indexOf('/.github/') >= 0) return true;
+    // git settings and hooks can make a later "read-only" git command start another program
+    if (p === '.git' || p.indexOf('.git/') === 0 || p.indexOf('/.git/') >= 0 || base === '.gitconfig' || base === '.gitattributes') return true;
     if (/^(notice|license|licence|copying)(\.[a-z]+)?$/.test(base)) return true;
     if (/^\.env(\..*)?$/.test(base) || /\.(jks|keystore|pem|key|p12|pfx)$/.test(base)) return true;
     if (/^(secrets?|credentials?|settings|local)\.(json|ya?ml|toml|properties|xml|ini)$/.test(base)) return true;
@@ -42,7 +53,10 @@
   }
   /** A command that names a sensitive file is asked about even in Auto mode. */
   function commandTouchesSensitive(cmd) {
-    return String(cmd || '').split(/[\s"'=:,;|&<>()]+/).some((w) => w && isSensitivePath(w));
+    cmd = String(cmd || '');
+    // the app's private data (WebView storage) holds API keys and secrets
+    if (/app_webview|shared_prefs|\/data\/(data|user)\//.test(cmd)) return true;
+    return cmd.split(/[\s"'=:,;|&<>()]+/).some((w) => w && isSensitivePath(w));
   }
 
   /**
@@ -155,10 +169,10 @@
   /** Remember every file (by reference, no copy). Files past the size limits are listed in `skipped` and left alone on restore. */
   function makeCheckpoint(ws, maxTotal, maxFile) {
     maxTotal = maxTotal || 40 * 1048576; maxFile = maxFile || 5 * 1048576;
-    const cp = { files: new Map(), skipped: [], bytes: 0, time: Date.now() };
+    const cp = { files: new Map(), skipped: [], skippedSize: {}, bytes: 0, time: Date.now() };
     ws.list().forEach((p) => {
       const v = ws.get(p), n = sizeOf(v);
-      if (n > maxFile || cp.bytes + n > maxTotal) { cp.skipped.push(p); return; }
+      if (n > maxFile || cp.bytes + n > maxTotal) { cp.skipped.push(p); cp.skippedSize[p] = n; return; }
       cp.files.set(p, v); cp.bytes += n;
     });
     return cp;

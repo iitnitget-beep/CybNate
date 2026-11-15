@@ -45,6 +45,8 @@ public class MainActivity extends Activity {
     private static final int REQ_FILE = 41;
 
     private WebView web;
+    private PreviewPane preview;
+    private final ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicBoolean> shells = new ConcurrentHashMap<>();
     private ValueCallback<Uri[]> fileCallback;
     private final ConcurrentHashMap<String, HttpURLConnection> requests = new ConcurrentHashMap<>();
 
@@ -53,7 +55,10 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         web = new WebView(this);
         web.setBackgroundColor(0xFF1C1C1C);
-        setContentView(web);
+        final android.widget.FrameLayout root = new android.widget.FrameLayout(this);
+        root.addView(web);
+        setContentView(root);
+        preview = new PreviewPane(this, root);
 
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
@@ -136,7 +141,7 @@ public class MainActivity extends Activity {
         if (savedInstanceState != null) web.restoreState(savedInstanceState);
         else {
             // Load only once the view has a real size: a page loaded into a 0x0 WebView can stay blank.
-            final String url = getIntent() != null && getIntent().getBooleanExtra("selftest", false) ? HOME + "?selftest=1" : HOME;
+            final String url = getIntent() != null && getIntent().getBooleanExtra("selftest", false) && workspaceIsEmpty() ? HOME + "?selftest=1" : HOME;
             if (web.getWidth() > 0) web.loadUrl(url);
             else web.addOnLayoutChangeListener(new android.view.View.OnLayoutChangeListener() {
                 boolean done;
@@ -177,6 +182,7 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (preview != null && preview.isOpen()) { preview.close(); return; }
         web.evaluateJavascript("(window.onNativeBack && window.onNativeBack()) ? '1' : '0'", new ValueCallback<String>() {
             @Override
             public void onReceiveValue(String v) {
@@ -196,6 +202,12 @@ public class MainActivity extends Activity {
         if (p.endsWith(".svg")) return "image/svg+xml";
         if (p.endsWith(".png")) return "image/png";
         return "application/octet-stream";
+    }
+
+    /** The self test wipes the workspace, and any app can start this activity: allow it only when there is nothing to lose. */
+    private boolean workspaceIsEmpty() {
+        String[] kids = wsRoot().list();
+        return kids == null || kids.length == 0;
     }
 
     private File wsRoot() {
@@ -352,7 +364,11 @@ public class MainActivity extends Activity {
                     JSONObject o = new JSONObject();
                     try {
                         File root = wsRoot();
-                        ShellRunner.Result r = ShellRunner.run(root, command, timeoutSec, getFilesDir());
+                        java.util.concurrent.atomic.AtomicBoolean cancel = new java.util.concurrent.atomic.AtomicBoolean();
+                        shells.put(id, cancel);
+                        ShellRunner.Result r;
+                        try { r = ShellRunner.run(root, command, timeoutSec, getFilesDir(), cancel); }
+                        finally { shells.remove(id); }
                         o.put("code", r.code);
                         o.put("out", r.output);
                         o.put("timedOut", r.timedOut);
@@ -381,6 +397,30 @@ public class MainActivity extends Activity {
                     js("window.__nx && window.__nx(" + JSONObject.quote(id) + "," + o.toString() + ")");
                 }
             }).start();
+        }
+
+        /** Stops a running shell command (the user pressed Stop). */
+        @JavascriptInterface
+        public void execAbort(String id) {
+            java.util.concurrent.atomic.AtomicBoolean c = shells.get(id);
+            if (c != null) c.set(true);
+        }
+
+        /** Shows workspace HTML in a separate WebView that has no native bridge. */
+        @JavascriptInterface
+        public void openPreview(final String name, final String html) {
+            runOnUiThread(new Runnable() { @Override public void run() { preview.open(name, html); } });
+        }
+
+        @JavascriptInterface
+        public void closePreview() {
+            runOnUiThread(new Runnable() { @Override public void run() { preview.close(); } });
+        }
+
+        /** Title of the page in the preview view; the self test reads its probe result from here. */
+        @JavascriptInterface
+        public String previewTitle() {
+            return preview.title;
         }
 
         /** Saves a file into the public Downloads folder. Returns a human readable location or "ERR:..." */
