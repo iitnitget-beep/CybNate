@@ -83,7 +83,7 @@ const AUTO = { mode: 'auto' }; // these older tests exercise the tools themselve
   const apk = path.join(__dirname, '..', 'release', 'CybNate.apk');
   if (fs.existsSync(apk)) {
     ws.set('app.apk', new Uint8Array(fs.readFileSync(apk)));
-    res = await C.runTools(C.parseToolCalls('<file_info path="app.apk"/><android_manifest path="app.apk"/><zip_extract path="app.apk" entry="classes.dex" dest="c.dex"/><file_info path="c.dex"/><strings path="c.dex" filter="cybnate" limit="5"/>', allowed), ws);
+    res = await C.runTools(C.parseToolCalls('<file_info path="app.apk"/><android_manifest path="app.apk"/><zip_extract path="app.apk" entry="classes.dex" dest="c.dex"/><file_info path="c.dex"/><strings path="c.dex" filter="cybnate" limit="5"/>', allowed), ws, AUTO);
     res.forEach((r) => assert.ok(r.ok, r.text));
     assert.ok(/Android APK/.test(res[0].text) && /classes\.dex/.test(res[0].text));
     assert.ok(/package="com\.cybnate\.app"/.test(res[1].text) && /android\.permission\.INTERNET/.test(res[1].text), res[1].text);

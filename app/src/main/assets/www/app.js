@@ -11,7 +11,7 @@
   const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { toast('Storage is full. Delete some old chats.'); } };
 
   const settings = Object.assign({
-    provider: 'pollinations', model: 'openai-fast', keys: {}, customUrl: '', models: {}, extra: '', maxSteps: 25, skills: [], secrets: [], startup: '',
+    provider: 'pollinations', model: 'openai-fast', keys: {}, customUrl: '', models: {}, extra: '', maxSteps: 25, skills: [], secrets: [], startup: '', permission: 'ask',
   }, load('cyb.settings', {}));
   let sessions = load('cyb.sessions', []);
   let current = null;
@@ -266,26 +266,30 @@
 
   let execQueue = Promise.resolve();
   /** Run a terminal command: Python and JavaScript in bundled runtimes, everything else in the Android shell. */
-  function runCommand(cmd, timeoutSec, signal) {
-    const job = execQueue.then(() => runCommandNow(cmd, timeoutSec || 60, signal));
+  function runCommand(cmd, timeoutSec, signal, secretNames) {
+    const job = execQueue.then(() => runCommandNow(cmd, timeoutSec || 60, signal, secretNames));
     execQueue = job.catch(() => {});
     return job;
   }
   const secretEnv = () => { const o = {}; (settings.secrets || []).forEach((k) => { if (k.name) o[k.name] = k.value; }); return o; };
   const redact = (t) => { (settings.secrets || []).forEach((k) => { if (k.value && k.value.length >= 4) t = String(t || '').split(k.value).join('***'); }); return t; };
-  async function runCommandNow(cmd, timeoutSec, signal) {
-    const r = await runCommandRaw(cmd, timeoutSec, signal);
+  /** Secrets whose name appears in a command the user typed. */
+  const namedSecrets = (cmd) => Object.keys(secretEnv()).filter((k) => new RegExp('\\b' + k + '\\b').test(String(cmd)));
+  async function runCommandNow(cmd, timeoutSec, signal, secretNames) {
+    const r = await runCommandRaw(cmd, timeoutSec, signal, secretNames);
     if (r && r.out) r.out = redact(r.out);
     return r;
   }
-  async function runCommandRaw(cmd, timeoutSec, signal) {
+  async function runCommandRaw(cmd, timeoutSec, signal, secretNames) {
+    // secrets reach a run only when it names them; nothing is passed by default
+    const all = secretEnv(), senv = {}; (secretNames || []).forEach((k) => { if (all[k] != null) senv[k] = all[k]; });
     if (signal && signal.aborted) throw abortError();
     const pc = C.parseCommand(cmd);
     if (pc.kind === 'note') return { code: pc.code || 0, out: pc.text, files: [] };
     let r;
     if (pc.kind === 'sh') {
       if (!canShell) return { code: 127, out: 'Shell commands run only in the installed Android app. In this browser preview you can run `python …` and `node …`.', files: [] };
-      const exp = Object.keys(secretEnv()).filter((k) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)).map((k) => 'export ' + k + "='" + String(secretEnv()[k]).replace(/'/g, "'\\''") + "'; ").join('');
+      const exp = Object.keys(senv).filter((k) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)).map((k) => 'export ' + k + "='" + String(senv[k]).replace(/'/g, "'\\''") + "'; ").join('');
       r = await nativeExec(exp + cmd, timeoutSec);
       const changed = (r.changed || []).filter((c) => !c.tooBig);
       mirror = false;
@@ -302,9 +306,9 @@
     const files = ws.list().filter((p) => ws.size(p) <= 16 * 1048576).map((p) => ({ path: p, data: ws.bytes(p) }));
     if (pc.kind === 'python' || pc.kind === 'pip') {
       if (!pyLoaded) setStatus('starting Python…');
-      r = await workerRun('py', { files, mode: pc.kind === 'pip' ? 'pip' : pc.mode, argv: pc.argv, src: pc.src || '', cwd: pc.cwd, env: secretEnv() }, timeoutSec, signal);
+      r = await workerRun('py', { files, mode: pc.kind === 'pip' ? 'pip' : pc.mode, argv: pc.argv, src: pc.src || '', cwd: pc.cwd, env: senv }, timeoutSec, signal);
     } else {
-      r = await workerRun('js', { files, mode: pc.mode, argv: pc.argv, src: pc.src || '', cwd: pc.cwd, env: secretEnv() }, timeoutSec, signal);
+      r = await workerRun('js', { files, mode: pc.mode, argv: pc.argv, src: pc.src || '', cwd: pc.cwd, env: senv }, timeoutSec, signal);
     }
     (r.changed || []).forEach((c) => { const t = C.decodeIfText(c.data); ws.set(c.path, t != null ? t : c.data); });
     (r.deleted || []).forEach((p) => ws.remove(p));
@@ -395,6 +399,62 @@
     return text || '(the page has no readable text; it may need JavaScript to render)';
   }
 
+  // ------------------------------------------------------------- approvals
+  const S = C.Safety;
+  const permMode = () => (S.MODES.indexOf(settings.permission) >= 0 ? settings.permission : 'ask');
+  let approvalQueue = Promise.resolve();
+  /** Ask the user about one risky action. Requests are shown one after another; Stop cancels the pending ones. */
+  function askApproval(req, signal) {
+    if (req.kind === 'shell' && req.always && current && S.ruleAllows(current.allow, req.command)) return Promise.resolve('allow');
+    const job = approvalQueue.then(() => showApproval(req, signal));
+    approvalQueue = job.catch(() => {});
+    return job;
+  }
+  function fillApproval(body, req) {
+    const pre = (t, cls) => { const p = el('pre', 'apre' + (cls ? ' ' + cls : '')); p.textContent = t; body.appendChild(p); };
+    if (req.kind === 'shell') {
+      pre(req.command);
+      if (req.secrets && req.secrets.length) body.appendChild(el('p', 'awarn', 'This command will receive your secrets: ' + req.secrets.join(', ')));
+      if (req.sensitive) body.appendChild(el('p', 'awarn', 'It names a protected file (CI, licence, settings or secrets).'));
+    } else if (req.kind === 'delete') {
+      pre(req.path);
+    } else if (req.kind === 'push') {
+      body.appendChild(el('p', '', req.repo + ' · branch ' + req.branch));
+      pre((req.files || []).join('\n') || '(no changed files)');
+    } else {
+      (req.items || []).forEach((it) => {
+        body.appendChild(el('div', 'afile', (it.isNew ? 'new: ' : '') + it.path + (it.sensitive ? '  ⚠ protected' : '')));
+        if (it.note) body.appendChild(el('p', 'awarn', it.note));
+        if (it.diff) pre(it.diff, 'diff');
+      });
+    }
+  }
+  function showApproval(req, signal) {
+    return new Promise((resolve, reject) => {
+      if (signal && signal.aborted) return reject(abortError());
+      const wrap = el('div', 'approval'), card = el('div', 'acard');
+      const titles = { shell: 'Run this command?', edits: 'Apply these file changes?', delete: 'Delete this file?', push: 'Push to GitHub?' };
+      card.appendChild(el('div', 'atitle', titles[req.kind] || 'Allow this?'));
+      const body = el('div', 'abody'); card.appendChild(body); fillApproval(body, req);
+      const done = (ans, err) => { wrap.remove(); if (signal) signal.removeEventListener('abort', onAbort); if (err) reject(err); else resolve(ans); };
+      const onAbort = () => done(null, abortError());
+      if (signal) signal.addEventListener('abort', onAbort);
+      const btn = (label, cls, fn) => { const b = el('button', 'abtn ' + cls, label); b.onclick = fn; card.appendChild(b); };
+      btn('Allow once', 'allow', () => done('allow'));
+      approvalAlways(req, btn, done);
+      btn('Deny', 'deny', () => done('deny'));
+      wrap.appendChild(card); document.body.appendChild(wrap);
+    });
+  }
+  /** "Allow always for this chat": only for a plain shell command (exact text, or its program prefix). Never for delete, push or protected files. */
+  function approvalAlways(req, btn, done) {
+    if (req.kind !== 'shell' || !req.always || !current) return;
+    const add = (rule) => { current.allow = (current.allow || []).concat([rule]); saveSessions(); done('allow'); };
+    btn('Always allow this exact command in this chat', 'always', () => add({ exact: req.command.trim() }));
+    const prefix = S.prefixOf(req.command);
+    if (prefix && prefix !== req.command.trim()) btn('Always allow "' + prefix + ' …" in this chat', 'always', () => add({ prefix }));
+  }
+
   // ------------------------------------------------------------ sub-agents
   let repoBase = load('cyb.repo', null);
   const caps = (extra) => Object.assign({ shell: canShell, repo: repoBase ? repoBase.owner + '/' + repoBase.repo : '', skills: (settings.skills || []).filter((k) => k.on !== false), secrets: Object.keys(secretEnv()) }, extra || {});
@@ -413,7 +473,7 @@
   }
   async function spawnAgent(type, prompt, signal) {
     const agent = C.AGENTS[type], msgs = [{ role: 'user', content: prompt }];
-    const env = { exec: (c, t) => runCommand(c, t, signal), search: (q) => webSearch(q, signal), readUrl: (u) => readUrl(u, signal), skill: loadSkill };
+    const env = { mode: permMode, approve: (r) => askApproval(r, signal), exec: (c, t, sec) => runCommand(c, t, signal, sec), search: (q) => webSearch(q, signal), readUrl: (u) => readUrl(u, signal), skill: loadSkill };
     let last = '';
     for (let step = 0; step < 8; step++) {
       const sys = C.buildSystemPrompt(type, ws.summary(), extraPrompt(), caps({ noSpawn: true }));
@@ -589,7 +649,7 @@
         let toolMsg;
         if (calls.length && !calls.every((c) => C.PASSIVE.indexOf(c.name) >= 0)) {
           const sig = abortCtl.signal;
-          const env = { exec: (c, t) => runCommand(c, t, sig), search: (q) => webSearch(q, sig), readUrl: (u) => readUrl(u, sig), spawn: (type, p) => spawnAgent(type, p, sig), skill: loadSkill };
+          const env = { mode: permMode, approve: (r) => askApproval(r, sig), exec: (c, t, sec) => runCommand(c, t, sig, sec), search: (q) => webSearch(q, sig), readUrl: (u) => readUrl(u, sig), spawn: (type, p) => spawnAgent(type, p, sig), skill: loadSkill };
           const parts = await C.runTools(calls, ws, env, (label) => setStatus(label.slice(0, 60) + '…'));
           toolMsg = { role: 'user', tool: true, parts, content: C.formatToolResults(parts) };
         } else if (new RegExp('<(' + C.BODY_TOOLS.join('|') + ')\\b[^>]*>(?![\\s\\S]*<\\/\\1\\s*>)').test(C.stripThink(full))) {
@@ -961,7 +1021,7 @@
     let log = '';
     for (const l of lines) {
       toast('Startup: ' + l.slice(0, 40));
-      try { const r = await runCommand(l, 180); log += '$ ' + l + '\n' + (r.out || '').trim() + '\n[exit code ' + r.code + ']\n\n'; if (r.code !== 0) break; }
+      try { const r = await runCommand(l, 180, undefined, namedSecrets(l)); log += '$ ' + l + '\n' + (r.out || '').trim() + '\n[exit code ' + r.code + ']\n\n'; if (r.code !== 0) break; }
       catch (e) { log += '$ ' + l + '\n' + (e.message || e) + '\n'; break; }
     }
     toast(/\[exit code [1-9]/.test(log) ? 'Startup script failed' : 'Startup script finished');
@@ -978,7 +1038,7 @@
       c1.appendChild(run); c1.appendChild(out); body.appendChild(c1);
 
       const c2 = el('div', 'card'); c2.appendChild(el('div', 'ctitle', 'Secrets'));
-      c2.appendChild(el('p', '', 'Stored only on this phone. Commands receive them as environment variables; the model sees the names, never the values.'));
+      c2.appendChild(el('p', '', 'Stored only on this phone. A command gets a secret only when it names it: the agent must request it and you approve, and your own terminal commands get the ones whose name you type. The model sees the names, never the values.'));
       const list = settings.secrets || (settings.secrets = []);
       if (!list.length) c2.appendChild(el('p', '', 'No secrets yet.'));
       list.forEach((k, i) => { const r = settingsRow(k.name, 'Remove', () => { list.splice(i, 1); saveSettings(); drawSheet(); }, true); r.classList.add('mono'); c2.appendChild(r); });

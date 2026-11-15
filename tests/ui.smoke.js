@@ -41,7 +41,14 @@ const requests = [];
 
   d.getElementById('input').value = 'Build a timer';
   d.getElementById('btnSend').click();
-  await new Promise((r) => setTimeout(r, 1200));
+  // Ask mode is the default: the agent's file write and command wait for the approval sheet
+  let sheets = 0;
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    const allow = d.querySelector('.approval .abtn.allow');
+    if (allow) { sheets++; allow.click(); }
+  }
+  assert.ok(sheets >= 1, 'approval sheet was shown in Ask mode');
   assert.deepStrictEqual(errors, []);
   const chat = requests.filter((r) => r.body);
   assert.strictEqual(chat.length, 3, 'agent loop made 3 model calls');
