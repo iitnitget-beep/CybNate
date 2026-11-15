@@ -8,6 +8,9 @@ adb shell am start -n com.cybnate.app/.MainActivity
 for i in $(seq 1 30); do adb logcat -d -s CybNateJS:I 2>/dev/null | grep -q "CYBUI ready" && break; sleep 2; done
 sleep 14
 adb exec-out screencap -p > release/screenshot-home.png
+adb shell dumpsys window | grep -E 'mCurrentFocus|mFocusedApp' > release/focus.txt || true
+sleep 15
+adb exec-out screencap -p > release/screenshot-home2.png
 adb logcat -d -s CybNateJS:I | grep -o "CYB.*" > release/device-console.txt || true
 adb shell am force-stop com.cybnate.app
 adb logcat -c

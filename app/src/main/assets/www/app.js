@@ -980,6 +980,13 @@
   current = sessions[0] || null;
   if (!current) newSession(); else renderAll();
   console.log('CYBUI ready agents=' + $('agents').children.length + ' model=' + settings.model);
+  // Some WebViews lay the page out at 0x0 before the window is attached and then skip the first paint: repaint on resize.
+  let lastW = window.innerWidth;
+  window.addEventListener('resize', () => {
+    console.log('CYBUI resize ' + window.innerWidth + 'x' + window.innerHeight);
+    if (!lastW && window.innerWidth) { const b = document.body; b.style.display = 'none'; void b.offsetHeight; b.style.display = ''; }
+    lastW = window.innerWidth;
+  });
   setTimeout(() => { const w = document.querySelector('.welcome'), h = document.querySelector('header'); console.log('CYBUI layout header=' + (h ? h.offsetHeight : -1) + ' welcome=' + (w ? w.offsetHeight : -1) + ' win=' + window.innerWidth + 'x' + window.innerHeight); }, 1500);
   openDb().then(() => {
     syncDisk(); updateBadge();
