@@ -124,6 +124,7 @@
     const scored = (pool || []).map((t, i) => {
       let s = traitScore(trait, t.model) + 6 * healthScore(health[keyOf(t)], now) - i * 0.001;
       if (opt.avoidFamily && familyOf(t.model) !== opt.avoidFamily) s += 6;
+      if (t.ctx > 0 && trait !== 'fast') s += t.ctx < 16000 ? -4 : t.ctx >= 100000 ? 1 : 0; // agents need room for the system prompt and files
       if (opt.prefer && keyOf(opt.prefer) === keyOf(t)) s += 100;
       return { provider: t.provider, model: t.model, family: familyOf(t.model), score: s };
     }).sort((a, b) => b.score - a.score);
@@ -142,6 +143,56 @@
     return roles;
   }
 
+  // ------------------------------------------------- model metadata and the free-only guard
+  /**
+   * Context window and price facts from a /models reply, when the provider publishes them.
+   * @returns { modelId: { ctx?: tokens, out?: tokens, free?: true|false } }; `free` is absent when no price is published.
+   */
+  function parseModelMeta(json) {
+    const arr = Array.isArray(json) ? json : (json && (json.data || json.models)) || [], out = {};
+    arr.forEach((m) => {
+      if (!m || typeof m !== 'object') return;
+      const id = String(m.id || m.name || '').replace(/^models\//, ''); if (!id) return;
+      const e = {};
+      const ctx = m.context_length || m.context_window || m.inputTokenLimit || (m.top_provider && m.top_provider.context_length) || m.max_context_length;
+      if (ctx > 0) e.ctx = +ctx;
+      const mo = (m.top_provider && m.top_provider.max_completion_tokens) || m.max_completion_tokens || m.outputTokenLimit;
+      if (mo > 0) e.out = +mo;
+      if (m.pricing && typeof m.pricing === 'object') {
+        const vals = ['prompt', 'completion', 'request'].map((k) => m.pricing[k]).filter((v) => v != null && v !== '');
+        if (vals.length) e.free = vals.every((v) => parseFloat(v) === 0);
+      }
+      if (e.ctx || e.out || e.free !== undefined) out[id] = e;
+    });
+    return out;
+  }
+  /**
+   * May this model be called without spending money?
+   * `kind` describes how a provider charges: 'priced' = some models cost money per call (OpenRouter), so each model must be shown to be free;
+   * anything else = the cost depends on the user's own account or server, which the app cannot see.
+   * @returns {ok, reason}
+   */
+  function freeCheck(kind, model, meta, allowPaid) {
+    if (kind !== 'priced') return { ok: true, reason: '' };
+    const m = meta && meta[model];
+    if (m && m.free === true) return { ok: true, reason: 'price list says free' };
+    if (m && m.free === false) return allowPaid ? { ok: true, reason: 'paid model, allowed in Settings' } : { ok: false, reason: 'the provider lists a price for it' };
+    if (/:free$/.test(model) || /(^|\/)free$/.test(model)) return { ok: true, reason: 'free variant by name' };
+    return allowPaid ? { ok: true, reason: 'price unknown, paid models allowed in Settings' } : { ok: false, reason: 'it is not marked free and its price is unknown' };
+  }
+  /**
+   * Characters of chat history to send. Without a known context window the old fixed budget is kept.
+   * A known window can shrink the budget (small models) or raise it a little; it is never raised far,
+   * because free tiers also cap tokens per minute.
+   * @param ctx tokens (0 = unknown)  @param reserved characters already used by the system prompt
+   */
+  function historyBudget(ctx, reserved, fallback) {
+    fallback = fallback || 70000;
+    if (!(ctx > 0)) return fallback;
+    const room = Math.floor((ctx * 0.75 - 2000) * 3) - (reserved || 0); // ~3 characters per token, a quarter left for the reply
+    return Math.max(4000, Math.min(room, 120000));
+  }
+
   // ------------------------------------------------------------ task budget
   function limitError(code, message) { const e = new Error(message); e.name = 'BudgetError'; e.code = code; return e; }
   /** Counts model requests for one task and refuses the one past the cap. */
@@ -154,19 +205,71 @@
   }
 
   // ------------------------------------------------------------ rate limiter
-  // Conservative free-tier figures; `daily` counts only this app's own requests on this phone. 0 = no limit known.
+  // Starting pace only. Free tiers change, so nothing here is treated as the provider's real quota:
+  // `rpm` is how fast this app sends until the provider says otherwise (headers or a 429, see observe()),
+  // `dailyEst` only triggers the "running low" warning, and `daily` (a hard stop) is set only by the user or a test.
   const LIMITS = {
     pollinations: { concurrent: 1, rpm: 4, daily: 0 },
-    openrouter: { concurrent: 2, rpm: 20, daily: 50 },
-    groq: { concurrent: 2, rpm: 30, daily: 1000 },
-    gemini: { concurrent: 2, rpm: 10, daily: 250 },
+    openrouter: { concurrent: 2, rpm: 20, daily: 0, dailyEst: 50 },
+    groq: { concurrent: 2, rpm: 30, daily: 0, dailyEst: 1000 },
+    gemini: { concurrent: 2, rpm: 10, daily: 0, dailyEst: 250 },
     custom: { concurrent: 2, rpm: 60, daily: 0 },
     default: { concurrent: 2, rpm: 20, daily: 0 },
   };
+  /** Longest the limiter waits for a provider that asked us to back off; past this the caller should use another model. */
+  const MAX_BLOCK_WAIT = 90000;
+
+  /** "2m59.5s", "7.66s", "120ms", "30" (seconds) -> milliseconds; NaN when unreadable. */
+  function parseDuration(v) {
+    v = String(v == null ? '' : v).trim().toLowerCase();
+    if (!v) return NaN;
+    if (/^[\d.]+$/.test(v)) return parseFloat(v) * 1000;
+    let ms = 0, any = false;
+    v.replace(/([\d.]+)\s*(ms|h|m|s)/g, (_, n, u) => { any = true; ms += parseFloat(n) * (u === 'h' ? 3600000 : u === 'm' ? 60000 : u === 's' ? 1000 : 1); return ''; });
+    return any ? ms : NaN;
+  }
+  /**
+   * Read what a provider says about its own limits from response headers (any letter case).
+   * Understands retry-after (seconds or HTTP date) and the x-ratelimit-* / ratelimit-* families used by OpenRouter, Groq and others.
+   * @returns {retryAfterMs, limit, remaining, resetMs, limitTokens, remainingTokens} with only the fields that were present.
+   */
+  function parseRateHeaders(headers, now) {
+    const h = {}, out = {};
+    Object.keys(headers || {}).forEach((k) => { h[k.toLowerCase()] = String(headers[k]); });
+    now = now || Date.now();
+    const num = (v) => { const n = parseFloat(v); return isFinite(n) ? n : undefined; };
+    const pick = (...names) => { for (const n of names) if (h[n] != null && h[n] !== '') return h[n]; };
+    const ra = pick('retry-after');
+    if (ra != null) {
+      const ms = /^[\d.]+$/.test(ra.trim()) ? parseFloat(ra) * 1000 : Date.parse(ra) - now;
+      if (isFinite(ms) && ms >= 0) out.retryAfterMs = Math.round(ms);
+    }
+    const lim = num(pick('x-ratelimit-limit-requests', 'x-ratelimit-limit', 'ratelimit-limit')); if (lim !== undefined) out.limit = lim;
+    const rem = num(pick('x-ratelimit-remaining-requests', 'x-ratelimit-remaining', 'ratelimit-remaining')); if (rem !== undefined) out.remaining = rem;
+    const reset = pick('x-ratelimit-reset-requests', 'x-ratelimit-reset', 'ratelimit-reset');
+    if (reset != null) {
+      let ms;
+      if (/^\d{12,}$/.test(reset.trim())) ms = parseInt(reset, 10) - now;            // epoch milliseconds
+      else if (/^\d{10,11}$/.test(reset.trim())) ms = parseInt(reset, 10) * 1000 - now; // epoch seconds
+      else ms = parseDuration(reset);                                                // a duration
+      if (isFinite(ms)) out.resetMs = Math.max(0, Math.round(ms));
+    }
+    const lt = num(pick('x-ratelimit-limit-tokens')); if (lt !== undefined) out.limitTokens = lt;
+    const rt = num(pick('x-ratelimit-remaining-tokens')); if (rt !== undefined) out.remainingTokens = rt;
+    return out;
+  }
+  /** A wait hint inside an error body, e.g. "Please try again in 7.66s" or "retry after 45 s". Milliseconds or 0. */
+  function retryHintMs(body) {
+    const m = /retry after ([\d.]+)\s*s/i.exec(body || '') || /try again in ((?:[\d.]+\s*(?:ms|h|m|s)\s*)+)/i.exec(body || '') || /"retryDelay"\s*:\s*"([\d.]+s)"/i.exec(body || '');
+    if (!m) return 0;
+    const ms = /^[\d.]+$/.test(m[1]) ? parseFloat(m[1]) * 1000 : parseDuration(m[1]);
+    return isFinite(ms) ? Math.round(ms) : 0;
+  }
   /**
    * One limiter for every model request in the app: at most `concurrent` running per provider,
    * a token bucket for requests per minute, and a per-day counter.
-   * @param o {now(), sleep(ms, signal), limits, loadDaily(), saveDaily(obj)}
+   * observe() feeds back what the provider actually answered, so the pace follows the real limit instead of a fixed number.
+   * @param o {now(), sleep(ms, signal), limits, loadDaily(), saveDaily(obj), loadSeen(), saveSeen(obj)}
    */
   function createLimiter(o) {
     o = o || {};
@@ -174,7 +277,12 @@
     const sleep = o.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
     const limits = Object.assign({}, LIMITS, o.limits || {});
     const st = {};
-    const lim = (p) => limits[p] || limits.default;
+    const seen = (o.loadSeen && o.loadSeen()) || {}; // per provider: what its responses told us
+    const sn = (p) => seen[p] || (seen[p] = {});
+    const lim = (p) => {
+      const L = limits[p] || limits.default, e = seen[p];
+      return e && e.rpm ? Object.assign({}, L, { rpm: Math.min(L.rpm, e.rpm) }) : L;
+    };
     const state = (p) => st[p] || (st[p] = { running: 0, queue: [], tokens: lim(p).rpm, last: now(), peak: 0 });
     const day = () => new Date(now()).toISOString().slice(0, 10);
     const daily = () => { let d = o.loadDaily ? o.loadDaily() : (o._d || null); if (!d || d.date !== day()) d = { date: day(), counts: {} }; return d; };
@@ -187,6 +295,8 @@
       const used = () => daily().counts[p] || 0;
       if (L.daily && used() >= L.daily) throw limitError('daily', 'Daily request limit reached for ' + p + ' (' + used() + '/' + L.daily + '). Try another provider or wait until tomorrow.');
       if (signal && signal.aborted) throw abortErr();
+      const blocked = (sn(p).blockedUntil || 0) - now();
+      if (blocked > MAX_BLOCK_WAIT) throw limitError('rate', p + ' asked to wait ' + Math.ceil(blocked / 1000) + ' s' + (sn(p).why ? ' (' + sn(p).why + ')' : '') + '. Using another model is faster.');
       if (s.running >= L.concurrent) {
         await new Promise((resolve, reject) => {
           const w = { resolve, reject }; s.queue.push(w);
@@ -197,6 +307,7 @@
       let done = false;
       const release = () => { if (done) return; done = true; const next = s.queue.shift(); if (next) next.resolve(); else s.running--; };
       try {
+        for (let w = (sn(p).blockedUntil || 0) - now(); w > 0; w = (sn(p).blockedUntil || 0) - now()) await sleep(Math.min(w, MAX_BLOCK_WAIT) + 5, signal);
         for (refill(p); s.tokens < 1; refill(p)) await sleep(Math.ceil((1 - s.tokens) * 60000 / L.rpm) + 5, signal);
         if (L.daily && used() >= L.daily) throw limitError('daily', 'Daily request limit reached for ' + p + '.');
       } catch (e) { release(); throw e; }
@@ -204,12 +315,42 @@
       const d = daily(); d.counts[p] = (d.counts[p] || 0) + 1; putDaily(d);
       return release;
     }
-    function status(p) {
-      refill(p); const s = state(p), L = lim(p), used = daily().counts[p] || 0;
-      return { running: s.running, waiting: s.queue.length, peak: s.peak, tokens: Math.floor(s.tokens), rpm: L.rpm, concurrent: L.concurrent, dailyUsed: used, dailyMax: L.daily,
-        low: !!(L.daily && L.daily - used < 8) };
+    /**
+     * Learn from one response. @param r {status, headers, body}
+     * 429/503: back off for as long as the provider asks (header, then body hint, else doubling 2 s..60 s) and slow the pace.
+     * Success: clear the back-off, let the pace recover slowly, remember the reported quota.
+     */
+    function observe(p, r) {
+      r = r || {}; const e = sn(p), t = now(), H = parseRateHeaders(r.headers, t), base = (limits[p] || limits.default).rpm;
+      if (H.limit !== undefined || H.remaining !== undefined) e.quota = { limit: H.limit, remaining: H.remaining, resetAt: H.resetMs !== undefined ? t + H.resetMs : 0, at: t };
+      if (H.limitTokens !== undefined || H.remainingTokens !== undefined) e.tokens = { limit: H.limitTokens, remaining: H.remainingTokens, at: t };
+      if (r.status === 429 || r.status === 503) {
+        e.strikes = Math.min(6, (e.strikes || 0) + 1); e.last429 = t;
+        let wait = H.retryAfterMs !== undefined ? H.retryAfterMs : retryHintMs(r.body);
+        let why = wait ? 'provider asked to wait' : '';
+        if (!wait && r.status === 429 && H.remaining === 0 && H.resetMs) { wait = H.resetMs; why = 'quota used up until it resets'; }
+        if (!wait) { wait = Math.min(60000, 1000 * Math.pow(2, e.strikes)); why = 'rate limited, no wait time given'; }
+        e.blockedUntil = Math.max(e.blockedUntil || 0, t + wait); e.why = why;
+        if (r.status === 429) e.rpm = Math.max(1, Math.floor((e.rpm || base) / 2));
+      } else if (r.status && r.status < 400) {
+        e.strikes = 0; e.why = '';
+        if (e.rpm && e.rpm < base && (!e.last429 || t - e.last429 > 60000)) { e.rpm = Math.min(base, e.rpm + Math.max(1, Math.round(base / 10))); if (e.rpm >= base) delete e.rpm; }
+        if (H.remaining === 0 && H.resetMs) { e.blockedUntil = t + H.resetMs; e.why = 'quota used up until it resets'; }
+      }
+      const s = state(p); s.tokens = Math.min(s.tokens, lim(p).rpm);
+      if (o.saveSeen) o.saveSeen(seen);
+      return e;
     }
-    return { acquire, status, limits };
+    function status(p) {
+      refill(p); const s = state(p), L = lim(p), used = daily().counts[p] || 0, e = seen[p] || {}, t = now();
+      const max = L.daily || L.dailyEst || 0, q = e.quota && (!e.quota.resetAt || e.quota.resetAt > t) ? e.quota : null;
+      const lowSeen = !!(q && q.remaining !== undefined && q.limit >= 20 && q.remaining < 8 && q.resetAt - t > 10 * 60000);
+      return { running: s.running, waiting: s.queue.length, peak: s.peak, tokens: Math.floor(s.tokens), rpm: L.rpm, concurrent: L.concurrent, dailyUsed: used, dailyMax: max,
+        dailyIsEstimate: !L.daily && !!L.dailyEst, paceSource: e.rpm ? 'slowed after a rate-limit reply' : 'starting estimate',
+        quota: q, tokenQuota: e.tokens || null, blockedMs: Math.max(0, (e.blockedUntil || 0) - t), why: e.why || '',
+        low: !!(max && max - used < 8) || lowSeen };
+    }
+    return { acquire, status, observe, limits, seen };
   }
 
   // ------------------------------------------------- pipeline and sub-agents
@@ -244,5 +385,5 @@
   const subKeepsFile = (type, path) => !subWriteError(type, path);
 
   return { route, routerPrompt, parseRouterReply, isBigTask, ROUTES, familyOf, traitScore, healthScore, recordHealth, keyOf, pickChain, assignRoles,
-    createBudget, createLimiter, limitError, LIMITS, planPipeline, reviewPassed, ASK_TYPES, MAX_ASKS, subWriteError, subKeepsFile };
+    createBudget, createLimiter, limitError, LIMITS, MAX_BLOCK_WAIT, parseDuration, parseRateHeaders, retryHintMs, parseModelMeta, freeCheck, historyBudget, planPipeline, reviewPassed, ASK_TYPES, MAX_ASKS, subWriteError, subKeepsFile };
 });
