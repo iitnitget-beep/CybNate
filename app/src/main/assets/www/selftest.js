@@ -240,6 +240,14 @@
     const r = await T.runCommand('python -c "from calc import add; print(add(2, 3))"', 120); must(/5/.test(r.out), r.out); T.ws.remove('calc.py'); return 'fuzzy edit applied; add(2,3)=' + r.out;
   });
 
+  await test('integrations: catalogue + a wrong key is refused by the real service', async () => {
+    const I = window.Integrations; must(I && I.LIST.length >= 70, 'catalogue missing');
+    const r = await T.testIntegration(I.BY_ID.gitlab, { GITLAB_TOKEN: 'glpat-not-a-real-token' });
+    must(r.checked && r.ok === false && /HTTP 401/.test(r.why), JSON.stringify(r)); must(T.connectedIds().indexOf('gitlab') < 0, 'a refused key was saved');
+    const r2 = await T.testIntegration(I.BY_ID.telegram, { TELEGRAM_BOT_TOKEN: '123456:not-a-real-token' }); must(r2.ok === false, JSON.stringify(r2));
+    return I.LIST.length + ' services; GitLab: ' + r.why.slice(0, 70) + ' | Telegram: ' + r2.why.slice(0, 60);
+  });
+
   const fails = lines.filter((l) => /FAIL/.test(l)).length;
   console.log('CYBTEST DONE pass=' + (lines.length - fails) + ' fail=' + fails);
   box.textContent = lines.join('\n') + '\n\nDONE pass=' + (lines.length - fails) + ' fail=' + fails;

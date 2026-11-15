@@ -297,7 +297,7 @@
     get_diagnostics: [{ path: S('File path (optional)') }, []],
     execute_python: [{ code: S('Python source to run'), timeout: N('Timeout in seconds (optional)') }, ['code']],
     sqlite_query: [{ db: S('Database file in the workspace'), sql: S('SQL to run'), format: S('"table" (default) or "json"') }, ['db', 'sql']],
-    http_request: [{ method: S('GET, POST, PUT, PATCH, DELETE or HEAD'), url: S('Full URL'), headers: S('JSON object of request headers (optional)'), body: S('Request body (optional)') }, ['url']],
+    http_request: [{ method: S('GET, POST, PUT, PATCH, DELETE or HEAD'), url: S('Full URL'), headers: S('JSON object of request headers (optional)'), body: S('Request body (optional)'), secrets: S('Names of saved secrets to use, comma separated; write $NAME where the value belongs (optional)') }, ['url']],
     test_webapp: [{ path: S('HTML file in the workspace'), script: S('JavaScript to run in the page; return a value or throw (optional)') }, ['path']],
     ask_followup_question: [{ question: S('The question for the user') }, ['question']],
     attempt_completion: [{ result: S('What was delivered and how it was verified') }, ['result']],
@@ -651,7 +651,7 @@
       case 'http_request': {
         const h = args.headers == null ? '' : typeof args.headers === 'string' ? args.headers : JSON.stringify(args.headers);
         const b = pick(args, ['body', 'data', 'json', 'payload']);
-        return '<http_request method="' + attrEsc(args.method || 'GET') + '" url="' + attrEsc(args.url || '') + '"' + (h ? ' headers="' + attrEsc(h) + '"' : '') + '>\n' + (b == null ? '' : typeof b === 'string' ? b : JSON.stringify(b)) + '\n</http_request>';
+        return '<http_request method="' + attrEsc(args.method || 'GET') + '" url="' + attrEsc(args.url || '') + '"' + (h ? ' headers="' + attrEsc(h) + '"' : '') + (args.secrets != null ? ' secrets="' + attrEsc(Array.isArray(args.secrets) ? args.secrets.join(',') : args.secrets) + '"' : '') + '>\n' + (b == null ? '' : typeof b === 'string' ? b : JSON.stringify(b)) + '\n</http_request>';
       }
       case 'test_webapp': return '<test_webapp path="' + attrEsc(pick(args, ['path', 'file', 'url']) || 'index.html') + '">\n' + String(pick(args, ['script', 'code', 'test', 'assertions']) || '') + '\n</test_webapp>';
       case 'ask_followup_question': return '<ask_followup_question>\n' + String(pick(args, ['question', 'text', 'message', 'prompt']) || '') + '\n</ask_followup_question>';

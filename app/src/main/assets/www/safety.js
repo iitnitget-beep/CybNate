@@ -72,7 +72,7 @@
         const cmd = String(call.body || '');
         const secrets = secretNames(a.secrets);
         const sens = commandTouchesSensitive(cmd);
-        if (secrets.length || sens) return { kind: 'shell', sensitive: sens, always: false, secrets };
+        if (secrets.length || sens) return { kind: 'shell', sensitive: sens, always: false, secrets, network: sendsData(cmd) };
         // sending data out of the device is asked about in every mode, Auto included
         if (sendsData(cmd)) return { kind: 'shell', sensitive: false, always: false, secrets, network: true };
         if (isReadOnlyCommand(cmd) || mode === 'auto') return null;

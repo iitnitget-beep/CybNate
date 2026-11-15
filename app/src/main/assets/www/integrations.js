@@ -1,0 +1,184 @@
+/* Integrations catalogue: what each outside service needs to connect, how to check the connection, and what the agent is told.
+ * Kinds:  key   = the user pastes an API key / token (stored as app secrets, on this phone only)
+ *         built = already part of the app, nothing to connect
+ *         lib   = a code library, not an account: the agent installs and uses it inside the project
+ *         no    = cannot run or be reached from a phone app; `note` says what to use instead
+ *         oauth = needs a "Sign in with ..." flow that the app does not have yet
+ * The check requests were written from each service's public API documentation. */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.Integrations = factory();
+})(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+  const B = 'Authorization: Bearer ';
+  const f = (env, label, o) => Object.assign({ env, label }, o || {});
+  const key = (id, name, fields, test, api, auth, keyUrl, extra) => Object.assign({ id, name, kind: 'key', fields, test, api, auth, keyUrl }, extra || {});
+  const other = (id, name, kind, note, extra) => Object.assign({ id, name, kind, note, fields: [] }, extra || {});
+  const get = (url, headers, o) => Object.assign({ method: 'GET', url, headers: headers || {} }, o || {});
+  const post = (url, headers, body, o) => Object.assign({ method: 'POST', url, headers: Object.assign({ 'Content-Type': 'application/json' }, headers || {}), body: JSON.stringify(body) }, o || {});
+  const bearer = (env) => ({ Authorization: 'Bearer {' + env + '}' });
+
+  const CATEGORIES = [
+    ['code', 'Code, Git & version control'], ['cloud', 'Cloud hosting & deployment'], ['data', 'Databases & backend'], ['ai', 'AI models'],
+    ['web', 'Web search, scraping & browsers'], ['pay', 'Authentication & payments'], ['docs', 'Project management & documents'],
+    ['msg', 'Communication & notifications'], ['media', 'Design, media & assets'], ['ops', 'Monitoring, testing & DevOps'],
+  ];
+
+  const LIST = [
+    // 1. code
+    other('github', 'GitHub', 'built', 'Clone, change and push repositories from the GitHub screen in the menu.', { cat: 'code', screen: 'github' }),
+    key('gitlab', 'GitLab', [f('GITLAB_TOKEN', 'Personal access token')], get('https://gitlab.com/api/v4/user', { 'PRIVATE-TOKEN': '{GITLAB_TOKEN}' }), 'https://gitlab.com/api/v4', 'PRIVATE-TOKEN: $GITLAB_TOKEN', 'https://gitlab.com/-/user_settings/personal_access_tokens', { cat: 'code', who: 'username' }),
+    key('bitbucket', 'Bitbucket', [f('BITBUCKET_USER', 'Username', { plain: true }), f('BITBUCKET_APP_PASSWORD', 'App password')], get('https://api.bitbucket.org/2.0/user', { Authorization: 'Basic {b64:BITBUCKET_USER:BITBUCKET_APP_PASSWORD}' }), 'https://api.bitbucket.org/2.0', 'HTTP Basic with $BITBUCKET_USER and $BITBUCKET_APP_PASSWORD (curl -u)', 'https://bitbucket.org/account/settings/app-passwords/', { cat: 'code', who: 'display_name' }),
+    other('filesystem', 'Local files', 'built', 'The workspace is the project folder: the agent reads, writes and searches it with its file tools.', { cat: 'code' }),
+    other('terminal', 'Git CLI / Shell terminal', 'built', 'Terminal in the menu. git, npm install and curl are built in; python and node run in the app.', { cat: 'code' }),
+    // 2. cloud
+    key('vercel', 'Vercel', [f('VERCEL_TOKEN', 'Access token')], get('https://api.vercel.com/v2/user', bearer('VERCEL_TOKEN')), 'https://api.vercel.com', B + '$VERCEL_TOKEN', 'https://vercel.com/account/tokens', { cat: 'cloud', who: 'user.username' }),
+    key('netlify', 'Netlify', [f('NETLIFY_TOKEN', 'Personal access token')], get('https://api.netlify.com/api/v1/user', bearer('NETLIFY_TOKEN')), 'https://api.netlify.com/api/v1', B + '$NETLIFY_TOKEN', 'https://app.netlify.com/user/applications#personal-access-tokens', { cat: 'cloud', who: 'email' }),
+    key('aws', 'AWS (S3, Lambda, EC2)', [f('AWS_ACCESS_KEY_ID', 'Access key ID', { plain: true }), f('AWS_SECRET_ACCESS_KEY', 'Secret access key'), f('AWS_REGION', 'Region, e.g. ap-south-1', { plain: true })], null, 'https://<service>.<region>.amazonaws.com', 'AWS Signature V4: sign each request in Python (hmac + hashlib) with $AWS_ACCESS_KEY_ID / $AWS_SECRET_ACCESS_KEY', 'https://console.aws.amazon.com/iam/home#/security_credentials', { cat: 'cloud', note: 'Saved without a check: AWS requests need a signature, so the first real call shows whether the keys work.' }),
+    key('gcp', 'Google Cloud Platform', [f('GCP_ACCESS_TOKEN', 'Access token (gcloud auth print-access-token)'), f('GCP_PROJECT', 'Project ID', { plain: true })], get('https://cloudresourcemanager.googleapis.com/v1/projects/{GCP_PROJECT}', bearer('GCP_ACCESS_TOKEN')), 'https://<service>.googleapis.com', B + '$GCP_ACCESS_TOKEN', 'https://console.cloud.google.com/apis/credentials', { cat: 'cloud', who: 'name', note: 'A Google access token lasts about one hour. Longer use needs Google sign-in, which the app does not have yet.' }),
+    key('cloudflare', 'Cloudflare (Workers & Pages)', [f('CLOUDFLARE_API_TOKEN', 'API token'), f('CLOUDFLARE_ACCOUNT_ID', 'Account ID (optional)', { plain: true, optional: true })], get('https://api.cloudflare.com/client/v4/user/tokens/verify', bearer('CLOUDFLARE_API_TOKEN'), { okField: 'success' }), 'https://api.cloudflare.com/client/v4', B + '$CLOUDFLARE_API_TOKEN', 'https://dash.cloudflare.com/profile/api-tokens', { cat: 'cloud', who: 'result.status' }),
+    key('railway', 'Railway', [f('RAILWAY_TOKEN', 'Account token')], post('https://backboard.railway.com/graphql/v2', bearer('RAILWAY_TOKEN'), { query: '{ me { name email } }' }, { noErrors: true }), 'https://backboard.railway.com/graphql/v2 (GraphQL)', B + '$RAILWAY_TOKEN', 'https://railway.com/account/tokens', { cat: 'cloud', who: 'data.me.email' }),
+    key('render', 'Render', [f('RENDER_API_KEY', 'API key')], get('https://api.render.com/v1/owners?limit=1', bearer('RENDER_API_KEY')), 'https://api.render.com/v1', B + '$RENDER_API_KEY', 'https://dashboard.render.com/u/settings#api-keys', { cat: 'cloud' }),
+    key('fly', 'Fly.io', [f('FLY_API_TOKEN', 'Access token')], get('https://api.machines.dev/v1/apps?org_slug=personal', bearer('FLY_API_TOKEN')), 'https://api.machines.dev/v1', B + '$FLY_API_TOKEN', 'https://fly.io/user/personal_access_tokens', { cat: 'cloud' }),
+    key('digitalocean', 'DigitalOcean', [f('DIGITALOCEAN_TOKEN', 'Personal access token')], get('https://api.digitalocean.com/v2/account', bearer('DIGITALOCEAN_TOKEN')), 'https://api.digitalocean.com/v2', B + '$DIGITALOCEAN_TOKEN', 'https://cloud.digitalocean.com/account/api/tokens', { cat: 'cloud', who: 'account.email' }),
+    key('heroku', 'Heroku', [f('HEROKU_API_KEY', 'API key')], get('https://api.heroku.com/account', Object.assign({ Accept: 'application/vnd.heroku+json; version=3' }, bearer('HEROKU_API_KEY'))), 'https://api.heroku.com', B + '$HEROKU_API_KEY plus Accept: application/vnd.heroku+json; version=3', 'https://dashboard.heroku.com/account', { cat: 'cloud', who: 'email' }),
+    // 3. data
+    key('supabase', 'Supabase', [f('SUPABASE_URL', 'Project URL, https://xxxx.supabase.co', { plain: true, url: true }), f('SUPABASE_KEY', 'API key (anon or service_role)')], get('{SUPABASE_URL}/rest/v1/', { apikey: '{SUPABASE_KEY}', Authorization: 'Bearer {SUPABASE_KEY}' }), '$SUPABASE_URL/rest/v1/<table> (PostgREST), /auth/v1, /storage/v1', 'apikey: $SUPABASE_KEY and ' + B + '$SUPABASE_KEY', 'https://supabase.com/dashboard/project/_/settings/api', { cat: 'data' }),
+    key('firebase', 'Firebase', [f('FIREBASE_PROJECT_ID', 'Project ID', { plain: true }), f('FIREBASE_API_KEY', 'Web API key')], null, 'https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents and https://identitytoolkit.googleapis.com/v1', '?key=$FIREBASE_API_KEY (what is allowed depends on the security rules of the project)', 'https://console.firebase.google.com/', { cat: 'data', note: 'Saved without a check: what a web API key may read depends on the rules of your project.' }),
+    other('postgres', 'PostgreSQL', 'no', 'A phone app cannot open a database connection (raw TCP). Use a Postgres host with an HTTP API: Supabase or Neon. The agent can still write the SQL and the code.', { cat: 'data' }),
+    other('mongodb', 'MongoDB', 'no', 'A phone app cannot open a database connection (raw TCP). The agent can write the code; run it on a server or use a database with an HTTP API.', { cat: 'data' }),
+    other('mysql', 'MySQL', 'no', 'A phone app cannot open a database connection (raw TCP). Use PlanetScale (HTTP API) or run the code on a server.', { cat: 'data' }),
+    key('upstash', 'Redis / Upstash', [f('UPSTASH_REDIS_REST_URL', 'REST URL', { plain: true, url: true }), f('UPSTASH_REDIS_REST_TOKEN', 'REST token')], get('{UPSTASH_REDIS_REST_URL}/ping', bearer('UPSTASH_REDIS_REST_TOKEN')), '$UPSTASH_REDIS_REST_URL/<command>/<arg>/... (Redis over HTTP)', B + '$UPSTASH_REDIS_REST_TOKEN', 'https://console.upstash.com/', { cat: 'data', who: 'result', note: 'Plain Redis (TCP) cannot be reached from a phone app. Upstash offers Redis over HTTP.' }),
+    key('neon', 'Neon', [f('NEON_API_KEY', 'API key')], get('https://console.neon.tech/api/v2/projects?limit=1', bearer('NEON_API_KEY')), 'https://console.neon.tech/api/v2', B + '$NEON_API_KEY', 'https://console.neon.tech/app/settings/api-keys', { cat: 'data' }),
+    key('planetscale', 'PlanetScale', [f('PLANETSCALE_TOKEN_ID', 'Service token ID', { plain: true }), f('PLANETSCALE_TOKEN', 'Service token')], get('https://api.planetscale.com/v1/organizations', { Authorization: '{PLANETSCALE_TOKEN_ID}:{PLANETSCALE_TOKEN}' }), 'https://api.planetscale.com/v1', 'Authorization: $PLANETSCALE_TOKEN_ID:$PLANETSCALE_TOKEN', 'https://app.planetscale.com/', { cat: 'data' }),
+    other('prisma', 'Prisma', 'lib', 'Prisma is a code library. The agent can write the schema and the code; it needs Node.js on a computer or server to run.', { cat: 'data' }),
+    key('convex', 'Convex', [f('CONVEX_URL', 'Deployment URL, https://xxxx.convex.cloud', { plain: true, url: true }), f('CONVEX_DEPLOY_KEY', 'Deploy key', { optional: true })], null, '$CONVEX_URL/api/query, /api/mutation, /api/action (POST JSON {path, args, format:"json"})', 'Authorization: Convex $CONVEX_DEPLOY_KEY for admin calls', 'https://dashboard.convex.dev/', { cat: 'data', note: 'Saved without a check.' }),
+    // 4. ai
+    key('openai', 'OpenAI API', [f('OPENAI_API_KEY', 'API key')], get('https://api.openai.com/v1/models', bearer('OPENAI_API_KEY')), 'https://api.openai.com/v1', B + '$OPENAI_API_KEY', 'https://platform.openai.com/api-keys', { cat: 'ai', chat: { provider: 'custom', url: 'https://api.openai.com/v1' } }),
+    key('anthropic', 'Anthropic API', [f('ANTHROPIC_API_KEY', 'API key')], get('https://api.anthropic.com/v1/models', { 'x-api-key': '{ANTHROPIC_API_KEY}', 'anthropic-version': '2023-06-01' }), 'https://api.anthropic.com/v1', 'x-api-key: $ANTHROPIC_API_KEY plus anthropic-version: 2023-06-01', 'https://console.anthropic.com/settings/keys', { cat: 'ai' }),
+    key('gemini', 'Google Gemini API', [f('GEMINI_API_KEY', 'API key')], get('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', { 'x-goog-api-key': '{GEMINI_API_KEY}' }), 'https://generativelanguage.googleapis.com/v1beta', 'x-goog-api-key: $GEMINI_API_KEY', 'https://aistudio.google.com/apikey', { cat: 'ai', chat: { provider: 'gemini' } }),
+    key('openrouter', 'OpenRouter', [f('OPENROUTER_API_KEY', 'API key')], get('https://openrouter.ai/api/v1/key', bearer('OPENROUTER_API_KEY')), 'https://openrouter.ai/api/v1', B + '$OPENROUTER_API_KEY', 'https://openrouter.ai/keys', { cat: 'ai', chat: { provider: 'openrouter' } }),
+    key('groq', 'Groq', [f('GROQ_API_KEY', 'API key')], get('https://api.groq.com/openai/v1/models', bearer('GROQ_API_KEY')), 'https://api.groq.com/openai/v1', B + '$GROQ_API_KEY', 'https://console.groq.com/keys', { cat: 'ai', chat: { provider: 'groq' } }),
+    key('ollama', 'Ollama', [f('OLLAMA_URL', 'Address, e.g. http://192.168.1.5:11434', { plain: true, url: true })], get('{OLLAMA_URL}/api/tags', {}), '$OLLAMA_URL/api and $OLLAMA_URL/v1', 'none', 'https://ollama.com/download', { cat: 'ai', chat: { provider: 'custom', urlFrom: 'OLLAMA_URL', suffix: '/v1' }, note: 'Runs on your own computer: the phone and the computer must be on the same Wi-Fi.' }),
+    key('huggingface', 'Hugging Face', [f('HF_TOKEN', 'Access token')], get('https://huggingface.co/api/whoami-v2', bearer('HF_TOKEN')), 'https://huggingface.co/api and https://router.huggingface.co/v1', B + '$HF_TOKEN', 'https://huggingface.co/settings/tokens', { cat: 'ai', who: 'name' }),
+    key('replicate', 'Replicate', [f('REPLICATE_API_TOKEN', 'API token')], get('https://api.replicate.com/v1/account', bearer('REPLICATE_API_TOKEN')), 'https://api.replicate.com/v1', B + '$REPLICATE_API_TOKEN', 'https://replicate.com/account/api-tokens', { cat: 'ai', who: 'username' }),
+    key('elevenlabs', 'ElevenLabs', [f('ELEVENLABS_API_KEY', 'API key')], get('https://api.elevenlabs.io/v1/user', { 'xi-api-key': '{ELEVENLABS_API_KEY}' }), 'https://api.elevenlabs.io/v1', 'xi-api-key: $ELEVENLABS_API_KEY', 'https://elevenlabs.io/app/settings/api-keys', { cat: 'ai' }),
+    key('deepgram', 'Deepgram', [f('DEEPGRAM_API_KEY', 'API key')], get('https://api.deepgram.com/v1/projects', { Authorization: 'Token {DEEPGRAM_API_KEY}' }), 'https://api.deepgram.com/v1', 'Authorization: Token $DEEPGRAM_API_KEY', 'https://console.deepgram.com/', { cat: 'ai' }),
+    // 5. web
+    key('brave', 'Brave Search API', [f('BRAVE_API_KEY', 'API key')], get('https://api.search.brave.com/res/v1/web/search?q=test&count=1', { 'X-Subscription-Token': '{BRAVE_API_KEY}', Accept: 'application/json' }), 'https://api.search.brave.com/res/v1/web/search?q=', 'X-Subscription-Token: $BRAVE_API_KEY', 'https://api-dashboard.search.brave.com/app/keys', { cat: 'web' }),
+    key('tavily', 'Tavily Search', [f('TAVILY_API_KEY', 'API key')], post('https://api.tavily.com/search', bearer('TAVILY_API_KEY'), { query: 'test', max_results: 1 }), 'https://api.tavily.com/search (POST JSON {query})', B + '$TAVILY_API_KEY', 'https://app.tavily.com/home', { cat: 'web', costs: true }),
+    key('exa', 'Exa (Metaphor)', [f('EXA_API_KEY', 'API key')], post('https://api.exa.ai/search', { 'x-api-key': '{EXA_API_KEY}' }, { query: 'test', numResults: 1 }), 'https://api.exa.ai/search (POST JSON {query})', 'x-api-key: $EXA_API_KEY', 'https://dashboard.exa.ai/api-keys', { cat: 'web', costs: true }),
+    key('firecrawl', 'Firecrawl', [f('FIRECRAWL_API_KEY', 'API key')], post('https://api.firecrawl.dev/v1/scrape', bearer('FIRECRAWL_API_KEY'), { url: 'https://example.com' }), 'https://api.firecrawl.dev/v1/scrape (POST JSON {url})', B + '$FIRECRAWL_API_KEY', 'https://www.firecrawl.dev/app/api-keys', { cat: 'web', costs: true }),
+    other('playwright', 'Puppeteer / Playwright', 'no', 'A phone cannot run a desktop browser engine. Pages built in the app are tested with the built-in page tester (test_webapp). For outside sites use Browserbase, Firecrawl or Jina Reader.', { cat: 'web' }),
+    key('browserbase', 'Browserbase', [f('BROWSERBASE_API_KEY', 'API key'), f('BROWSERBASE_PROJECT_ID', 'Project ID', { plain: true, optional: true })], get('https://api.browserbase.com/v1/projects', { 'X-BB-API-Key': '{BROWSERBASE_API_KEY}' }), 'https://api.browserbase.com/v1', 'X-BB-API-Key: $BROWSERBASE_API_KEY', 'https://www.browserbase.com/settings', { cat: 'web' }),
+    key('jina', 'Jina Reader', [f('JINA_API_KEY', 'API key')], get('https://r.jina.ai/https://example.com', bearer('JINA_API_KEY')), 'https://r.jina.ai/<url> (page as text), https://s.jina.ai/?q= (search)', B + '$JINA_API_KEY', 'https://jina.ai/api-dashboard/', { cat: 'web', costs: true }),
+    key('apify', 'Apify', [f('APIFY_TOKEN', 'API token')], get('https://api.apify.com/v2/users/me', bearer('APIFY_TOKEN')), 'https://api.apify.com/v2', B + '$APIFY_TOKEN', 'https://console.apify.com/settings/integrations', { cat: 'web', who: 'data.username' }),
+    // 6. auth & payments
+    key('clerk', 'Clerk', [f('CLERK_SECRET_KEY', 'Secret key')], get('https://api.clerk.com/v1/users?limit=1', bearer('CLERK_SECRET_KEY')), 'https://api.clerk.com/v1', B + '$CLERK_SECRET_KEY', 'https://dashboard.clerk.com/last-active?path=api-keys', { cat: 'pay' }),
+    key('auth0', 'Auth0', [f('AUTH0_DOMAIN', 'Domain, e.g. dev-abc.us.auth0.com', { plain: true }), f('AUTH0_MGMT_TOKEN', 'Management API token')], get('https://{AUTH0_DOMAIN}/api/v2/clients?per_page=1&fields=name', bearer('AUTH0_MGMT_TOKEN')), 'https://$AUTH0_DOMAIN/api/v2', B + '$AUTH0_MGMT_TOKEN', 'https://manage.auth0.com/#/apis/management/explorer', { cat: 'pay', note: 'A Management API token expires (24 hours by default).' }),
+    other('nextauth', 'NextAuth / Auth.js', 'lib', 'Auth.js is a code library, not an account. The agent adds it to a Next.js project; the project needs a server to run.', { cat: 'pay' }),
+    key('stripe', 'Stripe', [f('STRIPE_SECRET_KEY', 'Secret key (use a test key: sk_test_…)')], get('https://api.stripe.com/v1/balance', bearer('STRIPE_SECRET_KEY')), 'https://api.stripe.com/v1 (form-encoded bodies)', B + '$STRIPE_SECRET_KEY', 'https://dashboard.stripe.com/test/apikeys', { cat: 'pay', money: true }),
+    key('lemonsqueezy', 'Lemon Squeezy', [f('LEMONSQUEEZY_API_KEY', 'API key')], get('https://api.lemonsqueezy.com/v1/users/me', Object.assign({ Accept: 'application/vnd.api+json' }, bearer('LEMONSQUEEZY_API_KEY'))), 'https://api.lemonsqueezy.com/v1', B + '$LEMONSQUEEZY_API_KEY plus Accept: application/vnd.api+json', 'https://app.lemonsqueezy.com/settings/api', { cat: 'pay', who: 'data.attributes.email', money: true }),
+    key('razorpay', 'Razorpay', [f('RAZORPAY_KEY_ID', 'Key ID (use a test key: rzp_test_…)', { plain: true }), f('RAZORPAY_KEY_SECRET', 'Key secret')], get('https://api.razorpay.com/v1/payments?count=1', { Authorization: 'Basic {b64:RAZORPAY_KEY_ID:RAZORPAY_KEY_SECRET}' }), 'https://api.razorpay.com/v1', 'HTTP Basic with $RAZORPAY_KEY_ID and $RAZORPAY_KEY_SECRET (curl -u)', 'https://dashboard.razorpay.com/app/website-app-settings/api-keys', { cat: 'pay', money: true }),
+    // 7. docs
+    key('notion', 'Notion', [f('NOTION_TOKEN', 'Internal integration secret')], get('https://api.notion.com/v1/users/me', Object.assign({ 'Notion-Version': '2022-06-28' }, bearer('NOTION_TOKEN'))), 'https://api.notion.com/v1', B + '$NOTION_TOKEN plus Notion-Version: 2022-06-28', 'https://www.notion.so/profile/integrations', { cat: 'docs', who: 'name', note: 'In Notion, share each page or database with the integration, or it cannot see it.' }),
+    key('linear', 'Linear', [f('LINEAR_API_KEY', 'Personal API key')], post('https://api.linear.app/graphql', { Authorization: '{LINEAR_API_KEY}' }, { query: '{ viewer { name email } }' }, { noErrors: true }), 'https://api.linear.app/graphql (GraphQL)', 'Authorization: $LINEAR_API_KEY (no "Bearer")', 'https://linear.app/settings/account/security', { cat: 'docs', who: 'data.viewer.email' }),
+    key('jira', 'Jira', [f('ATLASSIAN_SITE', 'Site, e.g. yourteam.atlassian.net', { plain: true }), f('ATLASSIAN_EMAIL', 'Account email', { plain: true }), f('ATLASSIAN_API_TOKEN', 'API token')], get('https://{ATLASSIAN_SITE}/rest/api/3/myself', { Authorization: 'Basic {b64:ATLASSIAN_EMAIL:ATLASSIAN_API_TOKEN}', Accept: 'application/json' }), 'https://$ATLASSIAN_SITE/rest/api/3', 'HTTP Basic with $ATLASSIAN_EMAIL and $ATLASSIAN_API_TOKEN (curl -u)', 'https://id.atlassian.com/manage-profile/security/api-tokens', { cat: 'docs', who: 'displayName' }),
+    key('trello', 'Trello', [f('TRELLO_KEY', 'API key', { plain: true }), f('TRELLO_TOKEN', 'Token')], get('https://api.trello.com/1/members/me?fields=username&key={TRELLO_KEY}&token={TRELLO_TOKEN}', {}), 'https://api.trello.com/1', 'query string ?key=$TRELLO_KEY&token=$TRELLO_TOKEN', 'https://trello.com/power-ups/admin', { cat: 'docs', who: 'username' }),
+    key('confluence', 'Confluence', [f('ATLASSIAN_SITE', 'Site, e.g. yourteam.atlassian.net', { plain: true }), f('ATLASSIAN_EMAIL', 'Account email', { plain: true }), f('ATLASSIAN_API_TOKEN', 'API token')], get('https://{ATLASSIAN_SITE}/wiki/rest/api/space?limit=1', { Authorization: 'Basic {b64:ATLASSIAN_EMAIL:ATLASSIAN_API_TOKEN}', Accept: 'application/json' }), 'https://$ATLASSIAN_SITE/wiki/rest/api and /wiki/api/v2', 'HTTP Basic with $ATLASSIAN_EMAIL and $ATLASSIAN_API_TOKEN (curl -u)', 'https://id.atlassian.com/manage-profile/security/api-tokens', { cat: 'docs', note: 'Uses the same site, email and token as Jira.' }),
+    other('google', 'Google Docs / Sheets', 'oauth', 'Google documents open only through Google sign-in, which the app does not have yet. For now: publish a sheet as CSV and give the agent the link, or export the file and import it into the workspace.', { cat: 'docs' }),
+    key('airtable', 'Airtable', [f('AIRTABLE_TOKEN', 'Personal access token')], get('https://api.airtable.com/v0/meta/whoami', bearer('AIRTABLE_TOKEN')), 'https://api.airtable.com/v0/<baseId>/<table>', B + '$AIRTABLE_TOKEN', 'https://airtable.com/create/tokens', { cat: 'docs', who: 'email' }),
+    // 8. messages
+    key('slack', 'Slack', [f('SLACK_BOT_TOKEN', 'Bot token (xoxb-…)')], post('https://slack.com/api/auth.test', bearer('SLACK_BOT_TOKEN'), {}, { okField: 'ok', errField: 'error' }), 'https://slack.com/api (chat.postMessage, conversations.list, …)', B + '$SLACK_BOT_TOKEN', 'https://api.slack.com/apps', { cat: 'msg', who: 'team', sends: true }),
+    key('discord', 'Discord', [f('DISCORD_BOT_TOKEN', 'Bot token'), f('DISCORD_WEBHOOK_URL', 'Webhook URL (optional)', { optional: true, url: true })], get('https://discord.com/api/v10/users/@me', { Authorization: 'Bot {DISCORD_BOT_TOKEN}' }), 'https://discord.com/api/v10', 'Authorization: Bot $DISCORD_BOT_TOKEN; or POST JSON {content} to $DISCORD_WEBHOOK_URL', 'https://discord.com/developers/applications', { cat: 'msg', who: 'username', sends: true }),
+    key('resend', 'Resend', [f('RESEND_API_KEY', 'API key')], get('https://api.resend.com/domains', bearer('RESEND_API_KEY')), 'https://api.resend.com (POST /emails)', B + '$RESEND_API_KEY', 'https://resend.com/api-keys', { cat: 'msg', sends: true, note: 'A key limited to "sending access" fails this check but can still send mail.' }),
+    key('sendgrid', 'SendGrid', [f('SENDGRID_API_KEY', 'API key')], get('https://api.sendgrid.com/v3/scopes', bearer('SENDGRID_API_KEY')), 'https://api.sendgrid.com/v3 (POST /mail/send)', B + '$SENDGRID_API_KEY', 'https://app.sendgrid.com/settings/api_keys', { cat: 'msg', sends: true }),
+    key('twilio', 'Twilio', [f('TWILIO_ACCOUNT_SID', 'Account SID', { plain: true }), f('TWILIO_AUTH_TOKEN', 'Auth token'), f('TWILIO_FROM', 'Your Twilio number (optional)', { plain: true, optional: true })], get('https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}.json', { Authorization: 'Basic {b64:TWILIO_ACCOUNT_SID:TWILIO_AUTH_TOKEN}' }), 'https://api.twilio.com/2010-04-01/Accounts/$TWILIO_ACCOUNT_SID (form-encoded bodies)', 'HTTP Basic with $TWILIO_ACCOUNT_SID and $TWILIO_AUTH_TOKEN (curl -u)', 'https://console.twilio.com/', { cat: 'msg', who: 'friendly_name', sends: true, money: true }),
+    key('telegram', 'Telegram Bot API', [f('TELEGRAM_BOT_TOKEN', 'Bot token from @BotFather'), f('TELEGRAM_CHAT_ID', 'Chat ID to send to (optional)', { plain: true, optional: true })], get('https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getMe', {}, { okField: 'ok', errField: 'description' }), 'https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/<method> (sendMessage, getUpdates, …)', 'the token is part of the URL', 'https://t.me/BotFather', { cat: 'msg', who: 'result.username', sends: true }),
+    // 9. media
+    key('figma', 'Figma', [f('FIGMA_TOKEN', 'Personal access token')], get('https://api.figma.com/v1/me', { 'X-Figma-Token': '{FIGMA_TOKEN}' }), 'https://api.figma.com/v1 (GET /files/<key>, /images/<key>)', 'X-Figma-Token: $FIGMA_TOKEN', 'https://www.figma.com/settings', { cat: 'media', who: 'email' }),
+    key('cloudinary', 'Cloudinary', [f('CLOUDINARY_CLOUD_NAME', 'Cloud name', { plain: true }), f('CLOUDINARY_API_KEY', 'API key', { plain: true }), f('CLOUDINARY_API_SECRET', 'API secret')], get('https://api.cloudinary.com/v1_1/{CLOUDINARY_CLOUD_NAME}/usage', { Authorization: 'Basic {b64:CLOUDINARY_API_KEY:CLOUDINARY_API_SECRET}' }), 'https://api.cloudinary.com/v1_1/$CLOUDINARY_CLOUD_NAME', 'HTTP Basic with $CLOUDINARY_API_KEY and $CLOUDINARY_API_SECRET (curl -u)', 'https://console.cloudinary.com/settings/api-keys', { cat: 'media' }),
+    key('unsplash', 'Unsplash', [f('UNSPLASH_ACCESS_KEY', 'Access key')], get('https://api.unsplash.com/photos?per_page=1', { Authorization: 'Client-ID {UNSPLASH_ACCESS_KEY}' }), 'https://api.unsplash.com (GET /search/photos?query=)', 'Authorization: Client-ID $UNSPLASH_ACCESS_KEY', 'https://unsplash.com/oauth/applications', { cat: 'media' }),
+    key('pexels', 'Pexels', [f('PEXELS_API_KEY', 'API key')], get('https://api.pexels.com/v1/curated?per_page=1', { Authorization: '{PEXELS_API_KEY}' }), 'https://api.pexels.com/v1 (GET /search?query=)', 'Authorization: $PEXELS_API_KEY (no "Bearer")', 'https://www.pexels.com/api/key/', { cat: 'media' }),
+    key('uploadthing', 'UploadThing', [f('UPLOADTHING_TOKEN', 'Token (or secret key)')], null, 'https://api.uploadthing.com/v6', 'x-uploadthing-api-key: $UPLOADTHING_TOKEN', 'https://uploadthing.com/dashboard', { cat: 'media', note: 'Saved without a check.' }),
+    // 10. ops
+    other('docker', 'Docker', 'no', 'Docker cannot run on an Android phone. The agent can write the Dockerfile and compose files; build and run them on a computer, a server or in CI (GitHub Actions).', { cat: 'ops' }),
+    key('sentry', 'Sentry', [f('SENTRY_AUTH_TOKEN', 'Auth token'), f('SENTRY_ORG', 'Organisation slug (optional)', { plain: true, optional: true })], get('https://sentry.io/api/0/organizations/', bearer('SENTRY_AUTH_TOKEN')), 'https://sentry.io/api/0', B + '$SENTRY_AUTH_TOKEN', 'https://sentry.io/settings/account/api/auth-tokens/', { cat: 'ops' }),
+    key('posthog', 'PostHog', [f('POSTHOG_HOST', 'Host: https://us.posthog.com or https://eu.posthog.com', { plain: true, url: true }), f('POSTHOG_API_KEY', 'Personal API key')], get('{POSTHOG_HOST}/api/users/@me/', bearer('POSTHOG_API_KEY')), '$POSTHOG_HOST/api', B + '$POSTHOG_API_KEY', 'https://us.posthog.com/settings/user-api-keys', { cat: 'ops', who: 'email' }),
+    key('datadog', 'Datadog', [f('DD_SITE', 'Site, e.g. datadoghq.com or datadoghq.eu', { plain: true }), f('DD_API_KEY', 'API key'), f('DD_APP_KEY', 'Application key (optional)', { optional: true })], get('https://api.{DD_SITE}/api/v1/validate', { 'DD-API-KEY': '{DD_API_KEY}' }), 'https://api.$DD_SITE/api/v1 and /api/v2', 'DD-API-KEY: $DD_API_KEY and DD-APPLICATION-KEY: $DD_APP_KEY', 'https://app.datadoghq.com/organization-settings/api-keys', { cat: 'ops' }),
+    key('postman', 'Postman', [f('POSTMAN_API_KEY', 'API key')], get('https://api.getpostman.com/me', { 'X-Api-Key': '{POSTMAN_API_KEY}' }), 'https://api.getpostman.com (collections, environments)', 'X-Api-Key: $POSTMAN_API_KEY', 'https://go.postman.co/settings/me/api-keys', { cat: 'ops', who: 'user.username', note: 'For calling an API directly the agent already has http_request and curl; this connects your Postman collections.' }),
+    key('e2b', 'E2B (Code Interpreter)', [f('E2B_API_KEY', 'API key')], get('https://api.e2b.dev/sandboxes', { 'X-API-KEY': '{E2B_API_KEY}' }), 'https://api.e2b.dev', 'X-API-KEY: $E2B_API_KEY', 'https://e2b.dev/dashboard?tab=keys', { cat: 'ops', money: true }),
+    other('memory', 'Memory / Knowledge Graph (MCP)', 'no', 'Not built yet. MCP servers that are started as a program on a computer cannot run on a phone; a memory that lives inside the app is planned. Today the agent keeps notes in AGENTS.md, which it reads at the start of every chat.', { cat: 'ops', planned: true }),
+  ];
+  const BY_ID = {}; LIST.forEach((e) => { BY_ID[e.id] = e; });
+
+  const b64 = (s) => (typeof btoa === 'function' ? btoa(unescape(encodeURIComponent(s))) : Buffer.from(s, 'utf8').toString('base64'));
+  /** Fill {NAME} and {b64:A:B} from the given values. A URL value loses its trailing slash. */
+  function fill(tpl, vals) {
+    return String(tpl).replace(/\{b64:([A-Z0-9_]+):([A-Z0-9_]+)\}/g, (m, a, b) => b64((vals[a] || '') + ':' + (vals[b] || ''))).replace(/\{([A-Z][A-Z0-9_]*)\}/g, (m, k) => (vals[k] == null ? '' : String(vals[k])));
+  }
+  /** Tidy what the user typed: spaces removed, quotes removed, URL fields get https:// and lose the trailing slash. */
+  function clean(field, v) {
+    v = String(v == null ? '' : v).trim().replace(/^["']|["']$/g, '').trim();
+    if (!v) return '';
+    if (field.url) { if (!/^https?:\/\//i.test(v)) v = 'https://' + v; v = v.replace(/\/+$/, ''); }
+    else if (/SITE|DOMAIN/.test(field.env)) v = v.replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
+    return v;
+  }
+  /** Returns the list of problems with the entered values (empty = fine). */
+  function validate(entry, vals) {
+    const bad = [];
+    (entry.fields || []).forEach((fd) => {
+      const v = vals[fd.env];
+      if (!v) { if (!fd.optional) bad.push(fd.label.replace(/\s*\(.*$/, '').replace(/,.*$/, '') + ' is empty'); return; }
+      if (/[\r\n]/.test(v)) bad.push(fd.label + ' has a line break');
+      if (fd.url && !/^https?:\/\/[^\s/]+/i.test(v)) bad.push(fd.label + ' is not a web address');
+    });
+    return bad;
+  }
+  /** The request that checks a connection, or null when the service has no simple check. */
+  function testRequest(entry, vals) {
+    if (!entry || !entry.test) return null;
+    const t = entry.test, headers = {};
+    Object.keys(t.headers || {}).forEach((k) => { headers[k] = fill(t.headers[k], vals); });
+    return { method: t.method, url: fill(t.url, vals), headers, body: t.body || '' };
+  }
+  const dig = (o, path) => String(path || '').split('.').reduce((a, k) => (a == null ? a : a[k]), o);
+  /** Decide from the answer whether the connection works. Returns { ok, who, why }. */
+  function judge(entry, res) {
+    const t = (entry && entry.test) || {}; const status = res ? res.status : 0; const text = String((res && res.text) || '');
+    let j = null; try { j = JSON.parse(text); } catch (e) {}
+    const said = () => { const m = j && (dig(j, t.errField) || (j.error && (j.error.message || j.error)) || j.message || j.detail || j.error_description || (j.errors && j.errors[0] && (j.errors[0].message || j.errors[0]))); return m ? String(typeof m === 'string' ? m : JSON.stringify(m)).slice(0, 160) : ''; };
+    if (!status) return { ok: false, why: 'No answer from the service. Check the internet connection' + (/\{[A-Z_]*(URL|HOST|SITE|DOMAIN)\}/.test(t.url || '') ? ' and the address you entered.' : '.') };
+    if (status === 401 || status === 403) return { ok: false, why: 'The service refused the key (HTTP ' + status + ')' + (said() ? ': ' + said() : '') + '. Check that it was copied whole and has not expired.' };
+    if (status === 404 && /\{[A-Z_]*(URL|HOST|SITE|DOMAIN|SID|NAME|PROJECT)\}/.test(t.url || '')) return { ok: false, why: 'Not found (HTTP 404). Check the address or the account name you entered.' };
+    if (status === 429) return { ok: true, who: '', why: 'The key was accepted, but the service says the rate limit is reached right now.' };
+    if (status >= 400) return { ok: false, why: 'The service answered HTTP ' + status + (said() ? ': ' + said() : '') };
+    if (t.okField && j && !dig(j, t.okField)) return { ok: false, why: 'The service refused the key' + (said() ? ': ' + said() : '') };
+    if (t.noErrors && j && j.errors && j.errors.length) return { ok: false, why: 'The service refused the key' + (said() ? ': ' + said() : '') };
+    const who = entry.who && j ? dig(j, entry.who) : '';
+    return { ok: true, who: who && typeof who !== 'object' ? String(who).slice(0, 60) : '' };
+  }
+  /** Environment names an entry stores. */
+  const envNames = (entry) => (entry.fields || []).map((x) => x.env);
+  /** Text for the agent: which services are connected and how to call them. `connected` is a list of ids; `has(env)` tells which values exist. */
+  function promptBlock(connected, has) {
+    const rows = (connected || []).map((id) => BY_ID[id]).filter((e) => e && e.kind === 'key').map((e) => {
+      const names = envNames(e).filter((n) => !has || has(n));
+      return '- ' + e.name + ': ' + e.api + '. Auth: ' + e.auth + '. Secrets: ' + names.join(', ') + '.' + (e.money ? ' Real money or paid usage: ask the user before any call that charges, sends or creates something.' : e.sends ? ' Sends real messages: send only what the user asked for.' : '');
+    });
+    if (!rows.length) return '';
+    return 'Connected services (the user connected these in Integrations; the keys are saved as secrets and you see only their names):\n' + rows.join('\n') + '\n' +
+      'To call one, name the secrets you need in the secrets attribute and write $NAME where the value belongs. The app puts the value in after the user approves, and hides it in the output. Example:\n' +
+      '<http_request method="GET" url="https://api.example.com/v1/me" headers=\'{"Authorization":"Bearer $EXAMPLE_TOKEN"}\' secrets="EXAMPLE_TOKEN"></http_request>\n' +
+      'The same works in <run_terminal_command secrets="A,B"> for curl ($NAME, and -u "$USER:$PASS" for HTTP Basic), python (os.environ) and node (process.env). ' +
+      'Never print a secret, never write one into a file, and never send one to any host other than the service it belongs to. If a service is not listed here, it is not connected: tell the user to connect it in Integrations instead of asking for the key in chat.';
+  }
+  /** Swap $NAME and ${NAME} for the given secret values inside one command argument. */
+  function expand(arg, env) {
+    return String(arg).replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (m, a, b) => { const k = a || b; return Object.prototype.hasOwnProperty.call(env, k) ? String(env[k]) : m; });
+  }
+  const summary = () => { const n = { key: 0, built: 0, lib: 0, no: 0, oauth: 0 }; LIST.forEach((e) => { n[e.kind]++; }); return n; };
+
+  return { CATEGORIES, LIST, BY_ID, fill, clean, validate, testRequest, judge, envNames, promptBlock, expand, summary };
+});

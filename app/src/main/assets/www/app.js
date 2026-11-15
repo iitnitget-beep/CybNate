@@ -397,7 +397,7 @@
     if (pc.kind === 'note') return { code: pc.code || 0, out: pc.text, files: [] };
     // built-in tools (cli.js, webtest.js): a simplified git, npm install from CDN builds, curl/wget, page tests
     if (pc.kind === 'git') return cli.git(pc.argv, signal);
-    if (pc.kind === 'curl') return cli.curl(pc.prog, pc.argv, pc.cwd, signal);
+    if (pc.kind === 'curl') return cli.curl(pc.prog, pc.argv.map((a) => Integrations.expand(a, senv)), pc.cwd, signal);
     if (pc.kind === 'npm') return cli.npm(Object.assign({ timeout: timeoutSec }, pc), signal);
     if (pc.kind === 'webtest') return testWebapp(pc.path, pc.script, timeoutSec, signal);
     let r;
@@ -659,12 +659,15 @@
 
   /** Run a helper agent with its own context and return its final report. */
   /** User instructions plus the project's AGENTS.md / CLAUDE.md when enabled. */
+  const connectedIds = () => Object.keys(settings.integrations || {}).filter((id) => Integrations.BY_ID[id]);
   function extraPrompt() {
     let t = settings.extra || '';
     if (settings.agentsMd !== false) {
       const f = ['AGENTS.md', 'CLAUDE.md', 'agents.md'].find((n) => ws.has(n) && !ws.isBinary(n));
       if (f) t += '\n\nProject instructions from ' + f + ':\n' + String(ws.get(f)).slice(0, 6000);
     }
+    const conn = Integrations.promptBlock(connectedIds(), (n) => secretEnv()[n] != null);
+    if (conn) t += '\n\n' + conn;
     return t;
   }
   /** Shell for a helper agent: file changes it is not allowed to make are put back afterwards. */
@@ -1366,6 +1369,106 @@
   }
 
   // ---------------------------------------------------------------- github
+  // ---- Integrations: one place to connect outside services. Keys are stored as app secrets, on this phone only.
+  const setSecret = (name, value) => { const list = settings.secrets || (settings.secrets = []); const i = list.findIndex((x) => x.name === name); if (i >= 0) list.splice(i, 1); if (value) list.push({ name, value }); };
+  /** Check a connection with the values given. Returns { ok, who, why, checked }. */
+  async function testIntegration(entry, vals, signal) {
+    const req = Integrations.testRequest(entry, vals);
+    if (!req) return { ok: true, checked: false, why: entry.note || 'Saved without a check.' };
+    let res;
+    try { res = await httpFull(req.url, { method: req.method, headers: req.headers, body: req.body || undefined, signal }); }
+    catch (e) { if (e && e.name === 'AbortError') throw e; res = { status: 0, text: '' }; }
+    return Object.assign({ checked: true }, Integrations.judge(entry, res));
+  }
+  /** Save the values of one integration and mark it connected. LLM keys are also given to the chat provider of the same name. */
+  function saveIntegration(entry, vals, result) {
+    entry.fields.forEach((fd) => setSecret(fd.env, vals[fd.env] || ''));
+    (settings.integrations || (settings.integrations = {}))[entry.id] = { at: Date.now(), who: (result && result.who) || '', checked: !!(result && result.checked) };
+    if (entry.chat && entry.chat.provider !== 'custom' && C.PROVIDERS[entry.chat.provider] && !(settings.keys[entry.chat.provider] || '').trim()) settings.keys[entry.chat.provider] = vals[entry.fields[0].env];
+    saveSettings();
+  }
+  function removeIntegration(entry) {
+    delete (settings.integrations || {})[entry.id];
+    // a value shared with another connected service (Jira and Confluence use the same site and token) stays
+    const still = {}; connectedIds().forEach((id) => Integrations.envNames(Integrations.BY_ID[id]).forEach((n) => { still[n] = 1; }));
+    entry.fields.forEach((fd) => { if (!still[fd.env]) setSecret(fd.env, ''); });
+    saveSettings();
+  }
+  function openIntegrations() {
+    closeDrawer();
+    let filter = '';
+    const KIND = { built: 'Built in', lib: 'Code library', no: 'Not on a phone', oauth: 'Needs sign-in' };
+    openSheet('Integrations', (body) => {
+      const conn = settings.integrations || {}; const n = connectedIds().length;
+      body.appendChild(el('p', '', (n ? n + ' connected. ' : '') + 'Paste a key from the service to connect it. Keys stay on this phone, the model sees only their names, and every use asks you first.'));
+      const q = el('input', 'field'); q.type = 'search'; q.placeholder = 'Search services'; q.value = filter; q.autocapitalize = 'off'; q.autocomplete = 'off'; q.id = 'intSearch'; body.appendChild(q);
+      const listBox = el('div', 'intlist'); body.appendChild(listBox);
+      const draw = () => {
+        listBox.innerHTML = ''; const f = filter.trim().toLowerCase(); let shown = 0;
+        Integrations.CATEGORIES.forEach((c) => {
+          const items = Integrations.LIST.filter((e) => e.cat === c[0] && (!f || (e.name + ' ' + c[1]).toLowerCase().indexOf(f) >= 0));
+          if (!items.length) return;
+          listBox.appendChild(el('div', 'label', c[1]));
+          items.forEach((e) => {
+            shown++;
+            const on = !!conn[e.id]; const row = el('button', 'srow introw' + (on ? ' on' : '') + (e.kind === 'key' ? '' : ' dimmed')); row.dataset.id = e.id;
+            row.appendChild(el('span', '', e.name));
+            row.appendChild(el('small', '', on ? '● Connected' + (conn[e.id].who ? ' · ' + conn[e.id].who : conn[e.id].checked ? '' : ' (not checked)') : e.kind === 'key' ? 'Connect' : e.planned ? 'Planned' : KIND[e.kind]));
+            row.onclick = () => openIntegration(e);
+            listBox.appendChild(row);
+          });
+        });
+        if (!shown) listBox.appendChild(el('p', 'note', 'No service matches "' + filter + '".'));
+      };
+      q.oninput = () => { filter = q.value; draw(); };
+      draw();
+    });
+  }
+  function openIntegration(e) {
+    let state = null, working = false; const draft = {};
+    openSheet(e.name, (body) => {
+      const card = el('div', 'card'); body.appendChild(card);
+      const info = (settings.integrations || {})[e.id];
+      if (e.kind !== 'key') {
+        card.appendChild(el('div', 'ctitle', e.kind === 'built' ? 'Already part of the app' : e.kind === 'lib' ? 'A code library, not an account' : e.kind === 'oauth' ? 'Needs sign-in (not built yet)' : e.planned ? 'Planned' : 'Cannot be connected from a phone'));
+        card.appendChild(el('p', '', e.note));
+        if (e.screen === 'github') { const b = el('button', 'wide', 'Open GitHub'); b.onclick = () => { closeSheet(); openGitHub(); }; card.appendChild(b); }
+        return;
+      }
+      card.appendChild(el('div', 'ctitle', info ? 'Connected' + (info.who ? ' as ' + info.who : '') : 'Connect ' + e.name));
+      if (e.note) card.appendChild(el('p', '', e.note));
+      if (e.money) card.appendChild(el('p', 'awarn', 'This service can charge money. Prefer a test key, and read each approval before you allow it.'));
+      const have = secretEnv(); const inputs = {};
+      e.fields.forEach((fd) => {
+        card.appendChild(el('div', 'flabel', fd.label));
+        const i = el('input', 'field mono'); i.type = fd.plain ? 'text' : 'password'; i.autocapitalize = 'off'; i.autocomplete = 'off'; i.spellcheck = false; i.dataset.env = fd.env;
+        i.value = draft[fd.env] != null ? draft[fd.env] : (fd.plain && have[fd.env]) || '';
+        i.placeholder = !fd.plain && have[fd.env] ? 'Saved. Type to replace' : fd.optional ? 'Optional' : fd.env;
+        i.oninput = () => { draft[fd.env] = i.value; };
+        inputs[fd.env] = i; card.appendChild(i);
+      });
+      const a = el('a', '', 'Get the key from ' + e.name + ' →'); a.href = e.keyUrl; a.target = '_blank'; a.rel = 'noopener'; a.style.cssText = 'display:inline-block;margin:8px 0'; card.appendChild(a);
+      const msg = el('div', state ? (state.ok ? 'note ok' : 'note err') : 'note', state ? (state.ok ? (state.checked ? '✓ Connected' + (state.who ? ' as ' + state.who : '') + '.' + (state.why ? ' ' + state.why : '') : '✓ Saved. ' + state.why) : '✗ ' + state.why) : 'The agent may use: ' + Integrations.envNames(e).join(', '));
+      msg.id = 'intMsg'; card.appendChild(msg);
+      const go = el('button', 'wide', working ? 'Checking…' : info ? 'Save and check again' : e.test ? 'Connect and check' : 'Save'); go.id = 'intGo'; go.disabled = working; card.appendChild(go);
+      go.onclick = async () => {
+        const vals = {}; e.fields.forEach((fd) => { const typed = Integrations.clean(fd, inputs[fd.env].value); vals[fd.env] = typed || have[fd.env] || ''; });
+        const bad = Integrations.validate(e, vals);
+        if (bad.length) { state = { ok: false, why: bad.join('; ') + '.' }; return drawSheet(); }
+        working = true; drawSheet();
+        try { state = await testIntegration(e, vals); } catch (err) { state = { ok: false, why: String(err && err.message ? err.message : err) }; }
+        working = false;
+        if (state.ok) { saveIntegration(e, vals, state); Object.keys(draft).forEach((k) => delete draft[k]); toast(e.name + ' connected'); }
+        drawSheet();
+      };
+      if (info) {
+        const off = el('button', 'wide danger', 'Disconnect and delete the key'); off.id = 'intOff'; card.appendChild(off);
+        off.onclick = () => { removeIntegration(e); state = null; toast(e.name + ' disconnected'); drawSheet(); };
+      }
+      if (e.chat && info) card.appendChild(el('p', '', e.chat.provider === 'custom' ? 'To chat with this model in the app: Settings → Provider → Custom, with the address ' + (e.chat.url || 'of your Ollama, ending in /v1') + '.' : 'The key is also set for the ' + C.PROVIDERS[e.chat.provider].name + ' chat provider in Settings.'));
+    });
+  }
+
   function openGitHub() {
     closeDrawer();
     let working = false;
@@ -1848,7 +1951,7 @@
   $('dNew').onclick = () => { if (busy) return; closeDrawer(); newSession(); };
   $('btnFiles').onclick = openFiles; $('dFiles').onclick = () => { closeDrawer(); openFiles(); };
   $('dSettings').onclick = openSettings;
-  $('btnTerm').onclick = openTerminal; $('dTerm').onclick = openTerminal; $('dGit').onclick = openGitHub;
+  $('btnTerm').onclick = openTerminal; $('dTerm').onclick = openTerminal; $('dGit').onclick = openGitHub; $('dInt').onclick = openIntegrations;
   $('btnModel').onclick = () => openModels();
   $('btnMode').onclick = openModeMenu;
   $('dSearch').onclick = () => { const f = $('dFilter'); f.hidden = !f.hidden; if (f.hidden) { f.value = ''; openDrawer(); } else f.focus(); };
@@ -1878,7 +1981,7 @@
 
   if (!C.PROVIDERS[settings.provider]) { settings.provider = 'pollinations'; settings.model = 'openai-fast'; }
   $('ver').textContent = Native ? 'v' + Native.version() : 'web';
-  window.__cyb = { cli, testWebapp, slashCommand, attachMentions, compactChat, kv, Native, nativeStream, fetchModels, C, ws, settings, limiter, health, usageReport, openUsage, freeCheck, metaOf, apiHistory, modelPool, spawnAgent, helperExec, rerunAs, get task() { return task; }, askApproval, openPreview, offerUndo, namedSecrets, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
+  window.__cyb = { openIntegrations, testIntegration, saveIntegration, removeIntegration, connectedIds, extraPrompt, cli, testWebapp, slashCommand, attachMentions, compactChat, kv, Native, nativeStream, fetchModels, C, ws, settings, limiter, health, usageReport, openUsage, freeCheck, metaOf, apiHistory, modelPool, spawnAgent, helperExec, rerunAs, get task() { return task; }, askApproval, openPreview, offerUndo, namedSecrets, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
   window.addEventListener('error', (e) => { console.log('CYBERR ' + e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno); });
   window.addEventListener('unhandledrejection', (e) => { console.log('CYBERR promise ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)); });
 
