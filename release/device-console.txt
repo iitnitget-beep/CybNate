@@ -1,14 +1,18 @@
-CYBUI ready agents=5 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:982)
-CYBUI layout t=1500 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:994)
-CYBUI layout t=6000 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:994)
-CYBUI layout t=12000 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:994)
-CYBUI layout t=25000 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:994)
-FOCUS1   mCurrentFocus=Window{71cce6 u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{19ba4a8 u0 com.cybnate.app/.MainActivity t8} 
-  mCurrentFocus=Window{71cce6 u0 com.cybnate.app/com.cybnate.app.MainActivity}
-  mFocusedApp=ActivityRecord{19ba4a8 u0 com.cybnate.app/.MainActivity t8}
-11-15 01:50:10.494   527   546 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +3s878ms
-CybNateJS: CYBUI ready agents=5 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:982)
-CybNateJS: CYBUI layout t=1500 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:994)
-CybNateJS: CYBUI layout t=6000 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:994)
-CybNateJS: CYBUI layout t=12000 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:994)
-CybNateJS: CYBUI layout t=25000 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:994)
+CYBUI ready agents=5 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:1148)
+CYBUI layout t=1500 header=56 welcome=452 win=320x616 vis=hidden (https://appassets.androidplatform.net/assets/www/app.js:1160)
+CYBUI layout t=6000 header=56 welcome=452 win=320x616 vis=hidden (https://appassets.androidplatform.net/assets/www/app.js:1160)
+CYBUI layout t=12000 header=56 welcome=452 win=320x616 vis=hidden (https://appassets.androidplatform.net/assets/www/app.js:1160)
+CYBUI layout t=25000 header=56 welcome=452 win=320x616 vis=hidden (https://appassets.androidplatform.net/assets/www/app.js:1160)
+FOCUS1   mCurrentFocus=Window{5c372a5 u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{4750c5c u0 com.cybnate.app/.MainActivity t8} 
+  mCurrentFocus=Window{5c372a5 u0 com.cybnate.app/com.cybnate.app.MainActivity}
+  mFocusedApp=ActivityRecord{4750c5c u0 com.cybnate.app/.MainActivity t8}
+11-15 02:07:53.908  2438  2722 E chromium: [ERROR:simple_file_enumerator.cc(21)] opendir /data/user/0/com.cybnate.app/cache/WebView/Default/HTTP Cache/Code Cache/wasm: No such file or directory (2)
+11-15 02:07:53.908  2438  2722 E chromium: [ERROR:simple_index_file.cc(614)] Could not reconstruct index from disk
+11-15 02:07:53.909  2438  2723 E chromium: [ERROR:simple_file_enumerator.cc(21)] opendir /data/user/0/com.cybnate.app/cache/WebView/Default/HTTP Cache/Code Cache/js: No such file or directory (2)
+11-15 02:07:53.909  2438  2723 E chromium: [ERROR:simple_index_file.cc(614)] Could not reconstruct index from disk
+11-15 02:07:56.397   528   554 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +4s246ms
+CybNateJS: CYBUI ready agents=5 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:1148)
+CybNateJS: CYBUI layout t=1500 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:1160)
+CybNateJS: CYBUI layout t=6000 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:1160)
+CybNateJS: CYBUI layout t=12000 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:1160)
+CybNateJS: CYBUI layout t=25000 header=56 welcome=452 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:1160)
