@@ -1,5 +1,8 @@
-CybNate on-device self test (2026-11-16T09:24Z, Android 14, versionName=113.0.5672.136)
+CybNate on-device self test (2026-11-16T09:57Z, Android 14, versionName=113.0.5672.136)
 CYBTEST START ua=Mozilla/5.0 (Linux; Android 14; sdk_gphone64_x86_64 Build/UE1A.230829.050; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/113.0.5672.136 Mobile Safari/537.36
 CYBTEST PASS shell echo + workspace mirror :: hello.py lib main.js 34 done 
 CYBTEST PASS shell writes file back into workspace :: main.js,gen/a.txt,lib/add.js (deleted)
 CYBTEST PASS shell tools available :: +grep +sed +awk +find +sort +tar +gzip +sha256sum +diff -curl -wget -python3 -git 
+CYBTEST PASS python runs + file sync :: {"sum": 45, "py": [3, 14]} 
+CYBTEST PASS python file visible to shell :: made by python 
+CYBTEST PASS python error exit code :: traceback ok
