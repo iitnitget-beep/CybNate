@@ -150,8 +150,10 @@ function TouchableHighlight(p) { return h(Pressable, p); }
       if (clean.split('/').some((part) => part === 'node_modules' || part === '.git') || /(?:package-lock|npm-shrinkwrap)\.json$/i.test(clean)) return;
       if (SERIAL_EXT.test(clean) && typeof v === 'string') files[clean] = v;
     });
-    const htmlPath = (requested && /\.html?$/i.test(requested) && files[cleanPath(requested)]) ? cleanPath(requested) : (files['index.html'] ? 'index.html' : '');
-    const template = htmlPath ? files[htmlPath] : '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CybNate Preview</title></head><body></body></html>';
+    const htmlPath = requested && /\.html?$/i.test(requested) && typeof input[cleanPath(requested)] === 'string'
+      ? cleanPath(requested)
+      : (typeof input['index.html'] === 'string' ? 'index.html' : '');
+    const template = htmlPath ? input[htmlPath] : '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CybNate Preview</title></head><body></body></html>';
     const entry = resolveEntry(files, requested, template);
     const apiPath = serverEntry(files);
     const project = { entry, files, apiPath, importMap: importMap(files), tailwind: tailwindNeeded(files), cssImports: cssImports(files) };

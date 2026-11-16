@@ -38,6 +38,9 @@ assert.match(selftestSource, /remote wheel download is outside the bounded offli
   assert.ok(!startupFetches.some((url) => /(?:babel\.min\.js|esm\.sh|cdn\.tailwindcss\.com|unpkg\.com)/i.test(String(url))), 'app startup does not fetch the compiler or preview CDNs');
   assert.doesNotThrow(() => new Function(w.ProjectPreview.BOOTSTRAP), 'preview bootstrap JavaScript parses');
   assert.strictEqual(w.ProjectPreview.resolveEntry({ 'rn/index.html': '', 'rn/src/main.jsx': '' }, 'rn/index.html', '<script type="module" src="./src/main.jsx"></script>'), 'rn/src/main.jsx', 'nested HTML entry resolves project-relative source paths');
+  const nestedProjectHtml = w.ProjectPreview.projectHtml('rn/index.html', { 'rn/index.html': '<!doctype html><div id="root"></div><script type="module" src="./src/main.jsx"></script>', 'rn/src/main.jsx': "import { AppRegistry } from 'react-native';", 'backend/server.js': "const express = require('express'); const app = express(); app.get('/api/health', (req,res) => res.json({ok:true}));" }, { testMode: true });
+  assert.match(nestedProjectHtml, /"entry":"rn\/src\/main\.jsx"/, 'nested React HTML keeps its actual module entry instead of selecting backend/server.js');
+  assert.match(nestedProjectHtml, /"apiPath":"backend\/server\.js"/, 'nested React HTML still identifies its virtual API entry');
 
   const blank = new JSDOM(WebTest.instrument('<!doctype html><div id="root"></div><script>window.__CYB_PROJECT={entry:"src/App.jsx"}</script>', '', 0, 'blank'), { runScripts: 'dangerously', pretendToBeVisual: true });
   await new Promise((r) => setTimeout(r, 30));
