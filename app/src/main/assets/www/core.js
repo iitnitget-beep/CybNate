@@ -1175,6 +1175,7 @@
     return c.name + (a.path ? ' ' + a.path : a.query ? ' ' + a.query : a.pattern ? ' ' + a.pattern : a.url ? ' ' + a.url : a.name ? ' ' + a.name : '');
   }
   /** Run calls in order. Independent helper agents run in parallel, like Freebuff's spawn_agents. */
+  const MAX_PARALLEL = 6;
   async function runTools(calls, ws, env, onProgress) {
     const parts = new Array(calls.length);
     env = env || {};
@@ -1196,7 +1197,7 @@
         const batch = [];
         const kind = calls[i].name === 'spawn_agent';
         // env.serial: the request budget is low, so helpers run one after another
-        while (i < calls.length && ((calls[i].name === 'spawn_agent') === kind) && ['spawn_agent', 'web_search', 'read_url'].indexOf(calls[i].name) >= 0) { const job = one(calls[i], i); if (env.serial && kind) await job; else batch.push(job); i++; }
+        while (i < calls.length && batch.length < MAX_PARALLEL && ((calls[i].name === 'spawn_agent') === kind) && ['spawn_agent', 'web_search', 'read_url'].indexOf(calls[i].name) >= 0) { const job = one(calls[i], i); if (env.serial && kind) await job; else batch.push(job); i++; }
         await Promise.all(batch);
       } else { await one(calls[i], i); i++; }
     }

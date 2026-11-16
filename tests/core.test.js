@@ -113,6 +113,18 @@ const AUTO = { mode: 'auto' }; // these older tests exercise the tools themselve
   assert.deepStrictEqual(C.followupsOf('x<suggest_followups>\n1. Add tests\n- Dark mode\n</suggest_followups>'), ['Add tests', 'Dark mode']);
   assert.ok(!/spawn_agent/.test(C.buildSystemPrompt('coder', '', '', { noSpawn: true })) && /Android system shell/.test(C.buildSystemPrompt('coder', '', '', { shell: true })));
 
+  // --- twenty helper calls are executed in batches of at most six
+  let activeHelpers = 0, peakHelpers = 0, completedHelpers = 0;
+  const twentyHelpers = Array.from({ length: 20 }, (_, n) => ({ name: 'spawn_agent', attrs: { type: 'thinker' }, body: 'task-' + n }));
+  const bounded = await C.runTools(twentyHelpers, ws, { spawn: async (_type, prompt) => {
+    activeHelpers++; peakHelpers = Math.max(peakHelpers, activeHelpers);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    activeHelpers--; completedHelpers++; return 'finished ' + prompt;
+  } });
+  assert.strictEqual(completedHelpers, 20, 'all helpers completed');
+  assert.strictEqual(peakHelpers, 6, 'the batch runs no more than MAX_PARALLEL helpers concurrently');
+  assert.ok(bounded.every((r) => r.ok), 'all batched helper results are returned');
+
   // --- native function calls are converted to tags
   const nat = C.nativeCallsToText([
     { function: { name: 'write_file', arguments: '{"path": "ping.txt", "content": "pong"}' } },

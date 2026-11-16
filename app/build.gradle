@@ -1,6 +1,11 @@
 plugins { id 'com.android.application' }
 
-def ksFile = rootProject.file('keystore/cybnate.jks')
+def ksPath = System.getenv('CYBNATE_KEYSTORE_PATH') ?: 'keystore/cybnate.jks'
+def ksFile = rootProject.file(ksPath)
+def ksPass = System.getenv('CYBNATE_STORE_PASSWORD')
+def keyAliasName = System.getenv('CYBNATE_KEY_ALIAS') ?: 'cybnate'
+def keyPass = System.getenv('CYBNATE_KEY_PASSWORD') ?: ksPass
+def canSign = ksFile.exists() && ksPass
 
 android {
     namespace 'com.cybnate.app'
@@ -16,11 +21,11 @@ android {
 
     signingConfigs {
         release {
-            if (ksFile.exists()) {
+            if (canSign) {
                 storeFile ksFile
-                storePassword 'cybnate-release'
-                keyAlias 'cybnate'
-                keyPassword 'cybnate-release'
+                storePassword ksPass
+                keyAlias keyAliasName
+                keyPassword keyPass
             }
         }
     }
@@ -28,7 +33,7 @@ android {
     buildTypes {
         release {
             minifyEnabled false
-            signingConfig ksFile.exists() ? signingConfigs.release : signingConfigs.debug
+            signingConfig canSign ? signingConfigs.release : signingConfigs.debug
         }
     }
 
@@ -36,6 +41,7 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+    // TODO: enable both after a clean run of `gradle :app:lintRelease` with JDK 17 and Android SDK 34.
     lint { abortOnError false; checkReleaseBuilds false }
 }
 

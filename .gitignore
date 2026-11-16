@@ -4,4 +4,8 @@ local.properties
 *.iml
 .idea/
 node_modules/
+keystore/
+.env
+.env.*
+!.env.example
 app/src/main/assets/www/vendor/pyodide/
