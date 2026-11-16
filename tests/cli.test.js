@@ -11,7 +11,8 @@ function runNode(ws, msg) {
   return new Promise((resolve) => {
     const self = { setTimeout, clearTimeout, setInterval, clearInterval, crypto: require('crypto').webcrypto, performance, URL, URLSearchParams, TextEncoder, TextDecoder, fetch: (...a) => fetch(...a), addEventListener: () => {}, postMessage: resolve };
     const src = fs.readFileSync(path.join(www, 'jsworker.js'), 'utf8');
-    new Function('self', 'btoa', 'atob', src)(self, (s) => Buffer.from(s, 'binary').toString('base64'), (s) => Buffer.from(s, 'base64').toString('binary'));
+    const importScripts = (name) => { if (name === 'url-policy.js') self.UrlPolicy = require(path.join(www, name)); else throw new Error('unexpected worker import: ' + name); };
+    new Function('self', 'btoa', 'atob', 'importScripts', src)(self, (s) => Buffer.from(s, 'binary').toString('base64'), (s) => Buffer.from(s, 'base64').toString('binary'), importScripts);
     self.onmessage({ data: Object.assign({ files: ws.list().map((p) => ({ path: p, data: ws.bytes(p) })), mode: 'file', argv: [], src: '', cwd: '', env: {} }, msg) });
   });
 }
