@@ -1,14 +1,10 @@
-CYBUI ready agents=6 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:2420)
-CYBUI layout t=1500 header=56 welcome=504 frames=29 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2438)
-CYBUI layout t=6000 header=56 welcome=504 frames=29 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2438)
-CYBUI layout t=12000 header=56 welcome=504 frames=29 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2438)
-CYBUI layout t=25000 header=56 welcome=504 frames=29 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2438)
-FOCUS1   mCurrentFocus=Window{8854bba u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{3bc84d6 u0 com.cybnate.app/.MainActivity t8} 
-  mCurrentFocus=Window{8854bba u0 com.cybnate.app/com.cybnate.app.MainActivity}
-  mFocusedApp=ActivityRecord{3bc84d6 u0 com.cybnate.app/.MainActivity t8}
-11-16 05:24:23.571   526   545 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +5s889ms
-CybNateJS: CYBUI ready agents=6 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:2420)
-CybNateJS: CYBUI layout t=1500 header=56 welcome=504 frames=5 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2438)
-CybNateJS: CYBUI layout t=6000 header=56 welcome=504 frames=240 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2438)
-CybNateJS: CYBUI layout t=12000 header=56 welcome=504 frames=319 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2438)
-CybNateJS: CYBUI layout t=25000 header=56 welcome=504 frames=319 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2438)
+FOCUS1   mCurrentFocus=Window{664e752 u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{6561f5e u0 com.cybnate.app/.MainActivity t8} 
+  mCurrentFocus=Window{664e752 u0 com.cybnate.app/com.cybnate.app.MainActivity}
+  mFocusedApp=ActivityRecord{6561f5e u0 com.cybnate.app/.MainActivity t8}
+11-16 06:02:03.170   520   539 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +3s892ms
+11-16 06:02:03.608  1738  2203 W earchbox:search: Verification of void org.chromium.net.impl.CronetUrlRequest.onError(int, int, int, java.lang.String, long) took 112.943ms (1239.55 bytecodes/s) (4536B approximate peak alloc)
+CybNateJS: CYBUI ready agents=6 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:2425)
+CybNateJS: CYBUI layout t=1500 header=56 welcome=504 frames=23 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2443)
+CybNateJS: CYBUI layout t=6000 header=56 welcome=504 frames=293 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2443)
+CybNateJS: CYBUI layout t=12000 header=56 welcome=504 frames=391 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2443)
+CybNateJS: CYBUI layout t=25000 header=56 welcome=504 frames=391 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2443)
