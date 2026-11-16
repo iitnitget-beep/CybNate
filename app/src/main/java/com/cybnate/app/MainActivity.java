@@ -112,6 +112,15 @@ public class MainActivity extends Activity {
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri u = request.getUrl();
                 if ("appassets.androidplatform.net".equals(u.getHost())) return false;
+                String scheme = u.getScheme();
+                if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
+                    boolean allowed = false;
+                    try { allowed = isAllowedHttpUrl(new URL(u.toString())); } catch (Exception ignored) { }
+                    if (!allowed) {
+                        Toast.makeText(MainActivity.this, "Blocked public HTTP link", Toast.LENGTH_SHORT).show();
+                        return true;
+                    }
+                }
                 try {
                     startActivity(new Intent(Intent.ACTION_VIEW, u));
                 } catch (Exception ignored) {
@@ -254,31 +263,31 @@ public class MainActivity extends Activity {
                 + JSONObject.quote(data == null ? "" : data) + ")");
     }
 
-    private class Bridge {
-        private boolean isAllowedHttpUrl(URL url) {
-            String protocol = url.getProtocol().toLowerCase(java.util.Locale.US);
-            if ("https".equals(protocol)) return true;
-            if (!"http".equals(protocol)) return false;
-            String host = url.getHost().toLowerCase(java.util.Locale.US);
-            if (host.startsWith("[") && host.endsWith("]")) host = host.substring(1, host.length() - 1);
-            if (host.endsWith(".")) host = host.substring(0, host.length() - 1);
-            if (host.equals("localhost") || host.endsWith(".local") || host.equals("::1") || host.equals("0:0:0:0:0:0:0:1")) return true;
-            String[] parts = host.split("\\.");
-            if (parts.length != 4) return false;
-            int[] octets = new int[4];
-            try {
-                for (int i = 0; i < 4; i++) {
-                    if (!parts[i].matches("0|[1-9][0-9]{0,2}")) return false;
-                    octets[i] = Integer.parseInt(parts[i]);
-                    if (octets[i] > 255) return false;
-                }
-            } catch (NumberFormatException e) { return false; }
-            return octets[0] == 10 || octets[0] == 127 ||
-                    (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31) ||
-                    (octets[0] == 192 && octets[1] == 168) ||
-                    (octets[0] == 169 && octets[1] == 254);
-        }
+    private boolean isAllowedHttpUrl(URL url) {
+        String protocol = url.getProtocol().toLowerCase(java.util.Locale.US);
+        if ("https".equals(protocol)) return true;
+        if (!"http".equals(protocol)) return false;
+        String host = url.getHost().toLowerCase(java.util.Locale.US);
+        if (host.startsWith("[") && host.endsWith("]")) host = host.substring(1, host.length() - 1);
+        if (host.endsWith(".")) host = host.substring(0, host.length() - 1);
+        if (host.equals("localhost") || host.endsWith(".local") || host.equals("::1") || host.equals("0:0:0:0:0:0:0:1")) return true;
+        String[] parts = host.split("\\.");
+        if (parts.length != 4) return false;
+        int[] octets = new int[4];
+        try {
+            for (int i = 0; i < 4; i++) {
+                if (!parts[i].matches("0|[1-9][0-9]{0,2}")) return false;
+                octets[i] = Integer.parseInt(parts[i]);
+                if (octets[i] > 255) return false;
+            }
+        } catch (NumberFormatException e) { return false; }
+        return octets[0] == 10 || octets[0] == 127 ||
+                (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31) ||
+                (octets[0] == 192 && octets[1] == 168) ||
+                (octets[0] == 169 && octets[1] == 254);
+    }
 
+    private class Bridge {
         /** Streaming HTTP that is not subject to browser CORS rules. */
         @JavascriptInterface
         public void http(final String id, final String url, final String method, final String headersJson, final String body) {

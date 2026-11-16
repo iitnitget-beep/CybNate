@@ -625,10 +625,27 @@
     return out.slice(0, 8);
   }
   async function webSearch(query, signal) {
-    let r = await httpText('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query), signal);
-    let res = parseSearchResults(r.text);
-    if (!res.length) { r = await httpText('https://lite.duckduckgo.com/lite/?q=' + encodeURIComponent(query), signal); res = parseSearchResults(r.text); }
-    if (!res.length && (r.status >= 400 || r.status === 202 || /anomaly|captcha|challenge/i.test(r.text))) throw new Error('The search engine blocked this request (HTTP ' + r.status + '). Try again later, or open a known URL with read_url.');
+    let r, res, searchServiceReached = false;
+    try {
+      r = await httpText('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query), signal);
+      searchServiceReached = true;
+      res = parseSearchResults(r.text);
+      if (!res.length) {
+        r = await httpText('https://lite.duckduckgo.com/lite/?q=' + encodeURIComponent(query), signal);
+        searchServiceReached = true;
+        res = parseSearchResults(r.text);
+      }
+    } catch (e) {
+      if (!searchServiceReached) throw e;
+      const error = new Error('Search endpoint responded, but its fallback request failed: ' + (e && e.message ? e.message : e));
+      error.searchServiceReached = true;
+      throw error;
+    }
+    if (!res.length && (r.status >= 400 || r.status === 202 || /anomaly|captcha|challenge/i.test(r.text))) {
+      const error = new Error('The search engine blocked this request (HTTP ' + r.status + '). Try again later, or open a known URL with read_url.');
+      error.searchServiceReached = true;
+      throw error;
+    }
     return res;
   }
   function htmlToText(html, baseUrl) {

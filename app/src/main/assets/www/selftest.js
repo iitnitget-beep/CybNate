@@ -5,9 +5,9 @@
   const box = document.createElement('pre');
   box.style.cssText = 'position:fixed;inset:0;z-index:99;margin:0;background:#0b0f0e;color:#e6f2ec;font:11px monospace;padding:10px;overflow:auto;white-space:pre-wrap';
   document.body.appendChild(box);
-  const say = (name, ok, detail) => { const l = 'CYBTEST ' + (ok ? 'PASS ' : 'FAIL ') + name + (detail ? ' :: ' + String(detail).replace(/\s+/g, ' ').slice(0, 260) : ''); lines.push(l); console.log(l); box.textContent = lines.join('\n'); };
+  const say = (name, ok, detail, skip) => { const l = 'CYBTEST ' + (skip ? 'SKIP ' : ok ? 'PASS ' : 'FAIL ') + name + (detail ? ' :: ' + String(detail).replace(/\s+/g, ' ').slice(0, 260) : ''); lines.push(l); console.log(l); box.textContent = lines.join('\n'); };
   // one stuck case must not stall the whole run: after 5 minutes it is reported as failed and the next case starts
-  const test = async (name, fn) => { try { const d = await Promise.race([fn(), new Promise((_, rej) => setTimeout(() => rej(new Error('no result after 300 s')), 300000))]); say(name, true, d); } catch (e) { say(name, false, e && e.message ? e.message : e); } };
+  const test = async (name, fn) => { try { const d = await Promise.race([fn(), new Promise((_, rej) => setTimeout(() => rej(new Error('no result after 300 s')), 300000))]); if (d && d.__cybSkip) say(name, false, d.reason, true); else say(name, true, d); } catch (e) { say(name, false, e && e.message ? e.message : e); } };
   const must = (c, m) => { if (!c) throw new Error(m); };
   console.log('CYBTEST START ua=' + navigator.userAgent);
 
@@ -50,7 +50,32 @@
     must(/^Auto → Coder/.test(chip), 'Auto mode did not route to Coder: ' + chip); must(/requests used: \d+\/30/.test(reqs), 'no request counter: ' + reqs);
     return Math.round((Date.now() - t0) / 1000) + 's approvals=' + sheets + ' tools=[' + tools + '] errors=[' + errs + '] final=' + lastMsg.replace(/\s+/g, ' ').slice(-140);
   });
-  await test('web search', async () => { const r = await T.webSearch('pyodide documentation'); must(r.length > 0, 'no results'); return r.length + ' results; first: ' + r[0].title + ' ' + r[0].url; });
+  await test('web search', async () => {
+    const endpoints = ['https://html.duckduckgo.com/html/', 'https://lite.duckduckgo.com/lite/'];
+    const endpointText = endpoints.join(', '), attempts = [];
+    const unreachable = /network error|connection (?:reset|refused|closed|timed out)|failed to connect|unknown host|name resolution|no route to host|unreachable|timed out|timeout|dns/i;
+    let receivedSearchResponse = false, networkFailures = 0;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const controller = new AbortController(); let timedOut = false;
+      const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 15000);
+      try {
+        const results = await T.webSearch('pyodide documentation', controller.signal);
+        receivedSearchResponse = true;
+        if (results.length) return results.length + ' results; first: ' + results[0].title + ' ' + results[0].url;
+        attempts.push('attempt ' + (attempt + 1) + ': search returned nothing');
+      } catch (e) {
+        const error = e && e.message ? e.message : String(e);
+        if (e && e.searchServiceReached) receivedSearchResponse = true;
+        attempts.push('attempt ' + (attempt + 1) + ': ' + (timedOut ? 'request timed out after 15 s' : error));
+        if (timedOut || unreachable.test(error)) networkFailures++;
+      } finally { clearTimeout(timer); }
+      if (attempt < 2) await nap(attempt === 0 ? 1 : 2);
+    }
+    if (!receivedSearchResponse && networkFailures === 3) return { __cybSkip: true, reason: 'endpoints: ' + endpointText + '; service unreachable from this runner after 3 attempts (' + attempts.join('; ') + ')' };
+    if (receivedSearchResponse && networkFailures === 0) throw new Error('endpoints: ' + endpointText + '; error: search returned nothing after 3 attempts (' + attempts.join('; ') + ')');
+    if (receivedSearchResponse) throw new Error('endpoints: ' + endpointText + '; error: search returned nothing or errored during retries (' + attempts.join('; ') + ')');
+    throw new Error('endpoints: ' + endpointText + '; error: ' + attempts.join('; '));
+  });
   await test('read url', async () => { const t = await T.readUrl('https://example.com'); must(/Example Domain/.test(t), t.slice(0, 200)); return t.slice(0, 80); });
   await test('github api reachable (CORS)', async () => { const r = await fetch('https://api.github.com/repos/CodebuffAI/freebuff'); must(r.ok, 'HTTP ' + r.status); return (await r.json()).full_name; });
 
@@ -262,9 +287,11 @@
     return 'Google: ' + g.slice(0, 90) + ' | OpenAI: ' + o;
   });
 
-  const fails = lines.filter((l) => /FAIL/.test(l)).length;
-  console.log('CYBTEST DONE pass=' + (lines.length - fails) + ' fail=' + fails);
-  box.textContent = lines.join('\n') + '\n\nDONE pass=' + (lines.length - fails) + ' fail=' + fails;
+  const fails = lines.filter((l) => l.startsWith('CYBTEST FAIL ')).length;
+  const skips = lines.filter((l) => l.startsWith('CYBTEST SKIP ')).length;
+  const passes = lines.filter((l) => l.startsWith('CYBTEST PASS ')).length;
+  console.log('CYBTEST DONE pass=' + passes + ' fail=' + fails + ' skip=' + skips);
+  box.textContent = lines.join('\n') + '\n\nDONE pass=' + passes + ' fail=' + fails + ' skip=' + skips;
   // the results are in the log; the screenshot taken now shows the Integrations screen instead
   try { box.remove(); T.openIntegrations(); } catch (e) { console.log('CYBUI integrations screen failed: ' + e.message); }
 })();

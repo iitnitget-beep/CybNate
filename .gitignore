@@ -8,4 +8,10 @@ keystore/
 .env
 .env.*
 !.env.example
+*.jks
+*.keystore
+*.pem
+*.p12
+*.bks
+*.key
 app/src/main/assets/www/vendor/pyodide/

@@ -14,6 +14,8 @@ command -v node >/dev/null 2>&1 || fail 'Node.js is required to run tests/core.t
 [ -f tests/safety.test.js ] || fail 'Verification gate is incomplete: tests/safety.test.js is missing.'
 [ -f tests/cleartext.test.js ] || fail 'Verification gate is incomplete: tests/cleartext.test.js is missing.'
 
+printf '%s\n' '==> bash scripts/audit.sh'
+bash scripts/audit.sh
 printf '%s\n' '==> node tests/cleartext.test.js'
 node tests/cleartext.test.js
 printf '%s\n' '==> node tests/core.test.js'
