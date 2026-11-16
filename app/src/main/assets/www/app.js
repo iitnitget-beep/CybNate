@@ -161,7 +161,7 @@
     let hint = '';
     if (p.signIn && (status === 401 || status === 403)) hint = p.name + ' refused the sign-in. Open Settings → Model Providers and sign in again.';
     else if (status === 401 || status === 403) hint = p.needsKey ? 'Your ' + p.name + ' key was rejected. Check it in Settings.' : p.name + ' refused the request. It may now require a key; pick another provider in Settings.';
-    else if (status === 402) hint = p.name + ' has stopped serving free replies for now. Add a free Groq, Gemini or OpenRouter key in Settings.';
+    else if (status === 402) hint = p.paid ? p.name + ' reports a billing or account-credit issue. Check your NVIDIA account and usage limits.' : p.name + ' has stopped serving free replies for now. Add a free Groq, Gemini or OpenRouter key in Settings.';
     else if (status === 429) hint = 'Free rate limit reached on ' + p.name + '. Wait a little, or switch model or provider.';
     else if (status === 404 || status === 400) hint = 'The model "' + settings.model + '" may no longer be available. Tap the model name and refresh the list.';
     else if (status >= 500) hint = p.name + ' is having problems right now. Try again or switch provider.';
@@ -179,7 +179,11 @@
   /** Published facts about a model (context window, price), when its provider lists them. */
   const metaOf = (t) => ((settings.meta || {})[t.provider] || {})[t.model] || {};
   /** The free-only rule for one model: {ok, reason}. Only providers that price each model (OpenRouter) are judged per model. */
-  const freeCheck = (t) => O.freeCheck(C.PROVIDERS[t.provider] && C.PROVIDERS[t.provider].freeOnly ? 'priced' : '', t.model, (settings.meta || {})[t.provider], !!settings.allowPaid);
+  const freeCheck = (t) => {
+    const p = C.PROVIDERS[t.provider];
+    if (p && p.paidByDefault && !settings.allowPaid) return { ok: false, reason: 'the provider may bill your account; enable Allow paid models only if you accept possible charges' };
+    return O.freeCheck(p && p.freeOnly ? 'priced' : '', t.model, (settings.meta || {})[t.provider], !!settings.allowPaid);
+  };
   /** Today's requests, failures and tokens per model, for the Usage screen. Counts only what this app sent from this phone. */
   function noteUsage(t, r) {
     const day = new Date().toISOString().slice(0, 10); let u = load('cyb.usage', null);
@@ -1936,7 +1940,7 @@
   function settingsRow(label, value, fn, plain) { const b = el('button', 'srow' + (plain ? ' plain' : '')); b.appendChild(el('span', '', label)); if (value) b.appendChild(el('small', '', value)); if (fn) b.onclick = fn; return b; }
   function openProviders() {
     openSheet('Model Providers', (body) => {
-      body.appendChild(el('div', 'empty', 'Pollinations works with no key; OpenRouter, Groq and Gemini give a free key in a minute and are much faster. Codex uses your ChatGPT plan after a sign-in. Claude needs a paid API key.')).style.cssText = 'text-align:left;padding:0 4px 12px';
+      body.appendChild(el('div', 'empty', 'Pollinations works with no key; OpenRouter, Groq and Gemini offer API keys. NVIDIA NIM uses your NVIDIA API account and may incur charges. Codex uses your ChatGPT plan after sign-in; Claude needs a paid API key.')).style.cssText = 'text-align:left;padding:0 4px 12px';
       Object.keys(C.PROVIDERS).forEach((id) => {
         const p = C.PROVIDERS[id], card = el('div', 'card' + (settings.provider === id ? ' on' : ''));
         const h = el('h3', '', p.name + ' '); h.appendChild(el('span', 'tag', settings.provider === id ? 'active' : p.signIn ? 'sign in' : p.needsKey ? 'key' : 'no key')); card.appendChild(h);
@@ -1948,9 +1952,10 @@
           card.appendChild(el('p', 'hint', 'HTTP works only for localhost, private/LAN and .local hosts. Use HTTPS for public servers.'));
         }
         if (p.needsKey || p.custom) {
-          const k = el('input', 'field'); k.type = 'password'; k.dataset.key = id; k.placeholder = p.custom ? 'API key (optional)' : p.paid ? 'Paste your Anthropic API key (sk-ant-…)' : 'Paste your free ' + p.name + ' API key'; k.value = settings.keys[id] || ''; k.autocomplete = 'off';
+          const k = el('input', 'field'); k.type = 'password'; k.dataset.key = id; k.placeholder = p.keyPlaceholder || (p.custom ? 'API key (optional)' : p.paid ? 'Paste your Anthropic API key (sk-ant-…)' : 'Paste your free ' + p.name + ' API key'); k.value = settings.keys[id] || ''; k.autocomplete = 'off';
           k.onchange = () => { settings.keys[id] = k.value.trim(); saveSettings(); toast('Key saved on this device'); }; card.appendChild(k);
         }
+        if (p.costNote) card.appendChild(el('p', 'hint', p.costNote));
         if (p.keyUrl) { const a = el('a', '', p.paid ? 'Get an API key →' : 'Get a free key →'); a.href = p.keyUrl; a.target = '_blank'; a.rel = 'noopener'; a.style.display = 'inline-block'; a.style.marginTop = '8px'; card.appendChild(a); }
         const use = el('button', 'wide ghost', settings.provider === id ? '✓ In use · choose model' : 'Use ' + p.name);
         use.onclick = () => { openModels(id); }; card.appendChild(use);

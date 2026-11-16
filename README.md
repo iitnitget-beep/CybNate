@@ -22,19 +22,19 @@ CybNate follows the same working loop as Freebuff's main agent: gather context, 
 Agents you can pick: ⌨ Coder (the orchestrator), 🧭 Planner, 🔍 Reviewer, 🧬 Reverse, 💬 Chat.
 There is also a Terminal screen for running commands yourself, an editor, and a preview for HTML projects.
 
-## Free models
+## Model providers
 
 | Provider | Key | Notes |
 | --- | --- | --- |
 | Pollinations | none | Default. Works immediately. |
-| OpenRouter | free key | Only `:free` models are listed |
-| Groq | free key | Very fast |
-| Google Gemini | free key | Large context |
+| OpenRouter | API key | Free models are selected by price metadata; paid/unknown-price models require explicit opt-in. |
+| Groq | API key | Account usage and limits depend on Groq. |
+| Google Gemini | API key | Account usage and limits depend on Google. |
+| NVIDIA NIM | NVIDIA API key | OpenAI-compatible API. Model calls are blocked until **Allow paid models** is enabled because account credits/pricing may vary. |
 | Custom | optional | Any OpenAI-compatible server, e.g. Ollama on your PC |
 
-Tap the model name above the message box to pick a model; **↻ Refresh** loads the provider's current list.
-Keys are stored only on the device. Free tiers have rate limits set by each provider.
-Agent quality depends heavily on the model: the keyless default is the weakest option, and a free Gemini, Groq or OpenRouter key gives much better results.
+Tap the model name above the message box to pick a model; **↻ Refresh** loads the provider's current list. Provider keys are saved in the app's local settings and requests go directly from the app to the provider. Check each provider's terms, billing and rate limits; the app cannot know the balance on your account.
+Agent quality depends heavily on the model: add a key for a provider/model that suits your task, or keep using Pollinations without a key.
 
 ## Differences from Freebuff
 
@@ -98,7 +98,7 @@ Auto is the default agent. It decides who should handle a request and, for code 
 
 ## Model router (Phase 2)
 
-- **Free only.** On OpenRouter a model is called only if the price list says it costs nothing or its id is a `:free` variant. Anything else is refused before a request is made, with the reason. "Allow paid models" (Settings → General) is off by default. Groq, Gemini and Pollinations bill per account, not per model, so the app cannot see whether your account has billing turned on; use keys from accounts without billing.
+- **Cost safeguards.** On OpenRouter a model is called only if the price list says it costs nothing or its id is a `:free` variant; anything else is refused before a request unless "Allow paid models" is enabled. NVIDIA model calls are also blocked until that setting is enabled because NVIDIA account credits/pricing may vary and its model list does not reliably identify free access. Groq, Gemini, Pollinations and custom servers are billed/limited according to the account or server; the app cannot see those balances, so check their terms before using a key.
 - **Limits are learned, not assumed.** The app starts at a careful pace and then follows each provider's replies: `retry-after`, `x-ratelimit-*` headers and wait hints in error bodies. A short wait is honoured; a wait longer than 90 s makes the request fall back to the next model. The daily figures in the code are estimates that only trigger the "running low" warning.
 - **Context window.** Where a provider publishes it (OpenRouter, Groq), the chat history sent is sized to the smallest window in the fallback chain, and small-window models rank lower for agent roles.
 - **Local models.** The Custom provider accepts an Ollama address with or without `/v1`; the model list is read from `/v1/models` or `/api/tags`, and local models join the Auto pool.
@@ -106,7 +106,7 @@ Auto is the default agent. It decides who should handle a request and, for code 
 
 ## Tests
 
-Install the test-only dependencies with `npm ci`, then run `npm test` for core and safety tests. `npm run test:ui` and `npm run test:preview` run the jsdom suites. The Android verification gate is `bash scripts/verify.sh`; use `VERIFY_JS_ONLY=1 bash scripts/verify.sh` only when the Android toolchain is unavailable (that is not a full Android pass).
+Install the test-only dependencies with `npm ci`, then run `npm test` for core, safety and provider-router tests. `npm run test:ui` and `npm run test:preview` run the other jsdom suites. The Android verification gate is `bash scripts/verify.sh`; use `VERIFY_JS_ONLY=1 bash scripts/verify.sh` only when the Android toolchain is unavailable (that is not a full Android pass).
 
 ```
 node tests/core.test.js        # tools, parser, commands, ZIP, APK analysis

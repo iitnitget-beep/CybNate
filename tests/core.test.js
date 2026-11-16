@@ -72,6 +72,10 @@ const AUTO = { mode: 'auto' }; // these older tests exercise the tools themselve
 
   // --- model lists
   assert.deepStrictEqual(C.parseModelList({ data: [{ id: 'a/b:free' }, { id: 'c/d', pricing: { prompt: '1', completion: '1' } }] }, C.PROVIDERS.openrouter), ['a/b:free']);
+  assert.strictEqual(C.PROVIDERS.nvidia.chatUrl, 'https://integrate.api.nvidia.com/v1/chat/completions');
+  assert.strictEqual(C.PROVIDERS.nvidia.modelsUrl, 'https://integrate.api.nvidia.com/v1/models');
+  assert.strictEqual(C.PROVIDERS.nvidia.paidByDefault, true, 'NVIDIA calls require explicit paid-usage opt-in');
+  assert.deepStrictEqual(C.parseModelList({ data: [{ id: 'meta/llama-3.3-70b-instruct' }, { id: 'nvidia/embed-qa-4' }] }, C.PROVIDERS.nvidia), ['meta/llama-3.3-70b-instruct']);
   assert.deepStrictEqual(C.parseModelList([{ name: 'openai' }, { name: 'openai-audio' }], C.PROVIDERS.pollinations), ['openai']);
   assert.deepStrictEqual(C.parseModelList({ data: [{ id: 'models/gemini-2.5-flash' }, { id: 'models/text-embedding-004' }] }, C.PROVIDERS.gemini), ['gemini-2.5-flash']);
 

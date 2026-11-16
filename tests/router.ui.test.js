@@ -31,6 +31,25 @@ const sse = (text) => 'data: ' + JSON.stringify({ choices: [{ delta: { content: 
   const ask = (via) => T.chatStream([{ role: 'system', content: 's' }, { role: 'user', content: 'hi' }], () => {}, undefined, null, via);
   const chat = (c) => /chat\/completions/.test(c.url);
 
+  // NVIDIA NIM uses the OpenAI-compatible endpoints; model calls require a deliberate possible-billing opt-in.
+  T.settings.keys.nvidia = 'nvapi-test-only';
+  handler = () => ({ status: 200, body: JSON.stringify({ data: [{ id: 'meta/llama-3.3-70b-instruct' }, { id: 'nvidia/embed-qa-4' }] }) });
+  assert.strictEqual(String(await T.fetchModels('nvidia')), 'meta/llama-3.3-70b-instruct');
+  assert.strictEqual(calls.at(-1).url, 'https://integrate.api.nvidia.com/v1/models');
+  assert.strictEqual(calls.at(-1).auth, 'Bearer nvapi-test-only');
+  calls.length = 0; handler = () => ({ status: 200, body: sse('nvidia answer') });
+  await assert.rejects(ask({ chain: [{ provider: 'nvidia', model: 'meta/llama-3.3-70b-instruct' }] }), /may bill your account/);
+  assert.strictEqual(calls.length, 0, 'NVIDIA request is not sent without paid-usage opt-in');
+  T.settings.allowPaid = true;
+  assert.strictEqual(await ask({ chain: [{ provider: 'nvidia', model: 'meta/llama-3.3-70b-instruct' }] }), 'nvidia answer');
+  assert.strictEqual(calls.at(-1).url, 'https://integrate.api.nvidia.com/v1/chat/completions');
+  assert.strictEqual(calls.at(-1).auth, 'Bearer nvapi-test-only');
+  T.settings.allowPaid = false;
+  T.openProviders();
+  const nvCard = [...d.querySelectorAll('#sheetBody .card')].find((c) => /NVIDIA NIM/.test(c.textContent));
+  assert.ok(nvCard && /nvapi-/.test(nvCard.querySelector('input[type=password]').placeholder) && /may incur charges|may be billed|pricing/i.test(nvCard.textContent), 'NVIDIA settings explain key and possible charges');
+  console.log('0 ok  NVIDIA NIM provider, model discovery, auth and paid opt-in');
+
   // 1. model list: paid models are left out, context windows are remembered
   handler = () => ({ status: 200, body: JSON.stringify({ data: [
     { id: 'qwen/qwen3-coder:free', context_length: 262144, pricing: { prompt: '0', completion: '0' } },
