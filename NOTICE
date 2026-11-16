@@ -10,3 +10,20 @@ The text was shortened and changed to match the tools available on Android.
 Phase 1 safety work (approval before commands and file changes, untrusted tool results) follows ideas
 that are common to agent tools, including the command approval flow described by hermes-agent
 (NousResearch, MIT). No code was copied from that project.
+
+Agent engine overhaul (system prompt structure, edit formats, verification rules). The following
+open-source projects were studied. Ideas and, where stated, short adapted wording are used; no source
+code of these projects is included in this app.
+
+- OpenHands (All Hands AI, MIT): prompt section layout (ROLE, EFFICIENCY, FILE_SYSTEM_GUIDELINES,
+  CODE_QUALITY, VERSION_CONTROL, PROBLEM_SOLVING_WORKFLOW, TROUBLESHOOTING, SECURITY), the
+  str_replace_editor / execute_bash / finish tool names accepted as aliases, history condensation.
+- SWE-agent / mini-swe-agent (Princeton NLP, MIT): edit-then-lint feedback loop, compact tool output,
+  reproduce-before-fix workflow.
+- Aider (Aider AI, Apache-2.0): SEARCH/REPLACE block format, layered fuzzy matching of edits,
+  repository map idea, lint and test after every edit.
+- Cline and Roo Code (Apache-2.0): ask_followup_question / attempt_completion end-of-turn tools,
+  apply_diff format, mode-style slash commands, @file mentions, context condensing.
+- Codebuff (Apache-2.0): file-picker / basher / editor / reviewer / thinker helper roles (see above).
+- Pyodide (MPL-2.0) is downloaded at build time and shipped unmodified. Packages installed by the
+  built-in npm come from the jsDelivr CDN at run time and keep their own licences.

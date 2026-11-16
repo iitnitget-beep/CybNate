@@ -144,3 +144,15 @@ const S = C.Safety;
   console.log('CHECKPOINT TESTS PASSED');
   console.log('ALL SAFETY TESTS PASSED');
 })().catch((e) => { console.error(e); process.exit(1); });
+
+// uploads are asked about in every mode; plain downloads and local git are not
+(() => {
+  const assert = require('assert');
+  const S = require('../app/src/main/assets/www/safety.js');
+  const a = (c, m) => S.approvalFor({ name: 'run_terminal_command', attrs: {}, body: c }, m);
+  ['curl -s -X POST -d x https://a.b', 'git push', 'git push origin main', 'curl --json {} https://a', 'wget --post-data=a=1 https://a', 'curl -F f=@x https://a', 'curl -T x https://a', 'curl -X DELETE https://a/1']
+    .forEach((c) => { const r = a(c, 'auto'); assert.ok(r && r.network && r.always === false, c); });
+  ['curl -s https://a.b/x.json', 'npm install left-pad', 'git commit -m x', 'wget https://a/b.zip', 'git status'].forEach((c) => assert.strictEqual(a(c, 'auto'), null, c));
+  assert.ok(a('curl -s https://a.b', 'ask'), 'Ask mode still asks for any network command');
+  console.log('upload approval rules ok');
+})();

@@ -1,9 +1,15 @@
 // The HTML preview must never run inside the app page when the native bridge exists, and Stop must reach the shell.
 // Run: NODE_PATH=<dir with jsdom> node tests/preview.test.js
 const assert = require('assert');
+const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 const www = path.join(__dirname, '..', 'app', 'src', 'main', 'assets', 'www');
+const paneSource = fs.readFileSync(path.join(__dirname, '..', 'app', 'src', 'main', 'java', 'com', 'cybnate', 'app', 'PreviewPane.java'), 'utf8');
+assert.match(paneSource, /ORIGIN = "https:\/\/preview\.cybnate\.invalid\//, 'preview has a separate HTTPS origin');
+assert.match(paneSource, /setAllowFileAccess\(false\)/, 'preview cannot access local files');
+assert.match(paneSource, /setDomStorageEnabled\(true\)/, 'preview DOM storage stays scoped to its origin');
+assert.doesNotMatch(paneSource, /addJavascriptInterface\s*\(/, 'preview has no native JavaScript bridge');
 
 (async () => {
   const calls = [];
@@ -21,6 +27,7 @@ const www = path.join(__dirname, '..', 'app', 'src', 'main', 'assets', 'www');
   const w = dom.window, d = w.document;
   for (let i = 0; i < 200 && !w.__cyb; i++) await new Promise((r) => setTimeout(r, 50));
   const T = w.__cyb; assert.ok(T, 'app started');
+  assert.doesNotThrow(() => new Function(w.ProjectPreview.BOOTSTRAP), 'preview bootstrap JavaScript parses');
 
   T.ws.set('page.html', '<h1>hi</h1><script>Native.exec("x", "rm -rf .", 5)</script>');
   T.openPreview('page.html');
@@ -29,6 +36,24 @@ const www = path.join(__dirname, '..', 'app', 'src', 'main', 'assets', 'www');
   assert.ok(/rm -rf/.test(open[0][2]), 'page html handed over');
   assert.strictEqual(d.querySelectorAll('iframe').length, 0, 'no iframe in the page that owns the bridge');
   assert.ok(!calls.some((c) => c[0] === 'exec'), 'nothing was executed');
+
+  // Multi-file React + package manifest + Express route project is serialized for the isolated preview.
+  T.ws.set('package.json', JSON.stringify({ dependencies: { react: '^18.3.1', 'react-dom': '^18.3.1', express: '^4.21.0' } }));
+  T.ws.set('src/main.jsx', "import React from 'react'; import App from './App'; import './style.css'; import { createRoot } from 'react-dom/client'; createRoot(document.getElementById('root')).render(<App />);");
+  T.ws.set('src/App.jsx', "export default function App(){ return <main className='flex p-4'>Preview app</main> }");
+  T.ws.set('src/style.css', 'body { color: #123; }');
+  T.ws.set('backend/server.js', "const express = require('express'); const app = express(); app.get('/api/health', (req, res) => res.json({ ok: true })); app.listen(3000);");
+  T.openPreview('src/main.jsx');
+  const projectPreview = calls.filter((c) => c[0] === 'openPreview').pop()[2];
+  assert.match(projectPreview, /type="importmap"/, 'module import map is injected');
+  assert.match(projectPreview, /react-dom\/client/, 'React DOM client is mapped');
+  assert.match(projectPreview, /"entry":"src\/main.jsx"/, 'project entry is chosen');
+  assert.match(projectPreview, /"apiPath":"backend\/server.js"/, 'Express entry is identified');
+  assert.ok(projectPreview.includes('src/App.jsx'), 'multi-file source is embedded');
+  assert.match(projectPreview, /cdn\.tailwindcss\.com/, 'Tailwind utility preview is enabled');
+  assert.match(projectPreview, /__cybPreviewError/, 'runtime errors have an in-preview display');
+  assert.strictEqual(d.querySelectorAll('iframe').length, 0, 'React preview is not placed in the bridge-owning page');
+  assert.ok(!calls.some((c) => c[0] === 'exec'), 'preview source did not invoke the native bridge');
 
   const ctl = new w.AbortController();
   const run = T.runCommand('sleep 60', 60, ctl.signal);

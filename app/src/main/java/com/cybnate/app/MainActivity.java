@@ -46,6 +46,8 @@ public class MainActivity extends Activity {
 
     private WebView web;
     private PreviewPane preview;
+    private PageTester tester;
+    private GoogleAuth google;
     private final ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicBoolean> shells = new ConcurrentHashMap<>();
     private ValueCallback<Uri[]> fileCallback;
     private final ConcurrentHashMap<String, HttpURLConnection> requests = new ConcurrentHashMap<>();
@@ -59,6 +61,13 @@ public class MainActivity extends Activity {
         root.addView(web);
         setContentView(root);
         preview = new PreviewPane(this, root);
+        tester = new PageTester(this, root);
+        google = new GoogleAuth(this, new GoogleAuth.Callback() {
+            @Override
+            public void result(String id, String json) {
+                js("window.__ga && window.__ga(" + JSONObject.quote(id) + "," + json + ")");
+            }
+        });
 
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
@@ -103,6 +112,15 @@ public class MainActivity extends Activity {
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri u = request.getUrl();
                 if ("appassets.androidplatform.net".equals(u.getHost())) return false;
+                String scheme = u.getScheme();
+                if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
+                    boolean allowed = false;
+                    try { allowed = isAllowedHttpUrl(new URL(u.toString())); } catch (Exception ignored) { }
+                    if (!allowed) {
+                        Toast.makeText(MainActivity.this, "Blocked public HTTP link", Toast.LENGTH_SHORT).show();
+                        return true;
+                    }
+                }
                 try {
                     startActivity(new Intent(Intent.ACTION_VIEW, u));
                 } catch (Exception ignored) {
@@ -165,6 +183,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == GoogleAuth.REQUEST) {
+            google.onActivityResult(resultCode, data);
+            return;
+        }
         if (requestCode != REQ_FILE || fileCallback == null) return;
         Uri[] result = null;
         if (resultCode == RESULT_OK && data != null) {
@@ -241,6 +263,30 @@ public class MainActivity extends Activity {
                 + JSONObject.quote(data == null ? "" : data) + ")");
     }
 
+    private boolean isAllowedHttpUrl(URL url) {
+        String protocol = url.getProtocol().toLowerCase(java.util.Locale.US);
+        if ("https".equals(protocol)) return true;
+        if (!"http".equals(protocol)) return false;
+        String host = url.getHost().toLowerCase(java.util.Locale.US);
+        if (host.startsWith("[") && host.endsWith("]")) host = host.substring(1, host.length() - 1);
+        if (host.endsWith(".")) host = host.substring(0, host.length() - 1);
+        if (host.equals("localhost") || host.endsWith(".local") || host.equals("::1") || host.equals("0:0:0:0:0:0:0:1")) return true;
+        String[] parts = host.split("\\.");
+        if (parts.length != 4) return false;
+        int[] octets = new int[4];
+        try {
+            for (int i = 0; i < 4; i++) {
+                if (!parts[i].matches("0|[1-9][0-9]{0,2}")) return false;
+                octets[i] = Integer.parseInt(parts[i]);
+                if (octets[i] > 255) return false;
+            }
+        } catch (NumberFormatException e) { return false; }
+        return octets[0] == 10 || octets[0] == 127 ||
+                (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31) ||
+                (octets[0] == 192 && octets[1] == 168) ||
+                (octets[0] == 169 && octets[1] == 254);
+    }
+
     private class Bridge {
         /** Streaming HTTP that is not subject to browser CORS rules. */
         @JavascriptInterface
@@ -250,29 +296,73 @@ public class MainActivity extends Activity {
                 public void run() {
                     HttpURLConnection c = null;
                     try {
-                        c = (HttpURLConnection) new URL(url).openConnection();
-                        requests.put(id, c);
-                        c.setRequestMethod(method == null ? "GET" : method);
-                        c.setInstanceFollowRedirects(true);
-                        c.setConnectTimeout(30000);
-                        c.setReadTimeout(180000);
-                        if (headersJson != null && headersJson.length() > 0) {
-                            JSONObject h = new JSONObject(headersJson);
-                            Iterator<String> it = h.keys();
+                        URL current = new URL(url);
+                        if (!isAllowedHttpUrl(current)) throw new java.io.IOException("Blocked URL by cleartext policy: " + current);
+                        String requestMethod = method == null ? "GET" : method;
+                        byte[] requestBody = body == null ? new byte[0] : body.getBytes(StandardCharsets.UTF_8);
+                        JSONObject requestHeaders = headersJson == null || headersJson.length() == 0 ? new JSONObject() : new JSONObject(headersJson);
+                        int status;
+                        for (int hop = 0; ; hop++) {
+                            c = (HttpURLConnection) current.openConnection();
+                            requests.put(id, c);
+                            c.setRequestMethod(requestMethod);
+                            c.setInstanceFollowRedirects(false);
+                            c.setConnectTimeout(30000);
+                            c.setReadTimeout(180000);
+                            Iterator<String> it = requestHeaders.keys();
                             while (it.hasNext()) {
                                 String k = it.next();
-                                c.setRequestProperty(k, h.getString(k));
+                                c.setRequestProperty(k, requestHeaders.getString(k));
                             }
+                            if (requestBody.length > 0 && !"GET".equals(requestMethod) && !"HEAD".equals(requestMethod)) {
+                                c.setDoOutput(true);
+                                OutputStream os = c.getOutputStream();
+                                os.write(requestBody);
+                                os.close();
+                            }
+                            status = c.getResponseCode();
+                            String location = c.getHeaderField("Location");
+                            if ((status == 301 || status == 302 || status == 303 || status == 307 || status == 308) && location != null) {
+                                if (hop >= 9) throw new java.io.IOException("Too many redirects from " + url);
+                                URL next = new URL(current, location);
+                                if (!isAllowedHttpUrl(next)) throw new java.io.IOException("Blocked redirect by cleartext policy: " + next);
+                                boolean sameOrigin = current.getProtocol().equalsIgnoreCase(next.getProtocol()) &&
+                                        current.getHost().equalsIgnoreCase(next.getHost()) && current.getPort() == next.getPort();
+                                if (!sameOrigin) {
+                                    java.util.ArrayList<String> sensitive = new java.util.ArrayList<>();
+                                    Iterator<String> headerNames = requestHeaders.keys();
+                                    while (headerNames.hasNext()) {
+                                        String name = headerNames.next();
+                                        String lower = name.toLowerCase(java.util.Locale.US);
+                                        if (lower.equals("authorization") || lower.equals("proxy-authorization") || lower.equals("cookie")) sensitive.add(name);
+                                    }
+                                    for (String name : sensitive) requestHeaders.remove(name);
+                                }
+                                c.disconnect();
+                                requests.remove(id);
+                                c = null;
+                                if (status == 303 || ((status == 301 || status == 302) && "POST".equalsIgnoreCase(requestMethod))) {
+                                    requestMethod = "GET";
+                                    requestBody = new byte[0];
+                                }
+                                current = next;
+                                continue;
+                            }
+                            break;
                         }
-                        if (body != null && body.length() > 0) {
-                            c.setDoOutput(true);
-                            OutputStream os = c.getOutputStream();
-                            os.write(body.getBytes(StandardCharsets.UTF_8));
-                            os.close();
-                        }
-                        int status = c.getResponseCode();
                         String ct = c.getContentType();
                         emit(id, "h", status + "|" + (ct == null ? "" : ct));
+                        // rate-limit facts for the model router (retry-after, x-ratelimit-*); nothing else is passed on
+                        try {
+                            JSONObject rl = new JSONObject();
+                            for (java.util.Map.Entry<String, java.util.List<String>> en : c.getHeaderFields().entrySet()) {
+                                String k = en.getKey();
+                                if (k == null || en.getValue() == null || en.getValue().isEmpty()) continue;
+                                String lk = k.toLowerCase(java.util.Locale.US);
+                                if (lk.equals("retry-after") || lk.contains("ratelimit")) rl.put(lk, en.getValue().get(0));
+                            }
+                            if (rl.length() > 0) emit(id, "H", rl.toString());
+                        } catch (Exception ignored) { }
                         InputStream in = status >= 400 ? c.getErrorStream() : c.getInputStream();
                         if (in != null) {
                             InputStreamReader r = new InputStreamReader(in, StandardCharsets.UTF_8);
@@ -417,6 +507,33 @@ public class MainActivity extends Activity {
             runOnUiThread(new Runnable() { @Override public void run() { preview.close(); } });
         }
 
+        /**
+         * Loads a page in an invisible WebView without a native bridge and reports what its test harness collected.
+         * Answers with window.__nt(id, reportJsonOrNull).
+         */
+        @JavascriptInterface
+        public void testPage(final String id, final String html, final int timeoutMs) {
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    try {
+                        tester.run(html, timeoutMs, new PageTester.Done() {
+                            @Override public void result(String json) {
+                                js("window.__nt && window.__nt(" + JSONObject.quote(id) + "," + json + ")");
+                            }
+                        });
+                    } catch (Exception e) {
+                        js("window.__nt && window.__nt(" + JSONObject.quote(id) + "," + JSONObject.quote("{\"error\":" + JSONObject.quote(String.valueOf(e)) + "}") + ")");
+                    }
+                }
+            });
+        }
+
+        /** Console messages of the page in the preview view, newest last. */
+        @JavascriptInterface
+        public String previewConsole() {
+            return preview.consoleText();
+        }
+
         /** Title of the page in the preview view; the self test reads its probe result from here. */
         @JavascriptInterface
         public String previewTitle() {
@@ -454,6 +571,17 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 return "ERR:" + e.getMessage();
             }
+        }
+
+        /** Google sign-in for a list of scopes; answers through window.__ga(id, {ok, token, scopes} | {ok:false, code, error}). */
+        @JavascriptInterface
+        public void googleAuth(final String id, final String scopesJson, final boolean silent) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    google.start(id, scopesJson, silent);
+                }
+            });
         }
 
         @JavascriptInterface

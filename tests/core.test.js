@@ -72,18 +72,24 @@ const AUTO = { mode: 'auto' }; // these older tests exercise the tools themselve
 
   // --- model lists
   assert.deepStrictEqual(C.parseModelList({ data: [{ id: 'a/b:free' }, { id: 'c/d', pricing: { prompt: '1', completion: '1' } }] }, C.PROVIDERS.openrouter), ['a/b:free']);
+  assert.strictEqual(C.PROVIDERS.nvidia.chatUrl, 'https://integrate.api.nvidia.com/v1/chat/completions');
+  assert.strictEqual(C.PROVIDERS.nvidia.modelsUrl, 'https://integrate.api.nvidia.com/v1/models');
+  assert.strictEqual(C.PROVIDERS.nvidia.paidByDefault, true, 'NVIDIA calls require explicit paid-usage opt-in');
+  assert.deepStrictEqual(C.parseModelList({ data: [{ id: 'meta/llama-3.3-70b-instruct' }, { id: 'nvidia/embed-qa-4' }] }, C.PROVIDERS.nvidia), ['meta/llama-3.3-70b-instruct']);
   assert.deepStrictEqual(C.parseModelList([{ name: 'openai' }, { name: 'openai-audio' }], C.PROVIDERS.pollinations), ['openai']);
   assert.deepStrictEqual(C.parseModelList({ data: [{ id: 'models/gemini-2.5-flash' }, { id: 'models/text-embedding-004' }] }, C.PROVIDERS.gemini), ['gemini-2.5-flash']);
 
   // --- history trimming
   const h = C.trimHistory([{ role: 'user', content: 'x'.repeat(50) }, { role: 'assistant', content: 'y'.repeat(50) }, { role: 'user', content: 'z' }], 60);
-  assert.strictEqual(h[h.length - 1].content, 'z'); assert.strictEqual(h[0].role, 'user');
+  assert.ok(h[h.length - 1].content.endsWith('\n\nz')); assert.strictEqual(h[0].role, 'user'); assert.strictEqual(h.length, 1);
+  assert.ok(/compacted/.test(h[0].content) && /User requests so far:\n- x{50}/.test(h[0].content), 'dropped turns are replaced by a digest, not lost');
+  assert.strictEqual(C.trimHistory([{ role: 'user', content: 'a' }, { role: 'assistant', content: 'b' }], 1000)[0].content, 'a', 'nothing is added when everything fits');
 
   // --- real APK analysis (uses the CI-built APK when present)
   const apk = path.join(__dirname, '..', 'release', 'CybNate.apk');
   if (fs.existsSync(apk)) {
     ws.set('app.apk', new Uint8Array(fs.readFileSync(apk)));
-    res = await C.runTools(C.parseToolCalls('<file_info path="app.apk"/><android_manifest path="app.apk"/><zip_extract path="app.apk" entry="classes.dex" dest="c.dex"/><file_info path="c.dex"/><strings path="c.dex" filter="cybnate" limit="5"/>', allowed), ws, AUTO);
+    res = await C.runTools(C.parseToolCalls('<file_info path="app.apk"/><android_manifest path="app.apk"/><zip_extract path="app.apk" entry="classes.dex" dest="c.dex"/><file_info path="c.dex"/><strings path="c.dex" filter="cybnate/app/MainActivity" limit="5"/>', allowed), ws, AUTO);
     res.forEach((r) => assert.ok(r.ok, r.text));
     assert.ok(/Android APK/.test(res[0].text) && /classes\.dex/.test(res[0].text));
     assert.ok(/package="com\.cybnate\.app"/.test(res[1].text) && /android\.permission\.INTERNET/.test(res[1].text), res[1].text);
@@ -98,7 +104,7 @@ const AUTO = { mode: 'auto' }; // these older tests exercise the tools themselve
   assert.strictEqual(C.parseCommand('python a.py | head').kind, 'sh');
   assert.strictEqual(C.parseCommand('ls -la').kind, 'sh');
   assert.deepStrictEqual(C.parseCommand('pip install -U requests rich').argv, ['requests', 'rich']);
-  assert.strictEqual(C.parseCommand('git push').code, 127);
+  assert.strictEqual(C.parseCommand('git push').kind, 'git'); // git is built in now (app.js runs it against snapshots + the GitHub API)
   assert.ok(C.matchGlob('**/*.js', 'a/b/c.js') && C.matchGlob('*.js', 'a/c.js') && !C.matchGlob('src/*.js', 'src/a/b.js') && C.matchGlob('src/**/*.{ts,js}', 'src/a/b.ts'));
   const env = { mode: 'auto', exec: async (c, t) => ({ code: c === 'false' ? 1 : 0, out: 'ran ' + c + ' ' + t, files: ['x.txt'] }), search: async (q) => [{ title: 'T', url: 'https://u', snippet: q }], readUrl: async (u) => 'page ' + u, spawn: async (t, p) => t + ' report: ' + p };
   calls = C.parseToolCalls('<run_terminal_command timeout="5">\nls &amp;&amp; echo hi\n</run_terminal_command><run_terminal_command>false</run_terminal_command><web_search query="q1"/><read_url url="https://a"/><spawn_agent type="thinker">why</spawn_agent><spawn_agent type="nope">x</spawn_agent><find_files pattern="*.html"/><write_todos>\n- [ ] a\n</write_todos>', C.AGENTS.coder.tools);
@@ -110,6 +116,18 @@ const AUTO = { mode: 'auto' }; // these older tests exercise the tools themselve
   assert.ok(/index\.html/.test(res[6].text) && res[7].ok);
   assert.deepStrictEqual(C.followupsOf('x<suggest_followups>\n1. Add tests\n- Dark mode\n</suggest_followups>'), ['Add tests', 'Dark mode']);
   assert.ok(!/spawn_agent/.test(C.buildSystemPrompt('coder', '', '', { noSpawn: true })) && /Android system shell/.test(C.buildSystemPrompt('coder', '', '', { shell: true })));
+
+  // --- twenty helper calls are executed in batches of at most six
+  let activeHelpers = 0, peakHelpers = 0, completedHelpers = 0;
+  const twentyHelpers = Array.from({ length: 20 }, (_, n) => ({ name: 'spawn_agent', attrs: { type: 'thinker' }, body: 'task-' + n }));
+  const bounded = await C.runTools(twentyHelpers, ws, { spawn: async (_type, prompt) => {
+    activeHelpers++; peakHelpers = Math.max(peakHelpers, activeHelpers);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    activeHelpers--; completedHelpers++; return 'finished ' + prompt;
+  } });
+  assert.strictEqual(completedHelpers, 20, 'all helpers completed');
+  assert.strictEqual(peakHelpers, 6, 'the batch runs no more than MAX_PARALLEL helpers concurrently');
+  assert.ok(bounded.every((r) => r.ok), 'all batched helper results are returned');
 
   // --- native function calls are converted to tags
   const nat = C.nativeCallsToText([

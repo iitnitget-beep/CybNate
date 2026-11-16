@@ -72,7 +72,9 @@
         const cmd = String(call.body || '');
         const secrets = secretNames(a.secrets);
         const sens = commandTouchesSensitive(cmd);
-        if (secrets.length || sens) return { kind: 'shell', sensitive: sens, always: false, secrets };
+        if (secrets.length || sens) return { kind: 'shell', sensitive: sens, always: false, secrets, network: sendsData(cmd) };
+        // sending data out of the device is asked about in every mode, Auto included
+        if (sendsData(cmd)) return { kind: 'shell', sensitive: false, always: false, secrets, network: true };
         if (isReadOnlyCommand(cmd) || mode === 'auto') return null;
         return { kind: 'shell', sensitive: false, always: true, secrets };
       }
@@ -89,6 +91,14 @@
       }
       default: return null;
     }
+  }
+  /** True for a command that uploads something: curl/wget with a body, a form, a file or a writing method, and git push. */
+  function sendsData(cmd) {
+    cmd = String(cmd || '');
+    if (/(^|[\s;&|(])git\s+push\b/.test(cmd)) return true;
+    if (!/(^|[\s;&|(])(curl|wget)\s/.test(cmd)) return false;
+    return /\s(-d|--data(-raw|-binary|-urlencode|-ascii)?|--json|-F|--form|-T|--upload-file|--post-data|--post-file|--body-data|--body-file)(\s|=|$)/.test(cmd)
+      || /\s(-X|--request|--method)[\s=]*(POST|PUT|PATCH|DELETE)\b/i.test(cmd);
   }
   function secretNames(v) { return String(v || '').split(/[\s,]+/).filter((x) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(x)); }
 
@@ -147,7 +157,7 @@
     if (gate && gate.no.has(call)) throw deniedError(what(call));
     if (!env || typeof env.approve !== 'function') throw deniedError(what(call) + ' (no approval screen is available here)');
     let req;
-    if (need.kind === 'shell') req = { kind: 'shell', command: String(call.body || ''), secrets: need.secrets, sensitive: need.sensitive, always: need.always };
+    if (need.kind === 'shell') req = { kind: 'shell', command: String(call.body || ''), secrets: need.secrets, sensitive: need.sensitive, always: need.always, network: !!need.network };
     else if (need.kind === 'delete') req = { kind: 'delete', path: (call.attrs || {}).path || '', sensitive: need.sensitive };
     else req = { kind: 'edits', items: [preview ? preview(call) : { path: (call.attrs || {}).path || '' }] };
     const ans = await env.approve(req);
@@ -192,6 +202,6 @@
     return { restored, removed, skipped: cp.skipped.slice() };
   }
 
-  return { MODES, hasShellMeta, isReadOnlyCommand, isSensitivePath, commandTouchesSensitive, approvalFor, secretNames, ruleAllows, prefixOf,
+  return { MODES, hasShellMeta, isReadOnlyCommand, isSensitivePath, commandTouchesSensitive, approvalFor, sendsData, secretNames, ruleAllows, prefixOf,
     lineDiff, wrapUntrusted, deniedError, modeOf, ensureApproved, approveEdits, makeCheckpoint, changedSince, restoreCheckpoint };
 });

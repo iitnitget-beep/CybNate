@@ -9,6 +9,9 @@ const replies = [
   'I will build it.\n<write_file path="index.html">\n<!doctype html>\n<link rel="stylesheet" href="s.css">\n<h1>Timer</h1>\n<script src="app.js"></script>\n</write_file>\n<write_file path="s.css">\nh1{color:red}\n</write_file>\n<write_file path="app.js">\nconsole.log("hi")\n</write_file>',
   '<edit_file path="s.css">\n<search>red</search>\n<replace>green</replace>\n</edit_file>',
   'Done. **Three files** created.\n```js\nlet a = 1;\n```',
+  // the verification gate sends the agent back once: code was written but nothing was checked
+  '<get_diagnostics/>',
+  'Checked: no problems found.',
 ];
 const requests = [];
 
@@ -35,9 +38,13 @@ const requests = [];
   await new Promise((r) => setTimeout(r, 600));
   assert.deepStrictEqual(errors, []);
   assert.ok(d.querySelector('.welcome'), 'welcome screen');
-  assert.strictEqual(d.querySelectorAll('#agents .pill').length, 5);
+  assert.strictEqual(d.querySelectorAll('#agents .pill').length, 6);
   assert.ok(/^openai/.test(d.getElementById('btnModel').textContent));
-  assert.ok(d.getElementById('modeBtn') && /Coder/.test(d.getElementById('btnMode').textContent), 'mode selector');
+  assert.ok(d.getElementById('modeBtn') && /Auto/.test(d.getElementById('btnMode').textContent), 'Auto is the default agent');
+  // the rest of this file drives the Coder agent directly; Auto mode has its own test (tests/auto.test.js)
+  [...d.querySelectorAll('#agents .pill')].find((b) => /Coder/.test(b.textContent)).click();
+  assert.ok(/Coder/.test(d.getElementById('btnMode').textContent), 'mode selector');
+  w.__cyb.limiter.limits.pollinations = { concurrent: 2, rpm: 6000, daily: 0 };
 
   d.getElementById('input').value = 'Build a timer';
   d.getElementById('btnSend').click();
@@ -51,14 +58,16 @@ const requests = [];
   assert.ok(sheets >= 1, 'approval sheet was shown in Ask mode');
   assert.deepStrictEqual(errors, []);
   const chat = requests.filter((r) => r.body);
-  assert.strictEqual(chat.length, 3, 'agent loop made 3 model calls');
+  assert.strictEqual(chat.length, 5, 'agent loop made 5 model calls (3 + the verification gate round)');
+  assert.ok(/You modified code files but have not verified them yet/.test(chat[3].body.messages.at(-1).content), 'verification gate');
+  assert.ok(/No problems found/.test(chat[4].body.messages.at(-1).content), 'diagnostics result reached the model');
   assert.strictEqual(chat[0].url, 'https://text.pollinations.ai/openai');
   assert.ok(chat[0].body.messages[0].role === 'system' && /<write_file/.test(chat[0].body.messages[0].content));
   assert.ok(/<tool_results>[\s\S]*Created index\.html/.test(chat[1].body.messages.at(-1).content));
   assert.ok(/Applied 1 edit to s\.css/.test(chat[2].body.messages.at(-1).content));
   assert.ok(/s\.css/.test(chat[2].body.messages[0].content), 'workspace listing is in the system prompt');
-  assert.strictEqual(d.querySelectorAll('.msg.assistant').length, 3);
-  assert.strictEqual(d.querySelectorAll('.msg.tool').length, 2);
+  assert.strictEqual(d.querySelectorAll('.msg.assistant').length, 5);
+  assert.strictEqual(d.querySelectorAll('.msg.tool').length, 4);
   assert.strictEqual(d.querySelectorAll('.msg.error').length, 0);
   // Phase 1: results reach the model as untrusted data, and the run can be undone with one tap
   assert.ok(/<untrusted_data source="write_file index\.html">/.test(chat[1].body.messages.at(-1).content), 'tool results are wrapped');
@@ -103,7 +112,7 @@ const requests = [];
 
   // settings sheet renders, persistence survived
   d.getElementById('dSettings').click();
-  assert.strictEqual(d.querySelectorAll('#sheetBody .srow').length, 11);
+  assert.strictEqual(d.querySelectorAll('#sheetBody .srow').length, 13);
   [...d.querySelectorAll('#sheetBody .srow')].find((b) => /Model Providers/.test(b.textContent)).click();
   assert.strictEqual(d.querySelectorAll('#sheetBody .card').length, Object.keys(w.__cyb.C.PROVIDERS).length);
   w.onNativeBack();

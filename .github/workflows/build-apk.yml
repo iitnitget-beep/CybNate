@@ -25,25 +25,47 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      # A stable signing key is created once and kept in the repo so that
-      # every later build can be installed as an update over the previous one.
-      - name: Create signing key (first build only)
+      - name: Restore signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.CYBNATE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.CYBNATE_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.CYBNATE_KEY_PASSWORD }}
         run: |
-          if [ ! -f keystore/cybnate.jks ]; then
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$STORE_PASSWORD" ] && [ -n "$KEY_PASSWORD" ]; then
             mkdir -p keystore
-            keytool -genkeypair -v -keystore keystore/cybnate.jks -alias cybnate \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -storepass cybnate-release -keypass cybnate-release \
-              -dname "CN=CybNate, O=CybNate, C=IN"
+            printf '%s' "$KEYSTORE_BASE64" | base64 -d > keystore/cybnate.jks
+          else
+            echo "::warning::Signing secrets are missing or incomplete; this build is debug-signed and cannot update an installed copy."
           fi
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Repository audit
+        run: bash scripts/audit.sh
+
       - name: Agent core and safety tests
-        run: node tests/core.test.js && node tests/safety.test.js
+        run: |
+          set -e
+          node tests/cleartext.test.js
+          for t in core safety orchestra router devtools engine cli; do node tests/$t.test.js; done
+          # the backend: a real server on a local port with real bash, python and git; then, as root, that users are kept apart
+          node server/test/server.test.js
+          sudo env "PATH=$PATH" node server/test/isolation.test.js
+          # Install the pinned test-only DOM dependency from package-lock.json.
+          npm ci
+          for t in webtest.test integrations.test signin.test backend.test engine.ui.test auto.test router.ui.test preview.test ui.smoke; do node tests/$t.js; done
 
       - name: Fetch bundled Python runtime (Pyodide)
         run: bash scripts/fetch-vendor.sh
 
       - name: Unit tests and release APK
+        env:
+          CYBNATE_KEYSTORE_PATH: keystore/cybnate.jks
+          CYBNATE_KEY_ALIAS: cybnate
+          CYBNATE_STORE_PASSWORD: ${{ secrets.CYBNATE_STORE_PASSWORD }}
+          CYBNATE_KEY_PASSWORD: ${{ secrets.CYBNATE_KEY_PASSWORD }}
         run: gradle --no-daemon :app:testReleaseUnitTest :app:assembleRelease
 
       - name: Publish APK to the branch
@@ -52,7 +74,7 @@ jobs:
           cp app/build/outputs/apk/release/app-release.apk release/CybNate.apk
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f release/CybNate.apk keystore/cybnate.jks
+          git add -f release/CybNate.apk
           git commit -m "build: CybNate APK #${{ github.run_number }} [skip ci]" || exit 0
           git pull --rebase origin "${{ github.ref_name }}"
           git push origin "HEAD:${{ github.ref_name }}"
@@ -93,3 +115,5 @@ jobs:
           git commit -m "test: on-device self test #${{ github.run_number }} [skip ci]" || exit 0
           git pull --rebase origin "${{ github.ref_name }}"
           git push origin "HEAD:${{ github.ref_name }}"
+      - name: Fail when the self test did not finish clean
+        run: grep -Eq "CYBTEST DONE pass=[0-9]+ fail=0 skip=[0-9]+" release/selftest.txt
