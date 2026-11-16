@@ -247,6 +247,7 @@
     let r;
     try { r = await T.testWebapp('rn/index.html', 'await waitFor(() => { const n = document.querySelector("#root"); return n && n.textContent.includes("RN_API_OK"); }, 9000); return text("#root");', 12, signal); }
     finally { T.ws.remove('rn/index.html'); T.ws.remove('rn/src/main.jsx'); T.ws.remove('backend/server.js'); }
+    if (r.code !== 0) dump('rn-preview', r.out);
     must(r.code === 0 && /RN_API_OK/.test(r.out) && /Test script: PASSED/.test(r.out) && /Runtime errors: none/.test(r.out), r.out);
     return 'offline Babel + React Native shim + virtual Express /api route rendered #root';
   });

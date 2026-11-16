@@ -101,6 +101,7 @@ assert.match(selftestSource, /remote wheel download is outside the bounded offli
   assert.doesNotMatch(deterministicTestHtml, /cdn\.tailwindcss\.com/, 'test_webapp skips external Tailwind loads for deterministic offline verification');
   assert.match(deterministicTestHtml, /Tailwind CDN skipped/, 'test run clearly reports omitted remote styling');
   assert.match(projectPreview, /__cybPreviewError/, 'runtime errors have an in-preview display');
+  assert.match(projectPreview, /Failed to load preview asset/, 'failed bundled runtime requests are visible in preview diagnostics');
   assert.strictEqual(d.querySelectorAll('iframe').length, 0, 'React preview is not placed in the bridge-owning page');
   assert.ok(!calls.some((c) => c[0] === 'exec'), 'preview source did not invoke the native bridge');
 
