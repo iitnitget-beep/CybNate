@@ -227,6 +227,16 @@
     const r = await T.testWebapp('wt/index.html', 'click("#b"); click("#b"); await wait(50); assert(text("#n") === "2", "counter shows " + text("#n")); return localStorage.getItem("n");', 20);
     must(r.code === 0 && /Test script: PASSED \(returned 2\)/.test(r.out) && /Runtime errors: none/.test(r.out) && /Title: Counter/.test(r.out) && /\[log\] count 2/.test(r.out), r.out); return r.out.split('\n')[0];
   });
+  await test('test_webapp: offline React Native JSX preview compiles and renders', async () => {
+    T.ws.set('rn/index.html', '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script type="module" src="./src/main.jsx"></script></body></html>');
+    T.ws.set('rn/src/main.jsx', "import React, { useEffect, useState } from 'react'; import { AppRegistry, SafeAreaView, View, Text, StyleSheet } from 'react-native'; const s = StyleSheet.create({ box: { padding: 12 } }); function App(){ const [label, setLabel] = useState('WAIT'); useEffect(() => { fetch('/api/health').then(r => r.json()).then(v => setLabel(v.ok ? 'RN_API_OK' : 'API_BAD')); }, []); return <SafeAreaView style={s.box}><View><Text>{label}</Text></View></SafeAreaView> } AppRegistry.registerComponent('main', () => App);");
+    T.ws.set('backend/server.js', "const express = require('express'); const app = express(); app.get('/api/health', (req, res) => res.json({ ok: true })); app.listen(3000);");
+    let r;
+    try { r = await T.testWebapp('rn/index.html', 'await waitFor(() => { const n = document.querySelector("#root"); return n && n.textContent.includes("RN_API_OK"); }, 10000); return text("#root");', 16); }
+    finally { T.ws.remove('rn/index.html'); T.ws.remove('rn/src/main.jsx'); T.ws.remove('backend/server.js'); }
+    must(r.code === 0 && /RN_API_OK/.test(r.out) && /Test script: PASSED/.test(r.out) && /Runtime errors: none/.test(r.out), r.out);
+    return 'offline Babel + React Native shim + virtual Express /api route rendered #root';
+  });
   await test('test_webapp: catches error, rejection, failed assert, overflow', async () => {
     T.ws.set('wt/bad.html', '<!doctype html><title>Bad</title><meta name="viewport" content="width=device-width,initial-scale=1"><div id="wide" style="width:1400px;height:20px;background:red">x</div><button id="b" style="width:12px;height:12px;padding:0"></button><script>Promise.reject(new Error("async boom"));\nnoSuchFunction();</script>');
     const r = await T.testWebapp('wt/bad.html', 'assert($("#missing"), "the #missing element does not exist");', 20);

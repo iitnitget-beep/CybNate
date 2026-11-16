@@ -32,6 +32,11 @@
       var all = body ? body.getElementsByTagName('*') : [], q = function (s) { return d.querySelectorAll(s).length; };
       var text = body ? String(body.innerText != null ? body.innerText : body.textContent || '') : '';
       text = text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+      if (window.__CYB_PROJECT) {
+        var appRoot = d.querySelector('#root, #app');
+        if (!appRoot) errors.push('React project mount target #root/#app is missing');
+        else if (!String(appRoot.textContent || '').trim() && !appRoot.querySelector('canvas,img,svg,video,iframe,input,button')) errors.push('React preview rendered a blank #root/#app');
+      }
       try {
         var de = d.documentElement;
         if (vw && de.scrollWidth > vw + 1) {

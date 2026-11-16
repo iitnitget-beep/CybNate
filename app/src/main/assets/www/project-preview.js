@@ -33,7 +33,9 @@
     const src = String(html || '');
     const ref = /<script\b[^>]*\bsrc=["']([^"']+\.(?:jsx?|tsx?))["'][^>]*>/i.exec(src);
     if (ref) {
-      const fromHtml = cleanPath(ref[1].replace(/^(?:\.\/|\/)+/, ''));
+      const raw = ref[1];
+      const htmlDir = requested && /\.html?$/i.test(requested) ? cleanPath(requested).split('/').slice(0, -1).join('/') : '';
+      const fromHtml = cleanPath(raw.startsWith('/') ? raw : (htmlDir ? htmlDir + '/' : '') + raw);
       if (exists(fromHtml)) return fromHtml;
     }
     if (requested && CODE_EXT.test(requested) && exists(requested)) return cleanPath(requested);
@@ -63,16 +65,58 @@
     all.delete('react'); all.delete('react-dom'); all.delete('react-dom/client'); all.delete('react/jsx-runtime'); all.delete('react-native');
     return Array.from(all).sort();
   }
-  function importMap(files) {
+  const RN_SHIM_SOURCE = String.raw`import React from 'react';
+const h = React.createElement;
+function flattenStyle(value, out) { out = out || {}; if (Array.isArray(value)) value.forEach(function (v) { flattenStyle(v, out); }); else if (value && typeof value === 'object') Object.keys(value).forEach(function (k) { out[k] = value[k]; }); return out; }
+function styleOf(value, defaults) { var s = flattenStyle(value); if (defaults) s = Object.assign({}, defaults, s); if (s.marginHorizontal != null) { s.marginLeft = s.marginRight = s.marginHorizontal; delete s.marginHorizontal; } if (s.paddingHorizontal != null) { s.paddingLeft = s.paddingRight = s.paddingHorizontal; delete s.paddingHorizontal; } if (s.marginVertical != null) { s.marginTop = s.marginBottom = s.marginVertical; delete s.marginVertical; } if (s.paddingVertical != null) { s.paddingTop = s.paddingBottom = s.paddingVertical; delete s.paddingVertical; } delete s.elevation; delete s.shadowColor; delete s.shadowOffset; delete s.shadowOpacity; delete s.shadowRadius; return s; }
+function propsOf(p, defaults) { var q = Object.assign({}, p); delete q.style; delete q.onPress; delete q.onPressIn; delete q.onPressOut; delete q.testID; delete q.accessibilityLabel; delete q.accessibilityRole; delete q.nativeID; delete q.hitSlop; q.style = styleOf(p.style, defaults); if (p.testID) q['data-testid'] = p.testID; if (p.nativeID) q.id = p.nativeID; if (p.accessibilityLabel) q['aria-label'] = p.accessibilityLabel; if (p.onPress) q.onClick = p.onPress; if (p.onPressIn) q.onMouseDown = p.onPressIn; if (p.onPressOut) q.onMouseUp = p.onPressOut; return q; }
+function View(p) { return h('div', propsOf(p, { display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }), p.children); }
+function Text(p) { return h('span', propsOf(p, { whiteSpace: 'pre-wrap' }), p.children); }
+function Pressable(p) { var q = propsOf(p, { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }); q.type = 'button'; return h(p.as || 'button', q, p.children); }
+function TextInput(p) { var q = propsOf(p, { boxSizing: 'border-box' }); q.type = p.secureTextEntry ? 'password' : (p.keyboardType === 'email-address' ? 'email' : p.keyboardType === 'numeric' || p.keyboardType === 'number-pad' ? 'number' : 'text'); q.onChange = function (e) { if (p.onChangeText) p.onChangeText(e.target.value); if (p.onChange) p.onChange(e); }; if (p.multiline) { delete q.type; return h('textarea', q); } return h('input', q); }
+function ScrollView(p) { var q = propsOf(p, { display: 'flex', flexDirection: 'column', overflowY: 'auto', flexGrow: 1 }); return h('div', q, p.children); }
+function FlatList(p) { var data = p.data || []; return h(View, propsOf(p, { flexGrow: 1 }), data.map(function (item, index) { var child = p.renderItem ? p.renderItem({ item: item, index: index, separators: {} }) : h(Text, null, String(item)); var key = p.keyExtractor ? p.keyExtractor(item, index) : (item && (item.key || item.id)) || index; return h(React.Fragment, { key: String(key) }, child); })); }
+function SafeAreaView(p) { return h(View, Object.assign({}, p, { style: [ { paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }, p.style ] })); }
+function Image(p) { var q = propsOf(p); q.src = p.source && (p.source.uri || p.source) || p.src; q.alt = p.accessibilityLabel || ''; return h('img', q); }
+function ActivityIndicator(p) { return h('span', propsOf(p), p.hidesWhenStopped === false || p.animating !== false ? '◌' : null); }
+const StyleSheet = { create: function (s) { return s; }, flatten: flattenStyle, compose: function (a, b) { return a && b ? [a, b] : a || b; }, absoluteFillObject: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }, hairlineWidth: 1 };
+const registry = Object.create(null);
+const AppRegistry = { registerComponent: function (name, provider) { registry[name] = provider; return name; }, getAppKeys: function () { return Object.keys(registry); }, runApplication: function (name, options) { var get = registry[name]; if (!get) throw new Error('React Native app is not registered: ' + name); var Component = typeof get === 'function' ? get() : get; var target = options && options.rootTag || document.getElementById('root') || document.getElementById('app'); if (!target || !globalThis.ReactDOM || !globalThis.ReactDOM.createRoot) throw new Error('React Native preview root or ReactDOM runtime is unavailable'); globalThis.ReactDOM.createRoot(target).render(h(Component)); } };
+const Dimensions = { get: function () { return { width: window.innerWidth || 360, height: window.innerHeight || 640, scale: window.devicePixelRatio || 1, fontScale: 1 }; }, addEventListener: function () { return { remove: function () {} }; } };
+const Platform = { OS: 'web', Version: 1, select: function (choices) { return choices.web != null ? choices.web : choices.default; }, isTV: false, isTesting: false };
+export { View, Text, Pressable, TouchableOpacity, TouchableHighlight, TextInput, ScrollView, FlatList, SafeAreaView, Image, ActivityIndicator, StyleSheet, AppRegistry, Dimensions, Platform };
+export default { View, Text, Pressable, TouchableOpacity, TouchableHighlight, TextInput, ScrollView, FlatList, SafeAreaView, Image, ActivityIndicator, StyleSheet, AppRegistry, Dimensions, Platform };
+function TouchableOpacity(p) { return h(Pressable, p); }
+function TouchableHighlight(p) { return h(Pressable, p); }
+`;
+  const REACT_EXPORTS = ['Children','Component','Fragment','Profiler','PureComponent','StrictMode','Suspense','act','cloneElement','createContext','createElement','createFactory','createRef','forwardRef','isValidElement','lazy','memo','startTransition','useCallback','useContext','useDebugValue','useDeferredValue','useEffect','useId','useImperativeHandle','useInsertionEffect','useLayoutEffect','useMemo','useReducer','useRef','useState','useSyncExternalStore','useTransition'];
+  function dataModule(source) { return 'data:text/javascript;charset=utf-8,' + encodeURIComponent(source); }
+  function localReactImports(runtimes) {
+    const exports = REACT_EXPORTS.map((name) => 'export const ' + name + '=R.' + name + ';').join('');
+    const jsx = 'const R=globalThis.React;export default R;' + exports;
+    const jsxRuntime = 'const R=globalThis.React;export const Fragment=R.Fragment;export function jsx(t,p,k){return R.createElement(t,k==null?p:Object.assign({},p,{key:k}))}export const jsxs=jsx;export const jsxDEV=jsx;';
+    const dom = 'const D=globalThis.ReactDOM;export default D;export const createPortal=D.createPortal.bind(D);';
+    const client = 'const D=globalThis.ReactDOM;export const createRoot=D.createRoot.bind(D);export const hydrateRoot=D.hydrateRoot.bind(D);';
+    return { react: dataModule(jsx), jsx: dataModule(jsxRuntime), dom: dataModule(dom), client: dataModule(client), rn: dataModule(RN_SHIM_SOURCE) };
+  }
+  function importMap(files, runtimes) {
     const imports = {
       react: 'https://esm.sh/react@18.3.1',
       'react/jsx-runtime': 'https://esm.sh/react@18.3.1/jsx-runtime',
       'react/jsx-dev-runtime': 'https://esm.sh/react@18.3.1/jsx-dev-runtime',
       'react-dom': 'https://esm.sh/react-dom@18.3.1?external=react',
       'react-dom/client': 'https://esm.sh/react-dom@18.3.1/client?external=react',
-      'react-native': 'https://esm.sh/react-native-web?external=react,react-dom',
-      'react-native-web': 'https://esm.sh/react-native-web?external=react,react-dom',
     };
+    const shims = localReactImports(runtimes);
+    imports['react-native'] = shims.rn;
+    imports['react-native-web'] = shims.rn;
+    if (runtimes && runtimes.react && runtimes.reactDom) {
+      imports.react = shims.react;
+      imports['react/jsx-runtime'] = shims.jsx;
+      imports['react/jsx-dev-runtime'] = shims.jsx;
+      imports['react-dom'] = shims.dom;
+      imports['react-dom/client'] = shims.client;
+    }
     bareSpecifiers(files).forEach((s) => {
       // Keep package names as URL path segments; reject traversal and URL/query characters.
       if (s.split('/').some((part) => part === '..' || part === '.' || !/^(?:@[A-Za-z0-9._-]+|[A-Za-z0-9._-]+)$/.test(part))) return;
@@ -104,7 +148,8 @@
     });
     return out;
   }
-  function projectHtml(requested, sourceFiles, babelSource) {
+  function projectHtml(requested, sourceFiles, babelSource, runtimes, options) {
+    options = options || {};
     const files = {};
     const input = values(sourceFiles);
     Object.keys(input).forEach((p) => {
@@ -116,16 +161,21 @@
     const template = htmlPath ? files[htmlPath] : '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CybNate Preview</title></head><body></body></html>';
     const entry = resolveEntry(files, requested, template);
     const apiPath = serverEntry(files);
-    const project = { entry, files, apiPath, importMap: importMap(files), tailwind: tailwindNeeded(files), cssImports: cssImports(files) };
+    const project = { entry, files, apiPath, importMap: importMap(files, runtimes), tailwind: tailwindNeeded(files), cssImports: cssImports(files) };
     let html = template.replace(/<script\b[^>]*\bsrc=["'][^"']+\.(?:jsx?|tsx?)(?:[?#][^"']*)?["'][^>]*>\s*<\/script\s*>/gi, '');
     if (!/<(?:div|main|section)\b[^>]*\bid=["'](?:root|app)["']/i.test(html)) html = inject(html, '<div id="root"></div>', 'body');
     const safeMap = safeJson(project.importMap).replace(/<\/script/gi, '<\\/script');
     html = inject(html, '<script type="importmap">' + safeMap + '</script>', 'head');
-    const overlay = '<script>window.__cybPreviewError=function(e){var d=document.getElementById("__cyb-preview-error");if(!d){d=document.createElement("pre");d.id="__cyb-preview-error";d.style.cssText="position:fixed;z-index:2147483647;inset:8px;overflow:auto;margin:0;padding:14px;background:#190b10;color:#ffd7df;border:1px solid #a33;border-radius:8px;white-space:pre-wrap;font:13px/1.5 monospace";(document.body||document.documentElement).appendChild(d)}d.textContent="Preview error\\n"+String(e&&e.stack||e||"Unknown error")};window.addEventListener("error",function(e){if(e.message||e.error)window.__cybPreviewError(e.error||e.message)});window.addEventListener("unhandledrejection",function(e){window.__cybPreviewError(e.reason)});</script>';
+    const overlay = '<script>window.__cybPreviewError=function(e){var d=document.getElementById("__cyb-preview-error");if(!d){d=document.createElement("pre");d.id="__cyb-preview-error";d.style.cssText="position:fixed;z-index:2147483647;inset:8px;overflow:auto;margin:0;padding:14px;background:#190b10;color:#ffd7df;border:1px solid #a33;border-radius:8px;white-space:pre-wrap;font:13px/1.5 monospace";(document.body||document.documentElement).appendChild(d)}d.textContent="Preview error\\n"+String(e&&e.stack||e||"Unknown error");try{console.error("Preview error",e)}catch(x){}};window.addEventListener("error",function(e){if(e.message||e.error)window.__cybPreviewError(e.error||e.message)});window.addEventListener("unhandledrejection",function(e){window.__cybPreviewError(e.reason)});</script>';
     html = inject(html, overlay, 'head');
     if (babelSource) html = inject(html, '<script>' + String(babelSource).replace(/<\/script/gi, '<\\/script') + '</script>', 'head');
     else html = inject(html, '<script>window.__cybPreviewError("Bundled Babel compiler is unavailable; rebuild the app with scripts/fetch-vendor.sh and retry.")</script>', 'head');
-    if (project.tailwind && !/cdn\.tailwindcss\.com/i.test(html)) html = inject(html, '<script src="https://cdn.tailwindcss.com"></script>', 'head');
+    if (runtimes && runtimes.react && runtimes.reactDom) {
+      const react = String(runtimes.react).replace(/<\/script/gi, '<\\/script'), dom = String(runtimes.reactDom).replace(/<\/script/gi, '<\\/script');
+      html = inject(html, '<script>' + react + '</script><script>' + dom + '</script>', 'head');
+    }
+    if (project.tailwind && options.testMode) html = inject(html, '<script>console.info("Tailwind CDN skipped for deterministic offline test_webapp run")</script>', 'head');
+    else if (project.tailwind && !/cdn\.tailwindcss\.com/i.test(html)) html = inject(html, '<script async src="https://cdn.tailwindcss.com"></script>', 'head');
     const data = safeJson(project).replace(/<\/script/gi, '<\\/script');
     const launch = '<script>window.__CYB_PROJECT=' + data + ';</script><script>(function(){\n' + BOOTSTRAP + '\n})();</script>';
     html = inject(html, launch, 'body');

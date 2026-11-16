@@ -7,8 +7,12 @@ PYODIDE_VERSION="314.0.8"
 PYODIDE_INTEGRITY="sha512-74Wq1kXOC+CCEzAfxuRAO701nAcCMLjf8NrwvWpu8S41dVMXwXmLQ05dYB+F4e46AdnGo0oq7YHSVUpHsoarLQ=="
 BABEL_VERSION="8.1.2"
 BABEL_INTEGRITY="sha512-QhsyXmrjad8I3/QozB5Qap9S7e3b7iUSf6QCmWR7qhOHkWVIDHIWQQaerjMVDv4p9Hh2luCbYc00CZJAItFXMw=="
+REACT_VERSION="18.3.1"
+REACT_INTEGRITY="sha512-wS+hAgJShR0KhEvPJArfuPVN1+Hz1t0Y6n5jLrGQbkb4urgPE/0Rve+1kMB1v/oWgHgm4WIcV+i7F2pTVj+2iQ=="
+REACT_DOM_INTEGRITY="sha512-5m4nQKp+rZRb09LNH59GM4BxTh9251/ylbKIbpe7TpGxfJ+9kv6BLkLBXIjjspbgbnIBNqlI23tRnTWT0snUIw=="
 PYODIDE_DEST="app/src/main/assets/www/vendor/pyodide"
 BABEL_DEST="app/src/main/assets/www/vendor/babel"
+REACT_DEST="app/src/main/assets/www/vendor/react-runtime"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -73,4 +77,26 @@ else
   echo "Fetched and verified Babel Standalone $BABEL_VERSION"
 fi
 
-du -sh "$PYODIDE_DEST" "$BABEL_DEST"
+react_runtime_ready() {
+  [[ "$(cat "$REACT_DEST/VERSION" 2>/dev/null || true)" == "$REACT_VERSION" && -s "$REACT_DEST/react.production.min.js" && -s "$REACT_DEST/react-dom.production.min.js" ]]
+}
+if react_runtime_ready; then
+  echo "React/ReactDOM runtime $REACT_VERSION already present"
+else
+  fetch_package react "$REACT_VERSION" "react-$REACT_VERSION.tgz" "$REACT_INTEGRITY" "$TMP/react-unpack"
+  fetch_package react-dom "$REACT_VERSION" "react-dom-$REACT_VERSION.tgz" "$REACT_DOM_INTEGRITY" "$TMP/react-dom-unpack"
+  REACT_FILE="$TMP/react-unpack/package/umd/react.production.min.js"
+  REACT_DOM_FILE="$TMP/react-dom-unpack/package/umd/react-dom.production.min.js"
+  [[ -s "$REACT_FILE" && -s "$REACT_DOM_FILE" ]] || { echo "React UMD runtime files are missing" >&2; exit 1; }
+  local_stage="$TMP/react-ready"
+  mkdir -p "$local_stage"
+  cp "$REACT_FILE" "$local_stage/react.production.min.js"
+  cp "$REACT_DOM_FILE" "$local_stage/react-dom.production.min.js"
+  printf '%s\n' "$REACT_VERSION" > "$local_stage/VERSION"
+  rm -rf "$REACT_DEST"
+  mkdir -p "$(dirname "$REACT_DEST")"
+  mv "$local_stage" "$REACT_DEST"
+  echo "Fetched and verified React/ReactDOM runtime $REACT_VERSION"
+fi
+
+du -sh "$PYODIDE_DEST" "$BABEL_DEST" "$REACT_DEST"

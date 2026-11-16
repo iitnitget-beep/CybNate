@@ -130,8 +130,8 @@ CI also installs the APK on an Android emulator and runs the in-app self test; r
 
 - `app/src/main/assets/www/` – the app: `core.js` (agents, tools), `app.js` (UI, agent loop), `pyworker.mjs`, `jsworker.js`, `github.js`
 - `app/src/main/java/…/` – WebView shell, shell runner, file import/export, native HTTP
-- `scripts/fetch-vendor.sh` – downloads the Python runtime and Babel Standalone compiler at build time
+- `scripts/fetch-vendor.sh` – integrity-verifies and downloads Pyodide, Babel Standalone, and the local React preview runtime at build time
 
-Third-party: marked, DOMPurify, highlight.js, Pyodide. CybNate contains no Freebuff code; its agent workflow is modelled on Freebuff's (Apache-2.0).
+Third-party libraries bundled at build time include marked, DOMPurify, highlight.js, Pyodide, Babel Standalone, React and ReactDOM; web previews may load Tailwind CSS or additional ESM packages from their CDNs. CybNate contains no Freebuff code; its agent workflow is modelled on Freebuff's (Apache-2.0).
 - Interface: neutral dark theme with a card composer, mode and model selectors, drawer and a settings list (General, Model Providers, Appearance).
 - Agent guidelines adapted from Codebuff/Freebuff (Apache-2.0), see `NOTICE`. Models receive native function definitions, with a text-tag fallback.
