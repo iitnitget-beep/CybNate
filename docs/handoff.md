@@ -28,7 +28,7 @@ The server stores user/OAuth/API secrets encrypted in SQLite using AES-256-GCM. 
 
 ## Open work
 
-1. **Cleartext HTTP policy:** The requested Android Network Security Config cannot express arbitrary IPv4 CIDR ranges (10/8, 172.16/12, 192.168/16) as a domain allowlist. The current manifest still enables cleartext globally for LAN/custom providers. A correct solution needs a reviewed app-level policy/transport design that preserves private-LAN use while blocking public HTTP and redirects; do not silently replace the setting with a localhost-only allowlist or assume it works without device testing.
+1. **Cleartext HTTP policy:** The manifest remains unchanged with `usesCleartextTraffic="true"` so LAN/custom HTTP providers continue to work. App request code enforces the policy through the shared `isAllowedHttpUrl` helper: HTTPS is allowed; HTTP is limited to localhost, loopback/private/link-local IPv4, and `.local` hosts. JavaScript fetch fails closed on redirects it cannot inspect; the native HTTP bridge manually validates every redirect target and rejects public HTTP. `tests/cleartext.test.js` covers public HTTP rejection, LAN and HTTPS allowance, and HTTPS-to-public-HTTP redirect rejection.
 2. **Lint:** Run `gradle :app:lintRelease` with JDK 17 and Android SDK 34, resolve findings, then enable both blocking lint flags.
 3. **MCP:** No MCP client/server adapter exists yet. Keep any future adapter behind the existing approval/untrusted-data path; do not add a second tool executor.
 4. **Context pinning:** Structured history summaries exist, but an explicit current plan/todo pin outside the trimmed message window still needs design and a regression test.

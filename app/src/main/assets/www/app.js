@@ -90,7 +90,11 @@
   let nativeSeq = 0; const nativeReqs = {};
   window.__nh = (id, kind, data) => { const r = nativeReqs[id]; if (r) r(kind, data); };
 
+  function requireAllowedHttpUrl(url) {
+    if (!C.isAllowedHttpUrl(url)) throw new Error('Blocked URL by cleartext policy: ' + url + ' (HTTP is allowed only for localhost, private/LAN IPs, link-local IPs, and .local hosts; use HTTPS otherwise).');
+  }
   function nativeStream(url, opt, onChunk) {
+    requireAllowedHttpUrl(url);
     return new Promise((resolve, reject) => {
       const id = 'r' + (++nativeSeq); let status = 0, ctype = '', headers = {};
       const done = () => { delete nativeReqs[id]; if (opt.signal) opt.signal.removeEventListener('abort', onAbort); };
@@ -110,11 +114,13 @@
 
   /** Streams a response as text chunks. Uses fetch, and falls back to the native bridge when the browser blocks the request (CORS / mixed content). */
   async function httpStream(url, opt, onChunk) {
+    requireAllowedHttpUrl(url);
     let res;
     // hosts that never allow a browser origin (and one-time sign-in codes that must be sent exactly once) go straight to the native bridge
     if (opt.direct && Native) return nativeStream(url, opt, onChunk);
     try {
-      res = await fetch(url, { method: opt.method || 'GET', headers: opt.headers, body: opt.body, signal: opt.signal });
+      // Browser fetch hides cross-origin redirect targets; fail closed so redirect targets cannot bypass policy.
+      res = await fetch(url, { method: opt.method || 'GET', headers: opt.headers, body: opt.body, signal: opt.signal, redirect: 'error' });
     } catch (e) {
       if (e.name === 'AbortError') throw e;
       if (Native) return nativeStream(url, opt, onChunk);
@@ -504,6 +510,7 @@
   }
   let curlSecrets = null; // set while a curl command is sent through the server
   async function serverHttp(url, opt) {
+    requireAllowedHttpUrl(url);
     const r = await backend.call('POST', '/v1/http', { url, method: opt.method, headers: opt.headers || {}, body: opt.body, secrets: curlSecrets || [] }, { signal: opt.signal });
     return { status: r.status, ctype: (r.headers && r.headers['content-type']) || '', headers: r.headers || {}, text: r.text };
   }
@@ -1921,6 +1928,7 @@
         if (p.custom) {
           const u = el('input', 'field'); u.type = 'text'; u.placeholder = 'http://192.168.1.10:11434/v1'; u.value = settings.customUrl; u.autocapitalize = 'off';
           u.onchange = () => { settings.customUrl = u.value.trim(); saveSettings(); }; card.appendChild(u);
+          card.appendChild(el('p', 'hint', 'HTTP works only for localhost, private/LAN and .local hosts. Use HTTPS for public servers.'));
         }
         if (p.needsKey || p.custom) {
           const k = el('input', 'field'); k.type = 'password'; k.dataset.key = id; k.placeholder = p.custom ? 'API key (optional)' : p.paid ? 'Paste your Anthropic API key (sk-ant-…)' : 'Paste your free ' + p.name + ' API key'; k.value = settings.keys[id] || ''; k.autocomplete = 'off';

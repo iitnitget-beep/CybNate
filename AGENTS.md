@@ -14,6 +14,7 @@ CybNate is a free AI coding agent for Android. A WebView hosts the UI and JavaSc
 - `app/src/main/java/com/cybnate/app/` — Android WebView host, native bridge, shell runner and preview.
 - `server/` — optional authenticated backend, isolated workspace/command execution, LSP, OAuth and encrypted server-side secrets. Its runtime data belongs in ignored `server/data/`.
 - `tests/` — Node unit, UI, preview, backend and safety tests.
+- `scripts/audit.sh` — repeatable repository hygiene/build-readiness audit; run it before tests.
 - `scripts/verify.sh` — the verification gate. Run `npm ci` before the jsdom-backed UI or preview suites.
 - `release/` — CI-published APK and device-test results. Keep the APK committed at `release/CybNate.apk` as requested.
 

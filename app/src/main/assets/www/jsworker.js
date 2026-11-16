@@ -2,6 +2,7 @@
 // console capture, and small versions of fs, path, assert, util, os, events, buffer, url, querystring, crypto, http/https
 // backed by a copy of the workspace. It is not Node.js: no sockets, child processes, streams or native addons.
 'use strict';
+importScripts('url-policy.js');
 self.onmessage = async (e) => {
   const m = e.data;
   const td = new TextDecoder(), te = new TextEncoder();
@@ -223,7 +224,15 @@ self.onmessage = async (e) => {
     types: { isPromise: (v) => v instanceof Promise, isDate: (v) => v instanceof Date, isRegExp: (v) => v instanceof RegExp }, isArray: Array.isArray,
   };
   let live = 0; // requests still running: the run is not finished while one is open
-  const trackedFetch = (...a) => { live++; return self.fetch(...a).finally(() => { live--; }); };
+  const rawFetch = self.fetch.bind(self);
+  const trackedFetch = (...a) => {
+    const input = a[0], target = typeof input === 'string' || input instanceof URL ? String(input) : input.url;
+    if (!self.UrlPolicy.isAllowedHttpUrl(target)) return Promise.reject(new Error('Blocked URL by cleartext policy: ' + target));
+    const init = Object.assign({}, a[1] || {}, { redirect: 'error' });
+    live++;
+    return rawFetch(input, init).finally(() => { live--; });
+  };
+  self.fetch = trackedFetch;
   const CORS_NOTE = 'In this runtime network calls go through the browser engine, so the server must allow cross-origin requests (CORS). For other servers use the curl command or the http_request tool.';
   function httpRequest(defProto) {
     const request = (u, o, cb) => {

@@ -12,7 +12,10 @@ fail() {
 command -v node >/dev/null 2>&1 || fail 'Node.js is required to run tests/core.test.js and tests/safety.test.js.'
 [ -f tests/core.test.js ] || fail 'Verification gate is incomplete: tests/core.test.js is missing.'
 [ -f tests/safety.test.js ] || fail 'Verification gate is incomplete: tests/safety.test.js is missing.'
+[ -f tests/cleartext.test.js ] || fail 'Verification gate is incomplete: tests/cleartext.test.js is missing.'
 
+printf '%s\n' '==> node tests/cleartext.test.js'
+node tests/cleartext.test.js
 printf '%s\n' '==> node tests/core.test.js'
 node tests/core.test.js
 printf '%s\n' '==> node tests/safety.test.js'

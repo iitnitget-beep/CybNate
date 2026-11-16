@@ -255,6 +255,30 @@ public class MainActivity extends Activity {
     }
 
     private class Bridge {
+        private boolean isAllowedHttpUrl(URL url) {
+            String protocol = url.getProtocol().toLowerCase(java.util.Locale.US);
+            if ("https".equals(protocol)) return true;
+            if (!"http".equals(protocol)) return false;
+            String host = url.getHost().toLowerCase(java.util.Locale.US);
+            if (host.startsWith("[") && host.endsWith("]")) host = host.substring(1, host.length() - 1);
+            if (host.endsWith(".")) host = host.substring(0, host.length() - 1);
+            if (host.equals("localhost") || host.endsWith(".local") || host.equals("::1") || host.equals("0:0:0:0:0:0:0:1")) return true;
+            String[] parts = host.split("\\.");
+            if (parts.length != 4) return false;
+            int[] octets = new int[4];
+            try {
+                for (int i = 0; i < 4; i++) {
+                    if (!parts[i].matches("0|[1-9][0-9]{0,2}")) return false;
+                    octets[i] = Integer.parseInt(parts[i]);
+                    if (octets[i] > 255) return false;
+                }
+            } catch (NumberFormatException e) { return false; }
+            return octets[0] == 10 || octets[0] == 127 ||
+                    (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31) ||
+                    (octets[0] == 192 && octets[1] == 168) ||
+                    (octets[0] == 169 && octets[1] == 254);
+        }
+
         /** Streaming HTTP that is not subject to browser CORS rules. */
         @JavascriptInterface
         public void http(final String id, final String url, final String method, final String headersJson, final String body) {
@@ -263,27 +287,60 @@ public class MainActivity extends Activity {
                 public void run() {
                     HttpURLConnection c = null;
                     try {
-                        c = (HttpURLConnection) new URL(url).openConnection();
-                        requests.put(id, c);
-                        c.setRequestMethod(method == null ? "GET" : method);
-                        c.setInstanceFollowRedirects(true);
-                        c.setConnectTimeout(30000);
-                        c.setReadTimeout(180000);
-                        if (headersJson != null && headersJson.length() > 0) {
-                            JSONObject h = new JSONObject(headersJson);
-                            Iterator<String> it = h.keys();
+                        URL current = new URL(url);
+                        if (!isAllowedHttpUrl(current)) throw new java.io.IOException("Blocked URL by cleartext policy: " + current);
+                        String requestMethod = method == null ? "GET" : method;
+                        byte[] requestBody = body == null ? new byte[0] : body.getBytes(StandardCharsets.UTF_8);
+                        JSONObject requestHeaders = headersJson == null || headersJson.length() == 0 ? new JSONObject() : new JSONObject(headersJson);
+                        int status;
+                        for (int hop = 0; ; hop++) {
+                            c = (HttpURLConnection) current.openConnection();
+                            requests.put(id, c);
+                            c.setRequestMethod(requestMethod);
+                            c.setInstanceFollowRedirects(false);
+                            c.setConnectTimeout(30000);
+                            c.setReadTimeout(180000);
+                            Iterator<String> it = requestHeaders.keys();
                             while (it.hasNext()) {
                                 String k = it.next();
-                                c.setRequestProperty(k, h.getString(k));
+                                c.setRequestProperty(k, requestHeaders.getString(k));
                             }
+                            if (requestBody.length > 0 && !"GET".equals(requestMethod) && !"HEAD".equals(requestMethod)) {
+                                c.setDoOutput(true);
+                                OutputStream os = c.getOutputStream();
+                                os.write(requestBody);
+                                os.close();
+                            }
+                            status = c.getResponseCode();
+                            String location = c.getHeaderField("Location");
+                            if ((status == 301 || status == 302 || status == 303 || status == 307 || status == 308) && location != null) {
+                                if (hop >= 9) throw new java.io.IOException("Too many redirects from " + url);
+                                URL next = new URL(current, location);
+                                if (!isAllowedHttpUrl(next)) throw new java.io.IOException("Blocked redirect by cleartext policy: " + next);
+                                boolean sameOrigin = current.getProtocol().equalsIgnoreCase(next.getProtocol()) &&
+                                        current.getHost().equalsIgnoreCase(next.getHost()) && current.getPort() == next.getPort();
+                                if (!sameOrigin) {
+                                    java.util.ArrayList<String> sensitive = new java.util.ArrayList<>();
+                                    Iterator<String> headerNames = requestHeaders.keys();
+                                    while (headerNames.hasNext()) {
+                                        String name = headerNames.next();
+                                        String lower = name.toLowerCase(java.util.Locale.US);
+                                        if (lower.equals("authorization") || lower.equals("proxy-authorization") || lower.equals("cookie")) sensitive.add(name);
+                                    }
+                                    for (String name : sensitive) requestHeaders.remove(name);
+                                }
+                                c.disconnect();
+                                requests.remove(id);
+                                c = null;
+                                if (status == 303 || ((status == 301 || status == 302) && "POST".equalsIgnoreCase(requestMethod))) {
+                                    requestMethod = "GET";
+                                    requestBody = new byte[0];
+                                }
+                                current = next;
+                                continue;
+                            }
+                            break;
                         }
-                        if (body != null && body.length() > 0) {
-                            c.setDoOutput(true);
-                            OutputStream os = c.getOutputStream();
-                            os.write(body.getBytes(StandardCharsets.UTF_8));
-                            os.close();
-                        }
-                        int status = c.getResponseCode();
                         String ct = c.getContentType();
                         emit(id, "h", status + "|" + (ct == null ? "" : ct));
                         // rate-limit facts for the model router (retry-after, x-ratelimit-*); nothing else is passed on
