@@ -257,7 +257,28 @@ self.onmessage = async (e) => {
     return { request, get: (u, o, cb) => { const r = request(u, o, cb); r.end(); return r; }, createServer: noServer, Server: noServer, Agent: class {}, globalAgent: {}, STATUS_CODES: { 200: 'OK', 201: 'Created', 204: 'No Content', 301: 'Moved Permanently', 302: 'Found', 400: 'Bad Request', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not Found', 500: 'Internal Server Error' }, METHODS: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] };
   }
   const noProc = (n) => () => { throw new Error('child_process.' + n + ' is not available: this runtime cannot start other programs. Run the command yourself with run_terminal_command instead.'); };
+  // A deliberately in-memory Express subset for route verification. It never opens a socket,
+  // accepts network traffic, or escapes the worker; app.listen() prints the registered route table.
+  const expressRuntime = () => {
+    const app = { _routes: [], _middleware: [], use(fn) { if (typeof fn === 'function') this._middleware.push(fn); return this; },
+      get(path, handler) { return add('GET', path, handler); }, post(path, handler) { return add('POST', path, handler); },
+      put(path, handler) { return add('PUT', path, handler); }, patch(path, handler) { return add('PATCH', path, handler); },
+      delete(path, handler) { return add('DELETE', path, handler); }, options(path, handler) { return add('OPTIONS', path, handler); },
+      listen(port, cb) { const p = port || 3000; write('[virtual express] listening on port ' + p + ' (in-memory; no network socket)');
+        if (this._routes.length) this._routes.forEach((r) => write('[route] ' + r.method + ' ' + r.path)); else write('[route] no routes registered');
+        const server = { listening: true, address: () => ({ address: '127.0.0.1', family: 'IPv4', port: p }), close(done) { this.listening = false; if (done) done(); } };
+        if (typeof cb === 'function') Promise.resolve().then(() => cb()); return server; },
+      handle(req, res, done) { const path = String(req.url || '/').split('?')[0], method = String(req.method || 'GET').toUpperCase();
+        const route = this._routes.find((r) => r.method === method && r.path === path); if (!route) { if (done) done(); else if (res && res.statusCode != null) res.statusCode = 404; return; }
+        return route.handler(req, res, done || (() => {})); }
+    };
+    function add(method, path, handler) { if (typeof path === 'function') { handler = path; path = '/'; } if (typeof handler !== 'function') throw new TypeError('Route handler must be a function'); app._routes.push({ method, path: String(path), handler }); return app; }
+    return app;
+  };
+  expressRuntime.json = () => (req, res, next) => { if (next) next(); };
+  expressRuntime.urlencoded = () => (req, res, next) => { if (next) next(); };
   const builtins = {
+    express: expressRuntime,
     fs: fsMod, 'fs/promises': fsMod.promises, path: pathMod, assert: assertMod, 'assert/strict': assertMod, util: utilMod,
     os: { EOL: '\n', platform: () => 'android', type: () => 'Linux', arch: () => 'wasm', homedir: () => '/', tmpdir: () => '/tmp', hostname: () => 'cybnate', cpus: () => [{ model: 'worker' }], totalmem: () => 0, freemem: () => 0, release: () => '', userInfo: () => ({ username: 'user' }), endianness: () => 'LE' },
     events: EventEmitter, buffer: { Buffer, kMaxLength: 2147483647 }, url: urlMod, querystring: qsMod, crypto: cryptoMod,

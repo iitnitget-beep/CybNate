@@ -1380,11 +1380,11 @@
   }
 
   function openFile(p) {
-    const isHtml = /\.html?$/i.test(p), bin = ws.isBinary(p);
+    const isHtml = /\.html?$/i.test(p), isReact = /\.(?:jsx|tsx)$/i.test(p), bin = ws.isBinary(p);
     const actions = [];
     let ta = null;
     if (!bin) actions.push(['Save', () => { ws.set(p, ta.value); toast('Saved'); }]);
-    if (isHtml) actions.push(['▶ Run', () => { if (ta) ws.set(p, ta.value); openPreview(p); }]);
+    if (isHtml || isReact) actions.push([isHtml ? '▶ Run' : '▶ Preview', () => { if (ta) ws.set(p, ta.value); openPreview(p); }]);
     openSheet(p, (body) => {
       const btns = el('div', 'btns');
       const add = (t, fn) => { const b = el('button', '', t); b.onclick = fn; btns.appendChild(b); };
@@ -1406,6 +1406,11 @@
 
   /** Inline workspace CSS/JS/images referenced by an HTML file so it can run inside a sandboxed frame. */
   function buildPreview(p) {
+    const previewFiles = {};
+    ws.list().forEach((path) => { if (!ws.isBinary(path)) previewFiles[path] = ws.get(path); });
+    if (window.ProjectPreview && (window.ProjectPreview.isProject(previewFiles) || /\.(?:jsx|tsx)$/i.test(p))) {
+      return window.ProjectPreview.projectHtml(p, previewFiles, window.__CYB_BABEL_SOURCE || '');
+    }
     const dir = p.indexOf('/') >= 0 ? p.slice(0, p.lastIndexOf('/') + 1) : '';
     const res = (ref) => { if (/^(https?:|data:|\/\/|#)/i.test(ref)) return null; const q = C.Workspace.norm(dir + ref.split(/[?#]/)[0]); return ws.has(q) ? q : null; };
     let html = ws.get(p);

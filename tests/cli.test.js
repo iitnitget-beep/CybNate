@@ -155,7 +155,7 @@ assert.strictEqual(url.parse('https://a.test:8080/p?x=1#h').port, '8080'); asser
 assert.strictEqual(util.format('%s=%d %j', 'n', 4, { a: 1 }), 'n=4 {\\n  "a": 1\\n}'); assert.strictEqual(path.relative('/a/b', '/a/c/d'), '../c/d');
 fs.writeFileSync('out.bin', Buffer.from([1, 2, 3])); assert.strictEqual(fs.readFileSync('out.bin').toString('hex'), '010203');
 let threw = ''; try { require('child_process').execSync('ls'); } catch (e) { threw = e.message; } assert.ok(/not available/.test(threw));
-try { require('express'); } catch (e) { console.log(e.message); }
+const express = require('express'), app = express(); app.get('/api/health', (req, res) => res.end('ok')); let response = ''; app.handle({ method: 'GET', url: '/api/health' }, { end: (value) => { response = value; } }); assert.strictEqual(response, 'ok'); const server = app.listen(3000); assert.strictEqual(server.listening, true); assert.deepStrictEqual(app._routes.map((r) => r.method + ' ' + r.path), ['GET /api/health']); server.close();
 try { require('net'); } catch (e) { console.log(e.code); }
 let ticks = 0; const id = setInterval(() => { if (++ticks === 3) { clearInterval(id); console.log('ticks', ticks); } }, 5);
 util.promisify(fs.readFile)('out.bin').then((b) => console.log('async read', b.length));
@@ -163,7 +163,7 @@ console.log('sync done');
 `);
   n = await runNode(js, { argv: ['t.js'] });
   assert.strictEqual(n.code, 0, n.out);
-  assert.ok(/npm install express/.test(n.out) && /MODULE_NOT_FOUND/.test(n.out) && /sync done\nasync read 3\nticks 3\n$/.test(n.out), n.out);
+  assert.ok(/virtual express.*no network socket/.test(n.out) && /\[route\] GET \/api\/health/.test(n.out) && /MODULE_NOT_FOUND/.test(n.out) && /sync done\nasync read 3\nticks 3\n$/.test(n.out), n.out);
   assert.deepStrictEqual(n.changed.map((c) => c.path), ['out.bin']);
   console.log('JS RUNTIME TESTS PASSED');
 

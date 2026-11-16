@@ -13,6 +13,7 @@ CybNate follows the same working loop as Freebuff's main agent: gather context, 
 | --- | --- |
 | Read, search, write and edit files | Project workspace stored on the device |
 | Run terminal commands | Android shell for `ls`, `grep`, `sed`, `find`, `tar` and so on; real CPython 3.14 (Pyodide) for `python`, `pip install`; a JavaScript runtime for `node file.js` |
+| Web project previews | Multi-file React/JSX/TSX with Tailwind CSS and React Native Web, compiled by Babel Standalone with `esm.sh` import maps; virtual Express `/api/*` routes for full-stack previews |
 | Helper agents | `explorer`, `thinker`, `reviewer`, `researcher`, each with its own context; several run in parallel |
 | Web search and page reading | DuckDuckGo results and readable page text |
 | GitHub | Clone a repository into the workspace, commit and push from the GitHub screen (no git binary needed) |
@@ -20,7 +21,7 @@ CybNate follows the same working loop as Freebuff's main agent: gather context, 
 | Reverse engineering | File type and headers, SHA-256, entropy, strings, hex dump, ZIP/APK listing and extraction, `AndroidManifest.xml` decoding |
 
 Agents you can pick: ⌨ Coder (the orchestrator), 🧭 Planner, 🔍 Reviewer, 🧬 Reverse, 💬 Chat.
-There is also a Terminal screen for running commands yourself, an editor, and a preview for HTML projects.
+There is also a Terminal screen for running commands yourself, an editor, and an isolated preview for HTML and multi-file React projects (JSX/TSX), Tailwind CSS, and React Native Web. Babel compiles project components in the preview; `esm.sh` import maps provide browser packages, and Virtual Express handles `/api/*` routes without opening network sockets.
 
 ## Model providers
 
@@ -39,7 +40,8 @@ Agent quality depends heavily on the model: add a key for a provider/model that 
 ## Differences from Freebuff
 
 - Freebuff's hosted models are not used; they run on Freebuff's ad-funded servers.
-- No `git`, `npm`, compilers or native Node.js: Android does not ship them. JavaScript runs without npm packages; Python packages must be pure Python or part of the Pyodide distribution.
+- No native Node.js server or real network sockets. JavaScript runs in a constrained runtime; its virtual Express preview supports `/api/*` route verification in memory only.
+- React/JSX/TSX, Tailwind CSS and React Native Web are supported in isolated previews using Babel Standalone and `esm.sh` import maps; these are preview features, not a full native `npm`/Node.js toolchain. Python packages must be pure Python or part of the Pyodide distribution.
 - Python and JavaScript run in their own runtimes, so they cannot be piped into shell commands.
 - Ghidra is a desktop Java program and does not run inside the app. Decompile on a PC, then import the output for the Reverse agent.
 - No browser automation and no desktop/cloud products.
@@ -128,7 +130,7 @@ CI also installs the APK on an Android emulator and runs the in-app self test; r
 
 - `app/src/main/assets/www/` – the app: `core.js` (agents, tools), `app.js` (UI, agent loop), `pyworker.mjs`, `jsworker.js`, `github.js`
 - `app/src/main/java/…/` – WebView shell, shell runner, file import/export, native HTTP
-- `scripts/fetch-vendor.sh` – downloads the Python runtime at build time
+- `scripts/fetch-vendor.sh` – downloads the Python runtime and Babel Standalone compiler at build time
 
 Third-party: marked, DOMPurify, highlight.js, Pyodide. CybNate contains no Freebuff code; its agent workflow is modelled on Freebuff's (Apache-2.0).
 - Interface: neutral dark theme with a card composer, mode and model selectors, drawer and a settings list (General, Model Providers, Appearance).
