@@ -1,16 +1,9 @@
-CYBUI ready agents=6 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:2441)
-CYBUI layout t=1500 header=56 welcome=504 frames=82 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
-CYBUI layout t=6000 header=56 welcome=504 frames=204 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
-CYBUI layout t=12000 header=56 welcome=504 frames=204 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
-CYBUI layout t=25000 header=56 welcome=504 frames=204 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
-FOCUS1   mCurrentFocus=Window{527817b u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{8422c7c u0 com.cybnate.app/.MainActivity t8} 
-  mCurrentFocus=Window{527817b u0 com.cybnate.app/com.cybnate.app.MainActivity}
-  mFocusedApp=ActivityRecord{8422c7c u0 com.cybnate.app/.MainActivity t8}
-11-16 11:03:57.433  3087  3275 E chromium: [ERROR:simple_version_upgrade.cc(152)] Failed to write a new fake index.
-11-16 11:03:57.441  3087  3323 E chromium: [ERROR:simple_version_upgrade.cc(152)] Failed to write a new fake index.
-11-16 11:03:58.629   523   558 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +3s850ms
+FOCUS1   mCurrentFocus=Window{22f0b2f u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{aae7939 u0 com.cybnate.app/.MainActivity t8} 
+  mCurrentFocus=Window{22f0b2f u0 com.cybnate.app/com.cybnate.app.MainActivity}
+  mFocusedApp=ActivityRecord{aae7939 u0 com.cybnate.app/.MainActivity t8}
+11-16 11:10:32.169   521   538 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +2s709ms
+11-16 11:11:33.489  1686  2991 W YouTubeMusic: 	at org.chromium.net.impl.CronetUrlRequest.onError(PG:6)
 CybNateJS: CYBUI ready agents=6 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:2441)
-CybNateJS: CYBUI layout t=1500 header=56 welcome=504 frames=8 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
-CybNateJS: CYBUI layout t=6000 header=56 welcome=504 frames=217 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
-CybNateJS: CYBUI layout t=12000 header=56 welcome=504 frames=249 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
-CybNateJS: CYBUI layout t=25000 header=56 welcome=504 frames=249 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
+CybNateJS: CYBUI layout t=1500 header=56 welcome=504 frames=54 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
+CybNateJS: CYBUI layout t=6000 header=56 welcome=504 frames=321 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
+CybNateJS: CYBUI layout t=12000 header=56 welcome=504 frames=420 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
