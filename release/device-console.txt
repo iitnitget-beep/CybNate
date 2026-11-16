@@ -1,15 +1,16 @@
 CYBUI ready agents=6 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:2441)
-CYBUI layout t=1500 header=56 welcome=504 frames=4 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
-CYBUI layout t=6000 header=56 welcome=504 frames=4 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
-CYBUI layout t=12000 header=56 welcome=504 frames=4 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
-CYBUI layout t=25000 header=56 welcome=504 frames=4 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
-FOCUS1   mCurrentFocus=Window{5932683 u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{17dea7e u0 com.cybnate.app/.MainActivity t8} 
-  mCurrentFocus=Window{5932683 u0 com.cybnate.app/com.cybnate.app.MainActivity}
-  mFocusedApp=ActivityRecord{17dea7e u0 com.cybnate.app/.MainActivity t8}
-11-16 10:48:15.210  2684  2806 E chromium: [ERROR:simple_file_enumerator.cc(21)] opendir /data/user/0/com.cybnate.app/cache/WebView/Default/HTTP Cache/Code Cache/wasm: No such file or directory (2)
-11-16 10:48:15.210  2684  2806 E chromium: [ERROR:simple_index_file.cc(614)] Could not reconstruct index from disk
-11-16 10:48:15.211  2684  2806 E chromium: [ERROR:simple_file_enumerator.cc(21)] opendir /data/user/0/com.cybnate.app/cache/WebView/Default/HTTP Cache/Code Cache/js: No such file or directory (2)
-11-16 10:48:15.211  2684  2806 E chromium: [ERROR:simple_index_file.cc(614)] Could not reconstruct index from disk
-11-16 10:48:15.954   521   539 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +2s255ms
+CYBUI layout t=1500 header=56 welcome=504 frames=82 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
+CYBUI layout t=6000 header=56 welcome=504 frames=204 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
+CYBUI layout t=12000 header=56 welcome=504 frames=204 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
+CYBUI layout t=25000 header=56 welcome=504 frames=204 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
+FOCUS1   mCurrentFocus=Window{527817b u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{8422c7c u0 com.cybnate.app/.MainActivity t8} 
+  mCurrentFocus=Window{527817b u0 com.cybnate.app/com.cybnate.app.MainActivity}
+  mFocusedApp=ActivityRecord{8422c7c u0 com.cybnate.app/.MainActivity t8}
+11-16 11:03:57.433  3087  3275 E chromium: [ERROR:simple_version_upgrade.cc(152)] Failed to write a new fake index.
+11-16 11:03:57.441  3087  3323 E chromium: [ERROR:simple_version_upgrade.cc(152)] Failed to write a new fake index.
+11-16 11:03:58.629   523   558 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +3s850ms
 CybNateJS: CYBUI ready agents=6 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:2441)
-CybNateJS: CYBUI layout t=1500 header=56 welcome=504 frames=36 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
+CybNateJS: CYBUI layout t=1500 header=56 welcome=504 frames=8 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
+CybNateJS: CYBUI layout t=6000 header=56 welcome=504 frames=217 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
+CybNateJS: CYBUI layout t=12000 header=56 welcome=504 frames=249 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
+CybNateJS: CYBUI layout t=25000 header=56 welcome=504 frames=249 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
