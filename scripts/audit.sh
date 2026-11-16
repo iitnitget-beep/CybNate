@@ -61,7 +61,8 @@ workflow_runs_audit() {
     grep -Fq 'run: bash scripts/audit.sh' .github/workflows/build-apk.yml
 }
 workflow_gate_accepts_skip_count() {
-  grep -Eiq 'run:[[:space:]]*grep .*CYBTEST DONE pass=.*fail=0 skip=' .github/workflows/build-apk.yml
+  grep -Fq 'CYBTEST DONE pass=[0-9]+ fail=0 skip=[0-9]+' .github/workflows/build-apk.yml &&
+    grep -Fq 'release/selftest.txt' .github/workflows/build-apk.yml
 }
 
 check 'keystore is not tracked' not_tracked_keystore
