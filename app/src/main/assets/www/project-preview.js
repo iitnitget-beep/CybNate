@@ -124,7 +124,7 @@
     const overlay = '<script>window.__cybPreviewError=function(e){var d=document.getElementById("__cyb-preview-error");if(!d){d=document.createElement("pre");d.id="__cyb-preview-error";d.style.cssText="position:fixed;z-index:2147483647;inset:8px;overflow:auto;margin:0;padding:14px;background:#190b10;color:#ffd7df;border:1px solid #a33;border-radius:8px;white-space:pre-wrap;font:13px/1.5 monospace";(document.body||document.documentElement).appendChild(d)}d.textContent="Preview error\\n"+String(e&&e.stack||e||"Unknown error")};window.addEventListener("error",function(e){if(e.message||e.error)window.__cybPreviewError(e.error||e.message)});window.addEventListener("unhandledrejection",function(e){window.__cybPreviewError(e.reason)});</script>';
     html = inject(html, overlay, 'head');
     if (babelSource) html = inject(html, '<script>' + String(babelSource).replace(/<\/script/gi, '<\\/script') + '</script>', 'head');
-    else html = inject(html, '<script src="https://unpkg.com/@babel/standalone@8.1.2/babel.min.js" onerror="window.__cybPreviewError(\'Could not load Babel compiler; connect to the internet or rebuild with the bundled vendor asset.\')"></script>', 'head');
+    else html = inject(html, '<script>window.__cybPreviewError("Bundled Babel compiler is unavailable; rebuild the app with scripts/fetch-vendor.sh and retry.")</script>', 'head');
     if (project.tailwind && !/cdn\.tailwindcss\.com/i.test(html)) html = inject(html, '<script src="https://cdn.tailwindcss.com"></script>', 'head');
     const data = safeJson(project).replace(/<\/script/gi, '<\\/script');
     const launch = '<script>window.__CYB_PROJECT=' + data + ';</script><script>(function(){\n' + BOOTSTRAP + '\n})();</script>';

@@ -2,10 +2,16 @@
 # Installs the APK on a running emulator/device, runs the in-app self test and saves the results.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+POLL_LOG="$(mktemp)"
+trap 'rm -f "$POLL_LOG"' EXIT
 adb install -r release/CybNate.apk
 adb logcat -c
 adb shell am start -n com.cybnate.app/.MainActivity
-for i in $(seq 1 30); do adb logcat -d -s CybNateJS:I 2>/dev/null | grep -q "CYBUI ready" && break; sleep 2; done
+for i in $(seq 1 30); do
+  adb logcat -d -s CybNateJS:I >"$POLL_LOG" 2>/dev/null || true
+  grep -F "CYBUI ready" "$POLL_LOG" >/dev/null && break
+  sleep 2
+done
 sleep 14
 adb exec-out screencap -p > release/screenshot-home.png
 FOCUS1=$(adb shell dumpsys window | grep -E 'mCurrentFocus|mFocusedApp' | tr '\n' ' ' || true)
@@ -18,10 +24,15 @@ adb logcat -d | grep -iE 'ANR in|chromium.*(error|crash)|Displayed com.cybnate|F
 adb shell am force-stop com.cybnate.app
 adb logcat -c
 adb shell am start -n com.cybnate.app/.MainActivity --ez selftest true
-for i in $(seq 1 260); do
-  adb logcat -d -s CybNateJS:I 2>/dev/null | grep -q "CYBTEST DONE" && break
+# Poll a file snapshot instead of piping adb through grep -q: with pipefail enabled,
+# grep -q can close early and make adb exit via SIGPIPE, hiding the completion sentinel.
+SELFTEST_DONE=0
+for i in $(seq 1 120); do
+  adb logcat -d -s CybNateJS:I >"$POLL_LOG" 2>/dev/null || true
+  if grep -F "CYBTEST DONE" "$POLL_LOG" >/dev/null; then SELFTEST_DONE=1; break; fi
   sleep 5
 done
+if [ "$SELFTEST_DONE" -ne 1 ]; then echo "::warning::Self-test completion sentinel not seen within 600 seconds"; fi
 {
   echo "CybNate on-device self test ($(date -u +%Y-%m-%dT%H:%MZ), Android $(adb shell getprop ro.build.version.release | tr -d '\r'), $(adb shell dumpsys package com.google.android.webview | grep -m1 versionName | tr -d ' \r'))"
   adb logcat -d -s CybNateJS:I | grep -o "CYBTEST.*" | grep -v "CYBTEST RAW" | sed -E 's/ \(https?:[^)]*\)$//'

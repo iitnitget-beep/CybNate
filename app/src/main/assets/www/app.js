@@ -1405,11 +1405,29 @@
   }
 
   /** Inline workspace CSS/JS/images referenced by an HTML file so it can run inside a sandboxed frame. */
-  function buildPreview(p) {
-    const previewFiles = {};
-    ws.list().forEach((path) => { if (!ws.isBinary(path)) previewFiles[path] = ws.get(path); });
+  function previewTextFiles() {
+    const files = {};
+    ws.list().forEach((path) => { if (!ws.isBinary(path)) files[path] = ws.get(path); });
+    return files;
+  }
+  let previewCompilerPromise = null;
+  function loadPreviewCompiler() {
+    if (window.__CYB_BABEL_SOURCE) return Promise.resolve(window.__CYB_BABEL_SOURCE);
+    if (!previewCompilerPromise) {
+      let timer;
+      const controller = new AbortController();
+      const timeout = new Promise((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error('Bundled Babel asset timed out')); }, 10000); });
+      previewCompilerPromise = Promise.race([fetch('vendor/babel/babel.min.js', { signal: controller.signal }).then((r) => { if (!r.ok) throw new Error('Bundled Babel asset is unavailable (HTTP ' + r.status + ')'); return r.text(); }), timeout])
+        .then((source) => { window.__CYB_BABEL_SOURCE = source; return source; })
+        .catch((e) => { previewCompilerPromise = null; throw e; })
+        .finally(() => clearTimeout(timer));
+    }
+    return previewCompilerPromise;
+  }
+  function buildPreview(p, babelSource) {
+    const previewFiles = previewTextFiles();
     if (window.ProjectPreview && (window.ProjectPreview.isProject(previewFiles) || /\.(?:jsx|tsx)$/i.test(p))) {
-      return window.ProjectPreview.projectHtml(p, previewFiles, window.__CYB_BABEL_SOURCE || '');
+      return window.ProjectPreview.projectHtml(p, previewFiles, babelSource || window.__CYB_BABEL_SOURCE || '');
     }
     const dir = p.indexOf('/') >= 0 ? p.slice(0, p.lastIndexOf('/') + 1) : '';
     const res = (ref) => { if (/^(https?:|data:|\/\/|#)/i.test(ref)) return null; const q = C.Workspace.norm(dir + ref.split(/[?#]/)[0]); return ws.has(q) ? q : null; };
@@ -1426,14 +1444,24 @@
   function openPreview(p) {
     // In the app the page opens in a separate WebView that has no native bridge. An iframe is not enough there:
     // Android injects the bridge object into every frame, sandboxed or not.
-    if (Native) {
-      if (Native.openPreview) Native.openPreview(p, buildPreview(p)); else toast('Preview needs a newer app build');
+    const files = previewTextFiles();
+    const isProject = !!(window.ProjectPreview && (window.ProjectPreview.isProject(files) || /\.(?:jsx|tsx)$/i.test(p)));
+    const show = (babelSource) => {
+      const html = buildPreview(p, babelSource);
+      if (Native) {
+        if (Native.openPreview) Native.openPreview(p, html); else toast('Preview needs a newer app build');
+        return;
+      }
+      openSheet('▶ ' + p, (body) => {
+        const f = el('iframe', 'preview'); f.setAttribute('sandbox', 'allow-scripts allow-modals allow-forms');
+        f.srcdoc = html; body.appendChild(f);
+      }, [['↻', drawSheet]]);
+    };
+    if (isProject && !window.__CYB_BABEL_SOURCE) {
+      loadPreviewCompiler().then(show).catch((e) => { toast('Local React preview compiler unavailable: ' + e.message); show(''); });
       return;
     }
-    openSheet('▶ ' + p, (body) => {
-      const f = el('iframe', 'preview'); f.setAttribute('sandbox', 'allow-scripts allow-modals allow-forms');
-      f.srcdoc = buildPreview(p); body.appendChild(f);
-    }, [['↻', drawSheet]]);
+    show(window.__CYB_BABEL_SOURCE || '');
   }
 
   // -------------------------------------------------------------- terminal

@@ -12,14 +12,14 @@ assert.match(paneSource, /setDomStorageEnabled\(true\)/, 'preview DOM storage st
 assert.doesNotMatch(paneSource, /addJavascriptInterface\s*\(/, 'preview has no native JavaScript bridge');
 
 (async () => {
-  const calls = [];
+  const calls = [], startupFetches = [];
   const dom = await JSDOM.fromFile(path.join(www, 'index.html'), {
     runScripts: 'dangerously', resources: 'usable', pretendToBeVisual: true,
     beforeParse(w) {
       w.TextEncoder = TextEncoder; w.TextDecoder = TextDecoder;
       const store = {};
       Object.defineProperty(w, 'localStorage', { value: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } } });
-      w.fetch = async () => { throw new Error('offline'); };
+      w.fetch = async (url) => { startupFetches.push(url); throw new Error('offline'); };
       // fake bridge: records every call; exec never answers by itself, like a long-running command
       w.Native = new Proxy({}, { get: (_, name) => (...a) => { calls.push([name].concat(a)); return name === 'wsList' ? '{}' : name === 'version' ? 'test' : ''; } });
     },
@@ -27,6 +27,7 @@ assert.doesNotMatch(paneSource, /addJavascriptInterface\s*\(/, 'preview has no n
   const w = dom.window, d = w.document;
   for (let i = 0; i < 200 && !w.__cyb; i++) await new Promise((r) => setTimeout(r, 50));
   const T = w.__cyb; assert.ok(T, 'app started');
+  assert.ok(!startupFetches.some((url) => /(?:babel\.min\.js|esm\.sh|cdn\.tailwindcss\.com|unpkg\.com)/i.test(String(url))), 'app startup does not fetch the compiler or preview CDNs');
   assert.doesNotThrow(() => new Function(w.ProjectPreview.BOOTSTRAP), 'preview bootstrap JavaScript parses');
 
   T.ws.set('page.html', '<h1>hi</h1><script>Native.exec("x", "rm -rf .", 5)</script>');
@@ -43,8 +44,14 @@ assert.doesNotMatch(paneSource, /addJavascriptInterface\s*\(/, 'preview has no n
   T.ws.set('src/App.jsx', "export default function App(){ return <main className='flex p-4'>Preview app</main> }");
   T.ws.set('src/style.css', 'body { color: #123; }');
   T.ws.set('backend/server.js', "const express = require('express'); const app = express(); app.get('/api/health', (req, res) => res.json({ ok: true })); app.listen(3000);");
+  const compilerRequests = [];
+  w.fetch = async (url) => { compilerRequests.push(url); assert.strictEqual(url, 'vendor/babel/babel.min.js', 'preview compiler is fetched only from the bundled app asset'); return { ok: true, text: async () => '/* local Babel fixture */' }; };
   T.openPreview('src/main.jsx');
+  for (let i = 0; i < 100 && calls.filter((c) => c[0] === 'openPreview').length < 2; i++) await new Promise((r) => setTimeout(r, 10));
   const projectPreview = calls.filter((c) => c[0] === 'openPreview').pop()[2];
+  assert.deepStrictEqual(compilerRequests, ['vendor/babel/babel.min.js'], 'React preview loads Babel lazily from the bundled asset');
+  assert.ok(projectPreview.includes('local Babel fixture'), 'the local compiler is embedded for the isolated preview');
+  assert.doesNotMatch(projectPreview, /unpkg\.com\/@babel/, 'preview does not fetch Babel from a CDN');
   assert.match(projectPreview, /type="importmap"/, 'module import map is injected');
   assert.match(projectPreview, /react-dom\/client/, 'React DOM client is mapped');
   assert.match(projectPreview, /"entry":"src\/main.jsx"/, 'project entry is chosen');

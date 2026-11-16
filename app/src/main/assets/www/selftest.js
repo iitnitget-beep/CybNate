@@ -7,7 +7,14 @@
   document.body.appendChild(box);
   const say = (name, ok, detail, skip) => { const l = 'CYBTEST ' + (skip ? 'SKIP ' : ok ? 'PASS ' : 'FAIL ') + name + (detail ? ' :: ' + String(detail).replace(/\s+/g, ' ').slice(0, 260) : ''); lines.push(l); console.log(l); box.textContent = lines.join('\n'); };
   // one stuck case must not stall the whole run: after 5 minutes it is reported as failed and the next case starts
-  const test = async (name, fn) => { try { const d = await Promise.race([fn(), new Promise((_, rej) => setTimeout(() => rej(new Error('no result after 300 s')), 300000))]); if (d && d.__cybSkip) say(name, false, d.reason, true); else say(name, true, d); } catch (e) { say(name, false, e && e.message ? e.message : e); } };
+  const test = async (name, fn) => {
+    let timer;
+    try {
+      const d = await Promise.race([Promise.resolve().then(fn), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('no result after 300 s')), 300000); })]);
+      if (d && d.__cybSkip) say(name, false, d.reason, true); else say(name, true, d);
+    } catch (e) { say(name, false, e && e.message ? e.message : e); }
+    finally { if (timer) clearTimeout(timer); }
+  };
   const must = (c, m) => { if (!c) throw new Error(m); };
   console.log('CYBTEST START ua=' + navigator.userAgent);
 

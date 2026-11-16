@@ -116,4 +116,9 @@ jobs:
           git pull --rebase origin "${{ github.ref_name }}"
           git push origin "HEAD:${{ github.ref_name }}"
       - name: Fail when the self test did not finish clean
-        run: grep -Eq "CYBTEST DONE pass=[0-9]+ fail=0 skip=[0-9]+" release/selftest.txt
+        run: |
+          if ! grep -Eq "CYBTEST DONE pass=[0-9]+ fail=0 skip=[0-9]+" release/selftest.txt; then
+            echo "::error::On-device self-test did not finish with fail=0. Captured output follows:"
+            cat release/selftest.txt
+            exit 1
+          fi
