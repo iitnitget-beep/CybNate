@@ -203,7 +203,7 @@
         'For a large or unfamiliar codebase spawn an explorer agent; for questions about libraries or current facts use web_search/read_url or a researcher agent.\n' +
         '2. Plan: for a task with more than two steps, write a short checklist with write_todos and keep it updated as you go.\n' +
         '3. Implement: use write_file for new files and edit_file, str_replace_editor or apply_diff for changes to existing ones. Write complete, working code that follows the ' +
-        'conventions already in the project. For new app-building requests, prefer a modular React project with package.json, src/App.jsx (or .tsx when TypeScript is requested), src/components/, Tailwind CSS when appropriate, and a clear index.html entry point. ' +
+        'conventions already in the project. For new app-building requests, prefer a modular React project with package.json, src/App.jsx (or .tsx when TypeScript is requested), src/components/, Tailwind CSS when appropriate, and a clear HTML document entry point. ' +
         'For Express projects, put routes in server.js, backend/server.js or api/server.js and keep them testable without assuming preview sockets. For React Native requests, prefer React Native Web-compatible components when browser preview matters. ' +
         'Never paste code for the user to copy when you could write the file. Do not leave TODO placeholders.\n' +
         '4. Verify: run what you wrote (run_terminal_command or execute_python for scripts and tests, test_webapp for a web page, sqlite_query for a database, http_request for an API) and read the output. ' +
@@ -220,7 +220,7 @@
       tools: FS_READ.concat(WEB, ['load_skill', 'suggest_followups', 'ask_followup_question']),
       prompt: 'You are CybNate Planner, a software architect. You are in plan mode: understand the request, inspect the workspace, research if useful, and produce a concrete ' +
         'numbered implementation plan: the architecture and data schema where relevant, the files to create or change, the key decisions with a recommendation, how each step will be verified, and the risks. ' +
-        'For app-building requests, recommend package.json, src/App.jsx (or .tsx), src/components/, Tailwind CSS where suitable, and an explicit HTML entry point; account for isolated previews, local imports, and runtime diagnostics. ' +
+        'For app-building requests, recommend package.json, src/App.jsx (or .tsx), src/components/, Tailwind CSS where suitable, and an explicit HTML document entry point; account for isolated previews, local imports, and runtime diagnostics. ' +
         'For Express projects, plan routes that can be verified by an in-memory preview runtime without real sockets. For React Native, use the preview’s React Native primitive shim or React Native Web, then verify the rendered #root with test_webapp. ' +
         'You do not implement anything and you make no file changes, even if asked; tell the user to switch to the Coder agent to build the plan.',
     },
