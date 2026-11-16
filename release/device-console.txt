@@ -1,21 +1,15 @@
 CYBUI ready agents=6 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:2441)
-CYBUI layout t=1500 header=56 welcome=504 frames=46 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
-CYBUI layout t=6000 header=56 welcome=504 frames=296 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
-CYBUI layout t=12000 header=56 welcome=504 frames=308 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
-CYBUI layout t=25000 header=56 welcome=504 frames=308 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
-FOCUS1   mCurrentFocus=Window{8320dff u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{c933b45 u0 com.cybnate.app/.MainActivity t8} 
-  mCurrentFocus=Window{8320dff u0 com.cybnate.app/com.cybnate.app.MainActivity}
-  mFocusedApp=ActivityRecord{c933b45 u0 com.cybnate.app/.MainActivity t8}
-11-16 10:02:17.409   518   542 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +3s419ms
-11-16 10:02:20.164  1805  2287 W A       : 	at org.chromium.net.impl.CronetUrlRequest.onError(:com.google.android.gms.dynamite_cronetdynamite@231818047@23.18.18 (190800-0):5)
-11-16 10:02:20.750  1805  2294 W A       : 	at org.chromium.net.impl.CronetUrlRequest.onError(:com.google.android.gms.dynamite_cronetdynamite@231818047@23.18.18 (190800-0):5)
-11-16 10:02:20.753  1805  2294 W A       : 	at org.chromium.net.impl.CronetUrlRequest.onError(:com.google.android.gms.dynamite_cronetdynamite@231818047@23.18.18 (190800-0):5)
-11-16 10:02:20.960  1805  2287 W A       : 	at org.chromium.net.impl.CronetUrlRequest.onError(:com.google.android.gms.dynamite_cronetdynamite@231818047@23.18.18 (190800-0):5)
-11-16 10:02:20.960  1805  2287 W A       : 	at org.chromium.net.impl.CronetUrlRequest.onError(:com.google.android.gms.dynamite_cronetdynamite@231818047@23.18.18 (190800-0):5)
-11-16 10:02:21.430  1805  2294 W A       : 	at org.chromium.net.impl.CronetUrlRequest.onError(:com.google.android.gms.dynamite_cronetdynamite@231818047@23.18.18 (190800-0):2)
-11-16 10:02:21.434  1805  2294 W A       : 	at org.chromium.net.impl.CronetUrlRequest.onError(:com.google.android.gms.dynamite_cronetdynamite@231818047@23.18.18 (190800-0):2)
+CYBUI layout t=1500 header=56 welcome=504 frames=0 win=320x616 vis=hidden (https://appassets.androidplatform.net/assets/www/app.js:2459)
+CYBUI layout t=6000 header=56 welcome=504 frames=0 win=320x616 vis=hidden (https://appassets.androidplatform.net/assets/www/app.js:2459)
+CYBUI layout t=12000 header=56 welcome=504 frames=0 win=320x616 vis=hidden (https://appassets.androidplatform.net/assets/www/app.js:2459)
+CYBUI layout t=25000 header=56 welcome=504 frames=0 win=320x616 vis=hidden (https://appassets.androidplatform.net/assets/www/app.js:2459)
+FOCUS1   mCurrentFocus=Window{a03cbe2 u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{4417dde u0 com.cybnate.app/.MainActivity t8} 
+  mCurrentFocus=Window{a03cbe2 u0 com.cybnate.app/com.cybnate.app.MainActivity}
+  mFocusedApp=ActivityRecord{4417dde u0 com.cybnate.app/.MainActivity t8}
+11-16 10:09:00.413  3221  3387 E chromium: [ERROR:simple_version_upgrade.cc(152)] Failed to write a new fake index.
+11-16 10:09:00.414  3221  3383 E chromium: [ERROR:simple_version_upgrade.cc(152)] Failed to write a new fake index.
+11-16 10:09:01.121   520   539 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +2s729ms
 CybNateJS: CYBUI ready agents=6 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:2441)
-CybNateJS: CYBUI layout t=1500 header=56 welcome=504 frames=50 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
-CybNateJS: CYBUI layout t=6000 header=56 welcome=504 frames=319 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
-CybNateJS: CYBUI layout t=12000 header=56 welcome=504 frames=371 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
-CybNateJS: CYBUI layout t=25000 header=56 welcome=504 frames=371 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
+CybNateJS: CYBUI layout t=1500 header=56 welcome=504 frames=44 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
+CybNateJS: CYBUI layout t=6000 header=56 welcome=504 frames=306 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
+CybNateJS: CYBUI layout t=12000 header=56 welcome=504 frames=341 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
