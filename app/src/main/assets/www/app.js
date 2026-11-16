@@ -1688,10 +1688,22 @@
     let r = await wireCall(Wire.codexUserCodeRequest(), signal);
     const dc = Wire.codexUserCode(r.status, r.text);
     onState({ code: dc.code, url: Wire.CODEX.verifyUrl });
-    const until = Date.now() + Wire.CODEX.maxWaitMs; let got;
+    const until = Date.now() + Wire.CODEX.maxWaitMs; let got, retries = 0;
     for (;;) {
       await sleep(codexSignIn.intervalMs || dc.intervalMs, signal);
-      r = await wireCall(Wire.codexPollRequest(dc), signal);
+      try {
+        r = await wireCall(Wire.codexPollRequest(dc), signal);
+        if (retries) { retries = 0; onState({ code: dc.code, url: Wire.CODEX.verifyUrl, retrying: false }); }
+      } catch (e) {
+        if (!e || e.name === 'AbortError' || !/(network error|could not connect|could not reach|unable to resolve host|failed to fetch|timed? out|econn)/i.test(String(e.message || e))) throw e;
+        if (Date.now() >= until) throw new Error('Could not reach OpenAI before the sign-in code expired. Check the phone connection and start again.');
+        const retryBase = codexSignIn.retryBaseMs || 1000;
+        const delay = Math.min(30000, Math.max(retryBase, (codexSignIn.intervalMs || dc.intervalMs) * Math.pow(2, Math.min(retries, 5))));
+        retries++;
+        onState({ code: dc.code, url: Wire.CODEX.verifyUrl, retrying: true });
+        await sleep(delay, signal);
+        continue;
+      }
       got = Wire.codexPoll(r.status, r.text);
       if (got !== 'wait') break;
       if (Date.now() > until) throw new Error('The code expired after 15 minutes. Start again.');
@@ -1710,7 +1722,7 @@
       if (ui.ctl) ui.ctl.abort();
       const ctl = new AbortController(); codexUi = { step: 'start', code: '', error: '', ctl }; redraw();
       try {
-        const got = await codexSignIn((st) => { codexUi.step = 'code'; codexUi.code = st.code; redraw(); }, ctl.signal);
+        const got = await codexSignIn((st) => { codexUi.step = 'code'; codexUi.code = st.code; codexUi.note = st.retrying ? 'OpenAI is temporarily unreachable from the app. Retrying automatically — keep this code open.' : ''; redraw(); }, ctl.signal);
         codexUi = { step: '', code: '', error: '', ctl: null };
         const n = (settings.models.codex || []).length;
         toast(n ? 'Signed in · ' + n + ' models' : 'Signed in');
@@ -1718,7 +1730,11 @@
         void got;
       } catch (e) {
         if (codexUi.ctl !== ctl) return;
-        codexUi = { step: '', code: '', error: e && e.name === 'AbortError' ? '' : String(e && e.message ? e.message : e), ctl: null };
+        const message = e && e.name === 'AbortError' ? '' : String(e && e.message ? e.message : e);
+        const code = codexUi.code;
+        codexUi = code && e && e.name !== 'AbortError'
+          ? { step: 'code', code, error: message, note: 'The sign-in stopped. This code may no longer work; start a fresh sign-in if needed.', ctl: null }
+          : { step: '', code: '', error: message, note: '', ctl: null };
       }
       redraw();
     };
@@ -1730,8 +1746,11 @@
       const code = el('div', 'bigcode', ui.code); code.id = 'codexCode'; card.appendChild(code);
       const cp = el('button', 'wide ghost', 'Copy the code'); cp.onclick = () => { try { navigator.clipboard.writeText(ui.code); toast('Copied'); } catch (e) { toast('Copy it by hand'); } }; card.appendChild(cp);
       card.appendChild(el('div', 'note', '3. Come back here. The app connects by itself within a few seconds. The code works for 15 minutes.'));
+      if (ui.note) card.appendChild(el('div', 'note', ui.note));
+      if (ui.error) card.appendChild(el('div', 'note err', '✗ ' + ui.error));
       card.appendChild(el('p', 'hint', 'If the page says device codes are off, turn on "Device code authorization for Codex" in ChatGPT → Settings → Security, then start again.'));
-      const x = el('button', 'wide ghost', 'Cancel'); x.id = 'codexCancel'; x.onclick = () => { if (ui.ctl) ui.ctl.abort(); codexUi = { step: '', code: '', error: '', ctl: null }; redraw(); }; card.appendChild(x);
+      if (ui.error) { const again = el('button', 'wide', 'Start a fresh sign-in'); again.id = 'codexGo'; again.onclick = start; card.appendChild(again); }
+      const x = el('button', 'wide ghost', 'Cancel'); x.id = 'codexCancel'; x.onclick = () => { if (ui.ctl) ui.ctl.abort(); codexUi = { step: '', code: '', error: '', note: '', ctl: null }; redraw(); }; card.appendChild(x);
     } else if (s) {
       const n = (settings.models.codex || []).length;
       const ok = el('div', 'note ok', '✓ Connected' + (s.email ? ' as ' + s.email : '') + (s.plan ? ' · plan: ' + Wire.planName(s.plan) : '') + ' · ' + (n ? n + ' model' + (n === 1 ? '' : 's') : 'no model list yet')); ok.id = 'codexState'; card.appendChild(ok);

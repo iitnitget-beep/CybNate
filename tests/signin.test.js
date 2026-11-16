@@ -56,7 +56,7 @@ console.log('wire ok');
 
 let JSDOM; try { ({ JSDOM } = require('jsdom')); } catch (e) { console.log('SKIPPED the app part: jsdom is not installed'); process.exit(0); }
 (async () => {
-  const net = [], gcalls = []; const srv = { polls: 0, pollsNeeded: 2, exchanges: 0, refreshes: 0, exp: Math.floor(Date.now() / 1000) + 3600, google: null, gmailStatus: 200 };
+  const net = [], gcalls = []; const srv = { polls: 0, pollsNeeded: 6, pollNetworkFailures: 1, exchanges: 0, refreshes: 0, exp: Math.floor(Date.now() / 1000) + 3600, google: null, gmailStatus: 200 };
   const sseBody = (...objs) => objs.map(ev).join('');
   const handle = (q) => {
     net.push(q); const u = q.url, h = q.headers;
@@ -86,6 +86,11 @@ let JSDOM; try { ({ JSDOM } = require('jsdom')); } catch (e) { console.log('SKIP
       w.Native = {
         version: () => 'test',
         http(id, url, method, headersJson, body) {
+          if (url === W.CODEX.pollUrl && srv.pollNetworkFailures > 0) {
+            srv.pollNetworkFailures--;
+            setTimeout(() => w.__nh(id, 'e', 'Unable to resolve host "auth.openai.com": No address associated with hostname'), 3);
+            return;
+          }
           setTimeout(() => { const r = handle({ url, method, headers: JSON.parse(headersJson || '{}'), body }); w.__nh(id, 'h', (r.status || 200) + '|' + (r.ctype || 'application/json')); const t = r.text || ''; for (let i = 0; i < t.length; i += 37) w.__nh(id, 'd', t.slice(i, i + 37)); w.__nh(id, 'x', ''); }, 3);
         },
         httpAbort() {},
@@ -102,13 +107,17 @@ let JSDOM; try { ({ JSDOM } = require('jsdom')); } catch (e) { console.log('SKIP
   const card = (id) => [...d.querySelectorAll('#sheetBody .card')].find((c) => c.dataset.provider === id);
 
   // 1. Codex: one button, a code to type, then connected with plan and models, chosen for chat
-  T.codexSignIn.intervalMs = 20;
+  T.codexSignIn.intervalMs = 20; T.codexSignIn.retryBaseMs = 10;
   T.openProviders(); await tick();
   assert.ok(card('codex') && d.getElementById('codexGo').textContent === 'Sign in with ChatGPT' && !card('codex').querySelector('input'), 'no key box, just a sign-in button');
   d.getElementById('codexGo').click();
   await until(() => d.getElementById('codexCode'), 'the code shows');
   assert.strictEqual(d.getElementById('codexCode').textContent, 'WXYZ-9876');
   assert.strictEqual(d.getElementById('codexOpen').href, W.CODEX.verifyUrl); assert.strictEqual(d.getElementById('codexOpen').target, '_blank');
+  await until(() => [...d.querySelectorAll('#sheetBody .note')].some((n) => /Retrying automatically/.test(n.textContent)), 'temporary DNS failure is retried without hiding the device code');
+  assert.strictEqual(d.getElementById('codexCode').textContent, 'WXYZ-9876');
+  w.onNativeBack(); await tick(); T.openProviders(); await tick();
+  assert.strictEqual(d.getElementById('codexCode').textContent, 'WXYZ-9876', 'closing and reopening Settings keeps the pending code visible');
   await until(() => d.getElementById('codexState'), 'connected');
   assert.ok(/Connected as asha@example\.com · plan: Plus · 2 models/.test(d.getElementById('codexState').textContent), d.getElementById('codexState').textContent);
   assert.strictEqual(srv.exchanges, 1, 'the one-time code is sent exactly once'); assert.ok(srv.polls >= 2);
