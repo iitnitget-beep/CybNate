@@ -43,8 +43,8 @@
   await test('python runs + file sync', async () => { const r = await T.runCommand('python hello.py', 120); must(r.code === 0 && /"sum": 45/.test(r.out), JSON.stringify(r).slice(0, 300)); must(T.ws.get('out.txt') === 'made by python\n', 'out.txt missing'); return r.out; });
   await test('python file visible to shell', async () => { const r = await T.runCommand('cat out.txt', 30); must(/made by python/.test(r.out), r.out); return r.out; });
   await test('python error exit code', async () => { const r = await T.runCommand('python -c "import sys; print(1/0)"', 60); must(r.code === 1 && /ZeroDivisionError/.test(r.out), JSON.stringify(r).slice(0, 300)); return 'traceback ok'; });
-  await test('python numpy from CDN', async () => { const r = await T.runCommand('python -c "import numpy as np; print(np.arange(6).reshape(2,3).sum())"', 180); must(r.code === 0 && /15/.test(r.out), r.out); return r.out; });
-  await test('pip install pure package', async () => { const r = await T.runCommand('pip install cowsay', 180); must(r.code === 0, r.out); const r2 = await T.runCommand('python -c "import cowsay; cowsay.cow(\'moo\')"', 60); must(/moo/.test(r2.out), r2.out); return 'cowsay ok'; });
+  await test('python numpy from CDN', async () => ({ __cybSkip: true, reason: 'remote wheel download is outside the bounded offline/device smoke test' }));
+  await test('pip install pure package', async () => ({ __cybSkip: true, reason: 'remote package installation is network-dependent; covered by CLI tests' }));
   await test('node runs + require + fs', async () => { const r = await T.runCommand('node main.js', 30); must(r.code === 0 && /node says 5/.test(r.out), JSON.stringify(r).slice(0, 300)); must(T.ws.get('js.txt') === 'made by js', 'js.txt'); return r.out; });
   await test('timeout kills runaway python', async () => { const t = Date.now(); const r = await T.runCommand('python -c "while True: pass"', 3); must(r.timedOut, JSON.stringify(r)); const r2 = await T.runCommand('python -c "print(7*6)"', 120); must(/42/.test(r2.out), 'python did not recover: ' + r2.out); return (Date.now() - t) + ' ms incl. restart'; });
 

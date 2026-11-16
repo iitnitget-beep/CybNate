@@ -17,6 +17,7 @@ assert.match(paneSource, /AssetsPathHandler\(act\)/, 'isolated preview serves bu
 assert.match(testerSource, /AssetsPathHandler\(act\)/, 'PageTester serves bundled JS runtimes without a native bridge');
 assert.match(selftestSource, /TEST_TIMEOUT_MS = 12000/, 'each on-device self-test case has a strict 12-second ceiling');
 assert.match(selftestSource, /SUITE_TIMEOUT_MS = 8 \* 60 \* 1000/, 'the entire device self-test leaves margin before the 10-minute CI sentinel deadline');
+assert.match(selftestSource, /remote wheel download is outside the bounded offline\/device smoke test/, 'device self-test does not hang on an unbounded remote Pyodide wheel download');
 
 (async () => {
   const calls = [], startupFetches = [];
