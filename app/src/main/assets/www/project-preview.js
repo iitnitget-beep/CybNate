@@ -62,7 +62,7 @@
       } catch (e) { /* malformed package.json is reported in the preview runtime */ }
     });
     all.delete('express');
-    all.delete('react'); all.delete('react-dom'); all.delete('react-dom/client'); all.delete('react/jsx-runtime'); all.delete('react-native');
+    all.delete('react'); all.delete('react-dom'); all.delete('react-dom/client'); all.delete('react/jsx-runtime'); all.delete('react/jsx-dev-runtime'); all.delete('react-native'); all.delete('react-native-web');
     return Array.from(all).sort();
   }
   const RN_SHIM_SOURCE = String.raw`import React from 'react';
@@ -91,7 +91,7 @@ function TouchableHighlight(p) { return h(Pressable, p); }
 `;
   const REACT_EXPORTS = ['Children','Component','Fragment','Profiler','PureComponent','StrictMode','Suspense','act','cloneElement','createContext','createElement','createFactory','createRef','forwardRef','isValidElement','lazy','memo','startTransition','useCallback','useContext','useDebugValue','useDeferredValue','useEffect','useId','useImperativeHandle','useInsertionEffect','useLayoutEffect','useMemo','useReducer','useRef','useState','useSyncExternalStore','useTransition'];
   function dataModule(source) { return 'data:text/javascript;charset=utf-8,' + encodeURIComponent(source); }
-  function localReactImports(runtimes) {
+  function localReactImports() {
     const exports = REACT_EXPORTS.map((name) => 'export const ' + name + '=R.' + name + ';').join('');
     const jsx = 'const R=globalThis.React;export default R;' + exports;
     const jsxRuntime = 'const R=globalThis.React;export const Fragment=R.Fragment;export function jsx(t,p,k){return R.createElement(t,k==null?p:Object.assign({},p,{key:k}))}export const jsxs=jsx;export const jsxDEV=jsx;';
@@ -99,24 +99,17 @@ function TouchableHighlight(p) { return h(Pressable, p); }
     const client = 'const D=globalThis.ReactDOM;export const createRoot=D.createRoot.bind(D);export const hydrateRoot=D.hydrateRoot.bind(D);';
     return { react: dataModule(jsx), jsx: dataModule(jsxRuntime), dom: dataModule(dom), client: dataModule(client), rn: dataModule(RN_SHIM_SOURCE) };
   }
-  function importMap(files, runtimes) {
+  function importMap(files) {
+    const shims = localReactImports();
     const imports = {
-      react: 'https://esm.sh/react@18.3.1',
-      'react/jsx-runtime': 'https://esm.sh/react@18.3.1/jsx-runtime',
-      'react/jsx-dev-runtime': 'https://esm.sh/react@18.3.1/jsx-dev-runtime',
-      'react-dom': 'https://esm.sh/react-dom@18.3.1?external=react',
-      'react-dom/client': 'https://esm.sh/react-dom@18.3.1/client?external=react',
+      react: shims.react,
+      'react/jsx-runtime': shims.jsx,
+      'react/jsx-dev-runtime': shims.jsx,
+      'react-dom': shims.dom,
+      'react-dom/client': shims.client,
+      'react-native': shims.rn,
+      'react-native-web': shims.rn,
     };
-    const shims = localReactImports(runtimes);
-    imports['react-native'] = shims.rn;
-    imports['react-native-web'] = shims.rn;
-    if (runtimes && runtimes.react && runtimes.reactDom) {
-      imports.react = shims.react;
-      imports['react/jsx-runtime'] = shims.jsx;
-      imports['react/jsx-dev-runtime'] = shims.jsx;
-      imports['react-dom'] = shims.dom;
-      imports['react-dom/client'] = shims.client;
-    }
     bareSpecifiers(files).forEach((s) => {
       // Keep package names as URL path segments; reject traversal and URL/query characters.
       if (s.split('/').some((part) => part === '..' || part === '.' || !/^(?:@[A-Za-z0-9._-]+|[A-Za-z0-9._-]+)$/.test(part))) return;
@@ -148,7 +141,7 @@ function TouchableHighlight(p) { return h(Pressable, p); }
     });
     return out;
   }
-  function projectHtml(requested, sourceFiles, babelSource, runtimes, options) {
+  function projectHtml(requested, sourceFiles, options) {
     options = options || {};
     const files = {};
     const input = values(sourceFiles);
@@ -161,19 +154,18 @@ function TouchableHighlight(p) { return h(Pressable, p); }
     const template = htmlPath ? files[htmlPath] : '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CybNate Preview</title></head><body></body></html>';
     const entry = resolveEntry(files, requested, template);
     const apiPath = serverEntry(files);
-    const project = { entry, files, apiPath, importMap: importMap(files, runtimes), tailwind: tailwindNeeded(files), cssImports: cssImports(files) };
+    const project = { entry, files, apiPath, importMap: importMap(files), tailwind: tailwindNeeded(files), cssImports: cssImports(files) };
     let html = template.replace(/<script\b[^>]*\bsrc=["'][^"']+\.(?:jsx?|tsx?)(?:[?#][^"']*)?["'][^>]*>\s*<\/script\s*>/gi, '');
     if (!/<(?:div|main|section)\b[^>]*\bid=["'](?:root|app)["']/i.test(html)) html = inject(html, '<div id="root"></div>', 'body');
     const safeMap = safeJson(project.importMap).replace(/<\/script/gi, '<\\/script');
     html = inject(html, '<script type="importmap">' + safeMap + '</script>', 'head');
     const overlay = '<script>window.__cybPreviewError=function(e){var d=document.getElementById("__cyb-preview-error");if(!d){d=document.createElement("pre");d.id="__cyb-preview-error";d.style.cssText="position:fixed;z-index:2147483647;inset:8px;overflow:auto;margin:0;padding:14px;background:#190b10;color:#ffd7df;border:1px solid #a33;border-radius:8px;white-space:pre-wrap;font:13px/1.5 monospace";(document.body||document.documentElement).appendChild(d)}d.textContent="Preview error\\n"+String(e&&e.stack||e||"Unknown error");try{console.error("Preview error",e)}catch(x){}};window.addEventListener("error",function(e){if(e.message||e.error)window.__cybPreviewError(e.error||e.message)});window.addEventListener("unhandledrejection",function(e){window.__cybPreviewError(e.reason)});</script>';
     html = inject(html, overlay, 'head');
-    if (babelSource) html = inject(html, '<script>' + String(babelSource).replace(/<\/script/gi, '<\\/script') + '</script>', 'head');
-    else html = inject(html, '<script>window.__cybPreviewError("Bundled Babel compiler is unavailable; rebuild the app with scripts/fetch-vendor.sh and retry.")</script>', 'head');
-    if (runtimes && runtimes.react && runtimes.reactDom) {
-      const react = String(runtimes.react).replace(/<\/script/gi, '<\\/script'), dom = String(runtimes.reactDom).replace(/<\/script/gi, '<\\/script');
-      html = inject(html, '<script>' + react + '</script><script>' + dom + '</script>', 'head');
-    }
+    // Keep WebView loadDataWithBaseURL payloads small: vendor runtimes are served as local app assets,
+    // not copied into the generated HTML or across the Android JavaScript bridge.
+    let assetBase = options.assetBase || 'https://appassets.androidplatform.net/assets/www/vendor/';
+    if (assetBase !== 'vendor/' && !/^https:\/\/appassets\.androidplatform\.net\/assets\/www\/vendor\/$/.test(assetBase)) assetBase = 'https://appassets.androidplatform.net/assets/www/vendor/';
+    html = inject(html, '<script src="' + assetBase + 'react-runtime/react.production.min.js"></script><script src="' + assetBase + 'react-runtime/react-dom.production.min.js"></script><script src="' + assetBase + 'babel/babel.min.js"></script>', 'head');
     if (project.tailwind && options.testMode) html = inject(html, '<script>console.info("Tailwind CDN skipped for deterministic offline test_webapp run")</script>', 'head');
     else if (project.tailwind && !/cdn\.tailwindcss\.com/i.test(html)) html = inject(html, '<script async src="https://cdn.tailwindcss.com"></script>', 'head');
     const data = safeJson(project).replace(/<\/script/gi, '<\\/script');

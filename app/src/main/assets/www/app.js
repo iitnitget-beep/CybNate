@@ -560,14 +560,9 @@
     if (!ws.has(path)) return { code: 2, out: 'test_webapp: file not found: ' + path + '. HTML files in the workspace: ' + (ws.list().filter((p) => /\.html?$/i.test(p)).slice(0, 12).join(', ') || 'none'), files: [] };
     if (!/\.html?$/i.test(path) || ws.isBinary(path)) return { code: 2, out: 'test_webapp needs an HTML file (got ' + path + '). Test other code with python or node.', files: [] };
     const id = 't' + (++ntSeq), limit = Math.max(3, Math.min(timeoutSec || 20, 45)) * 1000;
-    let assets = {};
     const textFiles = previewTextFiles();
     const projectPreview = !!(window.ProjectPreview && window.ProjectPreview.isProject(textFiles));
-    if (projectPreview) {
-      try { assets = await loadPreviewAssets(); }
-      catch (e) { return { code: 1, out: 'test_webapp ' + path + ': bundled React preview assets failed to load: ' + e.message, files: [] }; }
-    }
-    const html = WebTest.instrument(buildPreview(path, assets, true), script, projectPreview ? 1800 : 600, id);
+    const html = WebTest.instrument(buildPreview(path, true), script, projectPreview ? 1800 : 600, id);
     let rep = null;
     if (Native) {
       // In the app an iframe is not safe: Android gives every frame the native bridge. The page runs in a separate WebView without one.
@@ -1417,27 +1412,11 @@
     ws.list().forEach((path) => { if (!ws.isBinary(path)) files[path] = ws.get(path); });
     return files;
   }
-  let previewAssetsPromise = null;
-  function loadPreviewAssets() {
-    if (window.__CYB_PREVIEW_ASSETS) return Promise.resolve(window.__CYB_PREVIEW_ASSETS);
-    if (!previewAssetsPromise) {
-      let timer;
-      const controller = new AbortController();
-      const timeout = new Promise((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error('Bundled preview assets timed out')); }, 10000); });
-      const paths = ['vendor/babel/babel.min.js', 'vendor/react-runtime/react.production.min.js', 'vendor/react-runtime/react-dom.production.min.js'];
-      const read = (url) => fetch(url, { signal: controller.signal }).then((r) => { if (!r.ok) throw new Error('Bundled preview asset unavailable: ' + url + ' (HTTP ' + r.status + ')'); return r.text(); });
-      previewAssetsPromise = Promise.race([Promise.all(paths.map(read)).then((files) => ({ babel: files[0], react: files[1], reactDom: files[2] })), timeout])
-        .then((assets) => { window.__CYB_PREVIEW_ASSETS = assets; return assets; })
-        .catch((e) => { previewAssetsPromise = null; throw e; })
-        .finally(() => clearTimeout(timer));
-    }
-    return previewAssetsPromise;
-  }
-  function buildPreview(p, previewAssets, testMode) {
+  function buildPreview(p, testMode) {
     const previewFiles = previewTextFiles();
     if (window.ProjectPreview && (window.ProjectPreview.isProject(previewFiles) || /\.(?:jsx|tsx)$/i.test(p))) {
-      const assets = previewAssets || window.__CYB_PREVIEW_ASSETS || {};
-      return window.ProjectPreview.projectHtml(p, previewFiles, assets.babel || '', assets, { testMode: !!testMode });
+      const assetBase = Native ? 'https://appassets.androidplatform.net/assets/www/vendor/' : 'vendor/';
+      return window.ProjectPreview.projectHtml(p, previewFiles, { testMode: !!testMode, assetBase });
     }
     const dir = p.indexOf('/') >= 0 ? p.slice(0, p.lastIndexOf('/') + 1) : '';
     const res = (ref) => { if (/^(https?:|data:|\/\/|#)/i.test(ref)) return null; const q = C.Workspace.norm(dir + ref.split(/[?#]/)[0]); return ws.has(q) ? q : null; };
@@ -1454,10 +1433,8 @@
   function openPreview(p) {
     // In the app the page opens in a separate WebView that has no native bridge. An iframe is not enough there:
     // Android injects the bridge object into every frame, sandboxed or not.
-    const files = previewTextFiles();
-    const isProject = !!(window.ProjectPreview && (window.ProjectPreview.isProject(files) || /\.(?:jsx|tsx)$/i.test(p)));
-    const show = (previewAssets) => {
-      const html = buildPreview(p, previewAssets);
+    const show = () => {
+      const html = buildPreview(p, false);
       if (Native) {
         if (Native.openPreview) Native.openPreview(p, html); else toast('Preview needs a newer app build');
         return;
@@ -1467,11 +1444,7 @@
         f.srcdoc = html; body.appendChild(f);
       }, [['↻', drawSheet]]);
     };
-    if (isProject && !window.__CYB_PREVIEW_ASSETS) {
-      loadPreviewAssets().then(show).catch((e) => { toast('Local React preview assets unavailable: ' + e.message); show({}); });
-      return;
-    }
-    show(window.__CYB_PREVIEW_ASSETS || {});
+    show();
   }
 
   // -------------------------------------------------------------- terminal

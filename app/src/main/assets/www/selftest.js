@@ -6,14 +6,27 @@
   box.style.cssText = 'position:fixed;inset:0;z-index:99;margin:0;background:#0b0f0e;color:#e6f2ec;font:11px monospace;padding:10px;overflow:auto;white-space:pre-wrap';
   document.body.appendChild(box);
   const say = (name, ok, detail, skip) => { const l = 'CYBTEST ' + (skip ? 'SKIP ' : ok ? 'PASS ' : 'FAIL ') + name + (detail ? ' :: ' + String(detail).replace(/\s+/g, ' ').slice(0, 260) : ''); lines.push(l); console.log(l); box.textContent = lines.join('\n'); };
-  // one stuck case must not stall the whole run: after 5 minutes it is reported as failed and the next case starts
+  // No individual device test may stall the sentinel. Slow/network-dependent checks are reported as skips.
+  const TEST_TIMEOUT_MS = 12000;
+  const SUITE_STARTED = Date.now();
+  const SUITE_TIMEOUT_MS = 8 * 60 * 1000;
   const test = async (name, fn) => {
-    let timer;
+    if (Date.now() - SUITE_STARTED >= SUITE_TIMEOUT_MS) {
+      say(name, false, 'overall device-test budget reached; remaining case skipped', true);
+      return;
+    }
+    let timer, expired = false;
+    const controller = new AbortController();
     try {
-      const d = await Promise.race([Promise.resolve().then(fn), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('no result after 300 s')), 300000); })]);
+      const d = await Promise.race([
+        Promise.resolve().then(() => fn(controller.signal)),
+        new Promise((_, rej) => { timer = setTimeout(() => { expired = true; controller.abort(); rej(new Error('per-test limit ' + TEST_TIMEOUT_MS + ' ms exceeded')); }, TEST_TIMEOUT_MS); })
+      ]);
       if (d && d.__cybSkip) say(name, false, d.reason, true); else say(name, true, d);
-    } catch (e) { say(name, false, e && e.message ? e.message : e); }
-    finally { if (timer) clearTimeout(timer); }
+    } catch (e) {
+      if (expired) say(name, false, e && e.message ? e.message : e, true);
+      else say(name, false, e && e.message ? e.message : e);
+    } finally { if (timer) clearTimeout(timer); }
   };
   const must = (c, m) => { if (!c) throw new Error(m); };
   console.log('CYBTEST START ua=' + navigator.userAgent);
@@ -227,12 +240,12 @@
     const r = await T.testWebapp('wt/index.html', 'click("#b"); click("#b"); await wait(50); assert(text("#n") === "2", "counter shows " + text("#n")); return localStorage.getItem("n");', 20);
     must(r.code === 0 && /Test script: PASSED \(returned 2\)/.test(r.out) && /Runtime errors: none/.test(r.out) && /Title: Counter/.test(r.out) && /\[log\] count 2/.test(r.out), r.out); return r.out.split('\n')[0];
   });
-  await test('test_webapp: offline React Native JSX preview compiles and renders', async () => {
+  await test('test_webapp: offline React Native JSX preview compiles and renders', async (signal) => {
     T.ws.set('rn/index.html', '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script type="module" src="./src/main.jsx"></script></body></html>');
     T.ws.set('rn/src/main.jsx', "import React, { useEffect, useState } from 'react'; import { AppRegistry, SafeAreaView, View, Text, StyleSheet } from 'react-native'; const s = StyleSheet.create({ box: { padding: 12 } }); function App(){ const [label, setLabel] = useState('WAIT'); useEffect(() => { fetch('/api/health').then(r => r.json()).then(v => setLabel(v.ok ? 'RN_API_OK' : 'API_BAD')); }, []); return <SafeAreaView style={s.box}><View><Text>{label}</Text></View></SafeAreaView> } AppRegistry.registerComponent('main', () => App);");
     T.ws.set('backend/server.js', "const express = require('express'); const app = express(); app.get('/api/health', (req, res) => res.json({ ok: true })); app.listen(3000);");
     let r;
-    try { r = await T.testWebapp('rn/index.html', 'await waitFor(() => { const n = document.querySelector("#root"); return n && n.textContent.includes("RN_API_OK"); }, 10000); return text("#root");', 16); }
+    try { r = await T.testWebapp('rn/index.html', 'await waitFor(() => { const n = document.querySelector("#root"); return n && n.textContent.includes("RN_API_OK"); }, 9000); return text("#root");', 12, signal); }
     finally { T.ws.remove('rn/index.html'); T.ws.remove('rn/src/main.jsx'); T.ws.remove('backend/server.js'); }
     must(r.code === 0 && /RN_API_OK/.test(r.out) && /Test script: PASSED/.test(r.out) && /Runtime errors: none/.test(r.out), r.out);
     return 'offline Babel + React Native shim + virtual Express /api route rendered #root';

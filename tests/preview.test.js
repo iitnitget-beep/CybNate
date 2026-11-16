@@ -5,12 +5,18 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 const WebTest = require('../app/src/main/assets/www/webtest.js');
+const selftestSource = fs.readFileSync(path.join(__dirname, '..', 'app', 'src', 'main', 'assets', 'www', 'selftest.js'), 'utf8');
 const www = path.join(__dirname, '..', 'app', 'src', 'main', 'assets', 'www');
 const paneSource = fs.readFileSync(path.join(__dirname, '..', 'app', 'src', 'main', 'java', 'com', 'cybnate', 'app', 'PreviewPane.java'), 'utf8');
+const testerSource = fs.readFileSync(path.join(__dirname, '..', 'app', 'src', 'main', 'java', 'com', 'cybnate', 'app', 'PageTester.java'), 'utf8');
 assert.match(paneSource, /ORIGIN = "https:\/\/preview\.cybnate\.invalid\//, 'preview has a separate HTTPS origin');
 assert.match(paneSource, /setAllowFileAccess\(false\)/, 'preview cannot access local files');
 assert.match(paneSource, /setDomStorageEnabled\(true\)/, 'preview DOM storage stays scoped to its origin');
 assert.doesNotMatch(paneSource, /addJavascriptInterface\s*\(/, 'preview has no native JavaScript bridge');
+assert.match(paneSource, /AssetsPathHandler\(act\)/, 'isolated preview serves bundled JS runtimes through WebViewAssetLoader');
+assert.match(testerSource, /AssetsPathHandler\(act\)/, 'PageTester serves bundled JS runtimes without a native bridge');
+assert.match(selftestSource, /TEST_TIMEOUT_MS = 12000/, 'each on-device self-test case has a strict 12-second ceiling');
+assert.match(selftestSource, /SUITE_TIMEOUT_MS = 8 \* 60 \* 1000/, 'the entire device self-test leaves margin before the 10-minute CI sentinel deadline');
 
 (async () => {
   const calls = [], startupFetches = [];
@@ -53,18 +59,15 @@ assert.doesNotMatch(paneSource, /addJavascriptInterface\s*\(/, 'preview has no n
   T.ws.set('src/App.jsx', "export default function App(){ return <main className='flex p-4'>Preview app</main> }");
   T.ws.set('src/style.css', 'body { color: #123; }');
   T.ws.set('backend/server.js', "const express = require('express'); const app = express(); app.get('/api/health', (req, res) => res.json({ ok: true })); app.listen(3000);");
-  const compilerRequests = [];
-  const previewAssets = {
-    'vendor/babel/babel.min.js': '/* local Babel fixture */',
-    'vendor/react-runtime/react.production.min.js': '/* local React runtime fixture */',
-    'vendor/react-runtime/react-dom.production.min.js': '/* local ReactDOM runtime fixture */',
-  };
-  w.fetch = async (url) => { compilerRequests.push(url); assert.ok(previewAssets[url], 'preview assets are fetched only from bundled app files: ' + url); return { ok: true, text: async () => previewAssets[url] }; };
+  const projectFiles = Object.fromEntries(T.ws.list().map((p) => [p, T.ws.get(p)]));
   T.openPreview('src/main.jsx');
   for (let i = 0; i < 100 && calls.filter((c) => c[0] === 'openPreview').length < 2; i++) await new Promise((r) => setTimeout(r, 10));
   const projectPreview = calls.filter((c) => c[0] === 'openPreview').pop()[2];
-  assert.deepStrictEqual(compilerRequests, Object.keys(previewAssets), 'React preview lazily loads pinned Babel and React runtimes from bundled assets');
-  assert.ok(projectPreview.includes('local Babel fixture') && projectPreview.includes('local React runtime fixture') && projectPreview.includes('local ReactDOM runtime fixture'), 'local compiler and React runtimes are embedded for the isolated preview');
+  assert.match(projectPreview, /src="https:\/\/appassets\.androidplatform\.net\/assets\/www\/vendor\/babel\/babel\.min\.js"/, 'Babel is served as a local app asset rather than inlined');
+  assert.match(projectPreview, /src="https:\/\/appassets\.androidplatform\.net\/assets\/www\/vendor\/react-runtime\/react\.production\.min\.js"/, 'React is served as a local app asset');
+  assert.match(projectPreview, /src="https:\/\/appassets\.androidplatform\.net\/assets\/www\/vendor\/react-runtime\/react-dom\.production\.min\.js"/, 'ReactDOM is served as a local app asset');
+  const hugeHtml = w.ProjectPreview.projectHtml('src/main.jsx', projectFiles, { testMode: true, vendorSources: { babel: 'x'.repeat(2400000), react: 'y'.repeat(150000), reactDom: 'z'.repeat(150000) } });
+  assert.ok(hugeHtml.length < 100000, 'multi-megabyte vendor source is never inlined into the WebView HTML/Java bridge payload');
   assert.doesNotMatch(projectPreview, /unpkg\.com\/@babel/, 'preview does not fetch Babel from a CDN');
   assert.match(projectPreview, /type="importmap"/, 'module import map is injected');
   const importMap = JSON.parse(projectPreview.match(/<script type="importmap">([\s\S]*?)<\/script>/)[1]);
@@ -93,8 +96,7 @@ assert.doesNotMatch(paneSource, /addJavascriptInterface\s*\(/, 'preview has no n
   assert.match(projectPreview, /"apiPath":"backend\/server.js"/, 'Express entry is identified');
   assert.ok(projectPreview.includes('src/App.jsx'), 'multi-file source is embedded');
   assert.match(projectPreview, /cdn\.tailwindcss\.com/, 'Tailwind utility preview is enabled for normal user previews');
-  const projectFiles = Object.fromEntries(T.ws.list().map((p) => [p, T.ws.get(p)]));
-  const deterministicTestHtml = w.ProjectPreview.projectHtml('src/main.jsx', projectFiles, '/* Babel */', { react: '/* React */', reactDom: '/* ReactDOM */' }, { testMode: true });
+  const deterministicTestHtml = w.ProjectPreview.projectHtml('src/main.jsx', projectFiles, { testMode: true });
   assert.doesNotMatch(deterministicTestHtml, /cdn\.tailwindcss\.com/, 'test_webapp skips external Tailwind loads for deterministic offline verification');
   assert.match(deterministicTestHtml, /Tailwind CDN skipped/, 'test run clearly reports omitted remote styling');
   assert.match(projectPreview, /__cybPreviewError/, 'runtime errors have an in-preview display');
