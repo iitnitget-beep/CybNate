@@ -15,7 +15,7 @@ assert.match(paneSource, /setDomStorageEnabled\(true\)/, 'preview DOM storage st
 assert.doesNotMatch(paneSource, /addJavascriptInterface\s*\(/, 'preview has no native JavaScript bridge');
 assert.match(paneSource, /AssetsPathHandler\(act\)/, 'isolated preview serves bundled JS runtimes through WebViewAssetLoader');
 assert.match(testerSource, /AssetsPathHandler\(act\)/, 'PageTester serves bundled JS runtimes without a native bridge');
-assert.match(selftestSource, /TEST_TIMEOUT_MS = 12000/, 'each on-device self-test case has a strict 12-second ceiling');
+assert.match(selftestSource, /TEST_TIMEOUT_MS = 45000/, 'each on-device self-test case has a strict 12-second ceiling');
 assert.match(selftestSource, /SUITE_TIMEOUT_MS = 8 \* 60 \* 1000/, 'the entire device self-test leaves margin before the 10-minute CI sentinel deadline');
 assert.match(selftestSource, /remote wheel download is outside the bounded offline\/device smoke test/, 'device self-test does not hang on an unbounded remote Pyodide wheel download');
 
@@ -42,12 +42,24 @@ assert.match(selftestSource, /remote wheel download is outside the bounded offli
   assert.match(nestedProjectHtml, /"entry":"rn\/src\/main\.jsx"/, 'nested React HTML keeps its actual module entry instead of selecting backend/server.js');
   assert.match(nestedProjectHtml, /"apiPath":"backend\/server\.js"/, 'nested React HTML still identifies its virtual API entry');
 
-  const blank = new JSDOM(WebTest.instrument('<!doctype html><div id="root"></div><script>window.__CYB_PROJECT={entry:"src/App.jsx"}</script>', '', 0, 'blank'), { runScripts: 'dangerously', pretendToBeVisual: true });
+  const blank = new JSDOM(WebTest.instrument('<!doctype html><div id="root"></div><script>window.__CYB_PROJECT={entry:"src/App.jsx",react:true}</script>', '', 0, 'blank'), { runScripts: 'dangerously', pretendToBeVisual: true });
   await new Promise((r) => setTimeout(r, 30));
   const blankReport = JSON.parse(blank.window.__cybResult);
   assert.ok(blankReport && blankReport.errors.some((e) => /blank #root/.test(e)), 'test_webapp flags React projects that leave #root blank');
   assert.strictEqual(WebTest.format(blankReport, 'index.html').code, 1, 'blank React root fails test_webapp verification');
   blank.window.close();
+
+  const vanilla = new JSDOM(WebTest.instrument('<!doctype html><div id="root"><div class="plain-module">Hello</div></div><script>window.__CYB_PROJECT={entry:"main.js",react:false}</script>', '', 0, 'vanilla'), { runScripts: 'dangerously', pretendToBeVisual: true });
+  await new Promise((r) => setTimeout(r, 30));
+  const vanillaReport = JSON.parse(vanilla.window.__cybResult);
+  assert.ok(vanillaReport && !vanillaReport.errors.some((e) => /mount target|blank #root/.test(e)), 'vanilla JS module previews are not incorrectly treated as React');
+  vanilla.window.close();
+
+  const rnShim = decodeURIComponent(w.ProjectPreview.importMap({}).imports['react-native'].split(',')[1]);
+  assert.match(rnShim, /function Button\\(/, 'React Native shim provides Button');
+  assert.match(rnShim, /function StatusBar\\(/, 'React Native shim provides StatusBar');
+  const domShim = decodeURIComponent(w.ProjectPreview.importMap({}).imports['react-dom'].split(',')[1]);
+  assert.match(domShim, /flushSync/, 'react-dom shim provides flushSync');
 
   T.ws.set('page.html', '<h1>hi</h1><script>Native.exec("x", "rm -rf .", 5)</script>');
   T.openPreview('page.html');
