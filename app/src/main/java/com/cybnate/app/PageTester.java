@@ -7,6 +7,7 @@ import android.view.ViewGroup;
 import android.webkit.ValueCallback;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
+import androidx.webkit.WebViewAssetLoader;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
@@ -40,8 +41,15 @@ final class PageTester {
         s.setAllowFileAccess(false);
         s.setAllowContentAccess(false);
         s.setTextZoom(100);
-        // Deliberately no addJavascriptInterface.
+        final WebViewAssetLoader loader = new WebViewAssetLoader.Builder()
+                .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(act))
+                .build();
+        // Deliberately no addJavascriptInterface. Only bundled app assets are exposed to test pages.
         view.setWebViewClient(new WebViewClient() {
+            @Override
+            public android.webkit.WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest rq) {
+                return loader.shouldInterceptRequest(rq.getUrl());
+            }
             @Override
             public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest rq) {
                 return true; // a page under test stays where it is
