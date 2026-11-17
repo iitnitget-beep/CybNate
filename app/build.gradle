@@ -1,4 +1,7 @@
-plugins { id 'com.android.application' }
+plugins {
+    id 'com.android.application'
+    id 'com.google.gms.google-services'
+}
 
 def ksPath = System.getenv('CYBNATE_KEYSTORE_PATH') ?: 'keystore/cybnate.jks'
 def ksFile = rootProject.file(ksPath)
@@ -49,5 +52,11 @@ dependencies {
     implementation 'androidx.webkit:webkit:1.11.0'
     // Google sign-in for the Gmail / Drive / Calendar integrations (AuthorizationClient)
     implementation 'com.google.android.gms:play-services-auth:21.2.0'
+    // Keep Firebase Android SDK versions aligned through the official BoM.
+    implementation platform('com.google.firebase:firebase-bom:35.2.0')
+    implementation 'com.google.firebase:firebase-auth'
+    implementation 'com.google.firebase:firebase-firestore'
+    implementation 'com.google.firebase:firebase-storage'
+    implementation 'com.google.firebase:firebase-messaging'
     testImplementation 'junit:junit:4.13.2'
 }
