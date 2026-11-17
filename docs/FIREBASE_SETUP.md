@@ -32,3 +32,9 @@ No service activation, billing change, Firebase console mutation, deployment, or
 
 - `tests/firebase-config.test.js` validates the checked-in config and dependency declarations without printing API key material.
 - GitHub Actions builds the release APK and runs the Android emulator self-test. A successful APK build does not prove that Console-side products or runtime permissions are configured.
+
+
+## Verification record
+- Firebase Gradle/configuration CI run #77 completed successfully on commit `86f117396b588e0caab8662693b4221bab211a59`.
+- The branch has since been synchronized with `main`; a fresh CI run is required to verify the synchronized merge commit before merge.
+- This verifies build/config wiring only. Firebase Console providers, Firestore rules, Storage rules, FCM delivery, and live Firebase sign-in remain unconfigured/unverified.
