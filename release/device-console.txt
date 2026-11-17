@@ -1,15 +1,13 @@
-CYBUI ready agents=6 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:2430)
-CYBUI layout t=1500 header=56 welcome=504 frames=77 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2448)
-CYBUI layout t=6000 header=56 welcome=504 frames=240 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2448)
-CYBUI layout t=12000 header=56 welcome=504 frames=240 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2448)
-CYBUI layout t=25000 header=56 welcome=504 frames=240 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2448)
-FOCUS1   mCurrentFocus=Window{f66f60d u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{23138 u0 com.cybnate.app/.MainActivity t8} 
-  mCurrentFocus=Window{f66f60d u0 com.cybnate.app/com.cybnate.app.MainActivity}
-  mFocusedApp=ActivityRecord{23138 u0 com.cybnate.app/.MainActivity t8}
-11-16 08:04:42.022  3302  3410 E chromium: [ERROR:simple_index_file.cc(302)] Could not create a directory to hold the index file
-11-16 08:04:42.022  3302  3396 E chromium: [ERROR:simple_file_enumerator.cc(21)] opendir /data/user/0/com.cybnate.app/cache/WebView/Default/HTTP Cache/Code Cache/wasm: No such file or directory (2)
-11-16 08:04:42.022  3302  3396 E chromium: [ERROR:simple_index_file.cc(614)] Could not reconstruct index from disk
-11-16 08:04:42.992   516   538 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +2s502ms
+FOCUS1   mCurrentFocus=Window{f64643b u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{8f6b665 u0 com.cybnate.app/.MainActivity t8} 
+  mCurrentFocus=Window{f64643b u0 com.cybnate.app/com.cybnate.app.MainActivity}
+  mFocusedApp=ActivityRecord{8f6b665 u0 com.cybnate.app/.MainActivity t8}
+11-17 00:53:46.137  3077  3156 E chromium: [ERROR:simple_file_enumerator.cc(21)] opendir /data/user/0/com.cybnate.app/cache/WebView/Default/HTTP Cache/Code Cache/wasm: No such file or directory (2)
+11-17 00:53:46.137  3077  3156 E chromium: [ERROR:simple_index_file.cc(614)] Could not reconstruct index from disk
+11-17 00:53:46.137  3077  3154 E chromium: [ERROR:simple_file_enumerator.cc(21)] opendir /data/user/0/com.cybnate.app/cache/WebView/Default/HTTP Cache/Code Cache/js: No such file or directory (2)
+11-17 00:53:46.137  3077  3154 E chromium: [ERROR:simple_index_file.cc(614)] Could not reconstruct index from disk
+11-17 00:53:47.203   520   537 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +2s655ms
 CybNateJS: CYBUI ready agents=6 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:2430)
-CybNateJS: CYBUI layout t=1500 header=56 welcome=504 frames=36 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2448)
-CybNateJS: CYBUI layout t=6000 header=56 welcome=504 frames=305 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2448)
+CybNateJS: CYBUI layout t=1500 header=56 welcome=504 frames=31 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2448)
+CybNateJS: CYBUI layout t=6000 header=56 welcome=504 frames=301 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2448)
+CybNateJS: CYBUI layout t=12000 header=56 welcome=504 frames=399 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2448)
+CybNateJS: CYBUI layout t=25000 header=56 welcome=504 frames=399 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2448)
