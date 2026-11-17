@@ -4,7 +4,7 @@ This tracker is a working plan, not a statement that the items are implemented. 
 
 ## P0 — Baseline and safety
 - [ ] Produce a fresh complete test/build baseline.
-- [ ] Repair the incomplete latest `release/selftest.txt` reporting path and ensure the device job always emits a terminal summary.
+- [x] Add explicit incomplete-report handling, a strict report validator, regression fixtures, and CI diagnostic upload. (Day 6 implementation; workflow execution still pending.)
 - [ ] Audit Git history for exposed signing material; rotate compromised signing credentials and define a safe release-key process.
 - [ ] Move local provider credentials out of WebView localStorage.
 - [ ] Enforce real per-user execution isolation before public multi-user use.
