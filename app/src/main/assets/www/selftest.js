@@ -77,7 +77,18 @@
     throw new Error('endpoints: ' + endpointText + '; error: ' + attempts.join('; '));
   });
   await test('read url', async () => { const t = await T.readUrl('https://example.com'); must(/Example Domain/.test(t), t.slice(0, 200)); return t.slice(0, 80); });
-  await test('github api reachable (CORS)', async () => { const r = await fetch('https://api.github.com/repos/CodebuffAI/freebuff'); must(r.ok, 'HTTP ' + r.status); return (await r.json()).full_name; });
+  await test('github api CORS and rate-limit handling', async () => {
+    const r = await fetch('https://api.github.com/rate_limit', { headers: { Accept: 'application/vnd.github+json' } });
+    const body = await r.text();
+    let data = null; try { data = JSON.parse(body); } catch (_) {}
+    const message = data && data.message ? data.message : body;
+    if (r.status === 403 && /rate limit/i.test(message)) {
+      return { __cybSkip: true, reason: 'GitHub API CORS request reached GitHub, but this shared runner is rate-limited (HTTP 403)' };
+    }
+    must(r.ok && data && data.resources && data.resources.core && typeof data.resources.core.limit === 'number',
+      'HTTP ' + r.status + ' ' + String(message).slice(0, 160));
+    return 'GitHub API CORS ok; core quota limit=' + data.resources.core.limit;
+  });
 
   // ---- Phase 1 safety, on the device
   const parse = (t) => T.C.parseToolCalls(t, T.C.AGENTS.coder.tools);

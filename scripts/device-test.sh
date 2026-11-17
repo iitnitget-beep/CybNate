@@ -19,6 +19,27 @@ adb shell am force-stop com.cybnate.app
 adb logcat -c
 adb shell am start -n com.cybnate.app/.MainActivity --ez selftest true
 
+# Detect a failed WebView/self-test startup quickly instead of waiting through
+# the full test timeout when no JavaScript test has actually begun.
+SELFTEST_START_TIMEOUT_SECONDS="${CYBNATE_SELFTEST_START_TIMEOUT_SECONDS:-120}"
+START_POLL_COUNT=$(( (SELFTEST_START_TIMEOUT_SECONDS + 4) / 5 ))
+SELFTEST_STARTED=0
+for i in $(seq 1 "$START_POLL_COUNT"); do
+  if adb logcat -d -s CybNateJS:I 2>/dev/null | grep -q "CYBTEST START"; then
+    SELFTEST_STARTED=1
+    break
+  fi
+  sleep 5
+done
+if [ "$SELFTEST_STARTED" -ne 1 ]; then
+  adb logcat -d -s CybNateJS:I 2>/dev/null > release/device-console.txt || true
+  adb logcat -d | grep -iE 'ANR in|chromium.*(error|crash)|FATAL|Displayed com.cybnate' | tail -40 >> release/device-console.txt || true
+  adb exec-out screencap -p > release/screenshot-selftest.png || true
+  printf 'CYBTEST INCOMPLETE reason=self-test did not emit CYBTEST START within %ss\n' "$SELFTEST_START_TIMEOUT_SECONDS" > release/selftest.txt
+  cat release/selftest.txt
+  exit 1
+fi
+
 # The old 260 x 5-second loop stopped after 21m40s and silently saved partial
 # output. The suite contains several network and long-running tests, so allow
 # up to 32 minutes while staying inside the 40-minute Actions job timeout.

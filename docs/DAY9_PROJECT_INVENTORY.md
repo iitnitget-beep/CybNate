@@ -38,3 +38,13 @@ This is the inventory engine foundation only. It is not yet wired to the live wo
 - Local execution was not available through the connected GitHub repository tools; therefore these new tests are not yet claimed as passed.
 - The CI run triggered by this branch must execute the root test command before this implementation is considered verified.
 - No paid services, API usage, cloud resources or production settings were enabled.
+
+## Actions failure investigation and correction
+
+- Run #70 built the APK successfully; the device report had 41 passes and one failure.
+- The only reported failing test was a direct unauthenticated GitHub repository API request returning HTTP 403. This is an external API/rate-limit condition, not an APK build failure.
+- Updated the CORS test to call GitHub's rate-limit endpoint and to report a clearly identified GitHub rate-limit response as SKIP, while still failing unexpected HTTP/CORS errors.
+- Added `project-index.test.js` to the CI Node test loop. Previously it was present in `npm test` but the workflow's explicit test loop did not invoke it.
+- Added a 120-second startup watchdog to the emulator script. If the app never emits `CYBTEST START`, it now saves logcat/screenshot diagnostics and fails early instead of waiting the full 32-minute suite timeout.
+- Kept `cancel-in-progress: true`; the cancelled runs #67 and #68 were caused by multiple quick commits to the same branch. Future changes are being batched into one commit to avoid creating extra superseded runs.
+- These corrections are committed on the feature branch only. The new Actions run must verify them; no new pass result is claimed yet.
