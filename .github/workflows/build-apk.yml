@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: apk-${{ github.ref }}
@@ -69,17 +69,6 @@ jobs:
           CYBNATE_KEY_PASSWORD: ${{ secrets.CYBNATE_KEY_PASSWORD }}
         run: gradle --no-daemon :app:testReleaseUnitTest :app:assembleRelease
 
-      - name: Publish APK to the branch
-        run: |
-          mkdir -p release
-          cp app/build/outputs/apk/release/app-release.apk release/CybNate.apk
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f release/CybNate.apk
-          git commit -m "build: CybNate APK #${{ github.run_number }} [skip ci]" || exit 0
-          git pull --rebase origin "${{ github.ref_name }}"
-          git push origin "HEAD:${{ github.ref_name }}"
-
       - uses: actions/upload-artifact@v4
         with:
           name: CybNate-apk
@@ -107,15 +96,6 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           script: bash scripts/device-test.sh
-      - name: Publish results to the branch
-        if: always()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f release/selftest.txt release/device-console.txt release/model-raw.txt release/*.png || true
-          git commit -m "test: on-device self test #${{ github.run_number }} [skip ci]" || exit 0
-          git pull --rebase origin "${{ github.ref_name }}"
-          git push origin "HEAD:${{ github.ref_name }}"
       - name: Upload device diagnostics
         if: always()
         uses: actions/upload-artifact@v4
