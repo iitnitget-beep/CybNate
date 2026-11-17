@@ -43,7 +43,7 @@ assert.match(selftestSource, /remote wheel download is outside the bounded offli
   assert.match(nestedProjectHtml, /"apiPath":"backend\/server\.js"/, 'nested React HTML still identifies its virtual API entry');
 
   const blank = new JSDOM(WebTest.instrument('<!doctype html><div id="root"></div><script>window.__CYB_PROJECT={entry:"src/App.jsx",react:true}</script>', '', 0, 'blank'), { runScripts: 'dangerously', pretendToBeVisual: true });
-  await new Promise((r) => setTimeout(r, 30));
+  await new Promise((r) => setTimeout(r, 3700));
   const blankReport = JSON.parse(blank.window.__cybResult);
   assert.ok(blankReport && blankReport.errors.some((e) => /blank #root/.test(e)), 'test_webapp flags React projects that leave #root blank');
   assert.strictEqual(WebTest.format(blankReport, 'index.html').code, 1, 'blank React root fails test_webapp verification');
