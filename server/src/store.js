@@ -16,8 +16,9 @@ function loadMasterKey(dataDir, fromEnv) {
     if (raw.length !== 32) throw new Error('CYB_MASTER_KEY must be 32 bytes, as 64 hex characters or base64');
     return { key: raw, source: 'env' };
   }
-  // No key given: make one and keep it beside the data. Good enough for a private server; a key from the environment
-  // (kept out of the data volume) is what protects the secrets when the volume itself leaks.
+  // Production must never place the encryption key beside the database volume.
+  if (process.env.NODE_ENV === 'production') throw new Error('CYB_MASTER_KEY is required in production; provide a 32-byte key via the secret manager.');
+  // Development-only convenience: create a local key beside the data directory.
   const file = path.join(dataDir, 'master.key');
   if (!fs.existsSync(file)) fs.writeFileSync(file, crypto.randomBytes(32).toString('hex'), { mode: 0o600 });
   return { key: Buffer.from(fs.readFileSync(file, 'utf8').trim(), 'hex'), source: 'file' };
