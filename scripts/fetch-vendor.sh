@@ -26,9 +26,9 @@ verify_tarball() {
     echo "Need sha512sum or shasum to verify vendor package integrity" >&2; return 1
   fi
   if base64 --help 2>&1 | grep -q -- '-d'; then
-    expected="$(printf '%s' "${integrity#sha512-}" | base64 -d | od -An -tx1 | tr -d ' \\n')"
+    expected="$(printf '%s' "${integrity#sha512-}" | base64 -d | od -An -tx1 | tr -d '[:space:]')"
   else
-    expected="$(printf '%s' "${integrity#sha512-}" | base64 -D | od -An -tx1 | tr -d ' \\n')"
+    expected="$(printf '%s' "${integrity#sha512-}" | base64 -D | od -An -tx1 | tr -d '[:space:]')"
   fi
   if [[ "$actual" != "$expected" ]]; then
     echo "Integrity mismatch for $(basename "$file"): expected $expected, got $actual" >&2
