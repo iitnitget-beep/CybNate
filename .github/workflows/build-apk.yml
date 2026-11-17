@@ -49,7 +49,7 @@ jobs:
         run: |
           set -e
           node tests/cleartext.test.js
-          for t in core safety orchestra router devtools engine cli project-index; do node tests/$t.test.js; done
+          for t in core safety orchestra router devtools engine cli project-index plugin-registry; do node tests/$t.test.js; done
           bash tests/selftest-report.test.sh
           # the backend: a real server on a local port with real bash, python and git; then, as root, that users are kept apart
           node server/test/server.test.js
