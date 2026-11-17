@@ -23,6 +23,10 @@ const redirectTo = new URL('http://public.example/collect', redirectFrom).href;
 assert.strictEqual(allowed(redirectFrom), true);
 assert.strictEqual(allowed(redirectTo), false, 'HTTPS-to-public-HTTP redirect target is blocked');
 
+const mainManifest = fs.readFileSync(path.join(__dirname, '../app/src/main/AndroidManifest.xml'), 'utf8');
+const releaseManifest = fs.readFileSync(path.join(__dirname, '../app/src/release/AndroidManifest.xml'), 'utf8');
+assert.match(mainManifest, /usesCleartextTraffic=\"true\"/, 'development keeps LAN HTTP support');
+assert.match(releaseManifest, /usesCleartextTraffic=\"false\"/, 'release builds explicitly disable cleartext traffic');
 const app = fs.readFileSync(path.join(__dirname, '../app/src/main/assets/www/app.js'), 'utf8');
 assert.match(app, /redirect:\s*'error'/, 'browser fetch must fail closed on redirects it cannot inspect');
 assert.match(app, /function requireAllowedHttpUrl[\s\S]*C\.isAllowedHttpUrl/);
@@ -39,6 +43,7 @@ const externalPolicyCheck = external.indexOf('isAllowedHttpUrl(new URL(u.toStrin
 const externalOpen = external.indexOf('startActivity(new Intent(Intent.ACTION_VIEW, u))');
 assert.ok(externalPolicyCheck >= 0 && externalOpen >= 0 && externalPolicyCheck < externalOpen, 'external link URL policy must run before ACTION_VIEW');
 assert.match(external, /Blocked public HTTP link/);
+console.log('PASS release manifest disables cleartext traffic');
 console.log('PASS public HTTP blocked');
 console.log('PASS LAN and local HTTP allowed');
 console.log('PASS HTTPS allowed');
