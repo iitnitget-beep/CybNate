@@ -8,6 +8,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 const App = require('../src/app');
+const Store = require('../src/store');
 const Net = require('../src/net');
 
 const jwt = (o) => 'h.' + Buffer.from(JSON.stringify(o)).toString('base64url') + '.s';
@@ -53,6 +54,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     codex: { issuer: UP, api: UP + '/codex', pollMs: 40 },
   });
   assert.throws(() => App.create({ dataDir, accessKey: 'short' }), /CYB_ACCESS_KEY/, 'a server without a real access key does not start');
+  const previousNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'production';
+  assert.throws(() => Store.open(path.join(dataDir, 'production-key-check')), /CYB_MASTER_KEY is required in production/, 'production refuses to generate an encryption key beside its data');
+  if (previousNodeEnv === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = previousNodeEnv;
   let app = App.create(cfgOf('http://placeholder')); let BASE = await listen(app.server);
   await app.close(); app = App.create(cfgOf(BASE.replace(/:\d+$/, ':0'))); // public address is only used to build the redirect; fixed below
   BASE = await listen(app.server);
