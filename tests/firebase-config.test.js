@@ -21,6 +21,6 @@ assert.match(appGradle, /firebase-bom:35\.2\.0/);
 for (const module of ['firebase-auth', 'firebase-firestore', 'firebase-storage', 'firebase-messaging']) {
   assert.ok(appGradle.includes(`com.google.firebase:${module}`), `missing ${module} dependency`);
 }
-assert.match(appGradle, /namespace ['"]com\\.cybnate\\.app['"]/);
+assert.match(appGradle, /namespace ['"]com\.cybnate\.app['"]/);
 assert.match(appGradle, /applicationId ['"]com\.cybnate\.app['"]/);
 console.log('Firebase config OK: project, Android app ID, package name and Gradle SDK wiring match.');
