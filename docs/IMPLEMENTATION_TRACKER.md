@@ -4,7 +4,7 @@ This tracker is a working plan, not a statement that the items are implemented. 
 
 ## P0 — Baseline and safety
 - [ ] Produce a fresh complete test/build baseline.
-- [x] Add explicit incomplete-report handling, a strict report validator, regression fixtures, and CI diagnostic upload. (Day 6 implementation; workflow execution still pending.)
+- [x] Add explicit incomplete-report handling, a strict report validator, regression fixtures, and CI diagnostic upload. (Day 6 implementation; latest emulator run remains incomplete.)
 - [ ] Audit Git history for exposed signing material; rotate compromised signing credentials and define a safe release-key process.
 - [ ] Move local provider credentials out of WebView localStorage.
 - [ ] Enforce real per-user execution isolation before public multi-user use.
@@ -40,6 +40,15 @@ This tracker is a working plan, not a statement that the items are implemented. 
 - [ ] Add auth, project ownership, usage metering and abuse protection.
 - [ ] Design credits/subscriptions only after actual per-task costs are measured.
 - [ ] Complete privacy, terms, security review, accessibility and Play Store release checklist.
+
+## Firebase integration
+- [x] Add the owner-confirmed Android config for project `cybnate-ced02` on `work/firebase-cybnate-setup`.
+- [x] Add Google Services Gradle plugin and Firebase BoM-managed Auth, Firestore, Storage and Messaging SDKs.
+- [x] Add a regression test for project/app identity and Gradle wiring.
+- [ ] Verify release APK build with Firebase dependencies in CI.
+- [ ] Configure Firebase Console-side Auth provider, Firestore database/rules, Storage and FCM only after reviewing free quotas and access rules.
+- [ ] Implement Firebase Auth sign-in separately from existing Google API AuthorizationClient flow.
+- [ ] Add App Check and production security rules before storing real user data.
 
 ## Working rules
 - Keep `main` protected from direct development changes.
