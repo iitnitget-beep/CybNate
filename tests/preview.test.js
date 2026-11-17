@@ -56,8 +56,8 @@ assert.match(selftestSource, /remote wheel download is outside the bounded offli
   vanilla.window.close();
 
   const rnShim = decodeURIComponent(w.ProjectPreview.importMap({}).imports['react-native'].split(',')[1]);
-  assert.match(rnShim, /function Button\\(/, 'React Native shim provides Button');
-  assert.match(rnShim, /function StatusBar\\(/, 'React Native shim provides StatusBar');
+  assert.ok(rnShim.includes('function Button('), 'React Native shim provides Button');
+  assert.ok(rnShim.includes('function StatusBar('), 'React Native shim provides StatusBar');
   const domShim = decodeURIComponent(w.ProjectPreview.importMap({}).imports['react-dom'].split(',')[1]);
   assert.match(domShim, /flushSync/, 'react-dom shim provides flushSync');
 
