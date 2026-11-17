@@ -47,7 +47,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // ---------------------------------------------------------------- the server under test
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cyb-srv-'));
   const cfgOf = (publicUrl) => ({
-    dataDir, accessKey: 'test-access-key-123456', publicUrl, allowShared: true, allowPrivate: true, maxParallel: 2, maxQueue: 4, beatMs: 100,
+    dataDir, accessKey: 'test-access-key-123456', publicUrl, corsOrigins: ['https://ui.cybnate.test'], allowShared: true, allowPrivate: true, maxParallel: 2, maxQueue: 4, beatMs: 100,
     lspServers: { fake: { cmd: [process.execPath, path.join(__dirname, 'fake-lsp.js')], ext: ['fk'], ids: { fk: 'fake' } }, absent: { cmd: ['cyb-no-such-language-server'], ext: ['zz'] } },
     oauthProviders: { google: { name: 'Google', authUrl: UP + '/google/auth', tokenUrl: UP + '/google/token', revokeUrl: UP + '/google/revoke', clientId: 'g-client', clientSecret: 'g-secret', baseScopes: ['openid', 'email'], scopeSep: ' ', extra: { access_type: 'offline' }, who: { url: UP + '/google/userinfo', field: 'email' }, secrets: ['GOOGLE_ACCESS_TOKEN', 'GMAIL_ACCESS_TOKEN'] } },
     codex: { issuer: UP, api: UP + '/codex', pollMs: 40 },
@@ -71,8 +71,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   assert.ok(/^cyb_/.test(A) && A !== B);
   const rawDb = () => fs.readFileSync(path.join(dataDir, 'cybnate.db')).toString('latin1') + (fs.existsSync(path.join(dataDir, 'cybnate.db-wal')) ? fs.readFileSync(path.join(dataDir, 'cybnate.db-wal')).toString('latin1') : '');
   assert.ok(rawDb().indexOf(A) < 0, 'the token itself is not in the database, only its hash');
-  assert.strictEqual((await call('OPTIONS', '/v1/exec')).status, 204);
-  assert.strictEqual((await call('GET', '/v1/health')).headers.get('access-control-allow-origin'), '*', 'the app page may call the API');
+  assert.strictEqual((await call('OPTIONS', '/v1/exec')).status, 204, 'native preflight without an Origin remains supported');
+  assert.strictEqual((await call('GET', '/v1/health')).headers.get('access-control-allow-origin'), null, 'responses without Origin do not emit a wildcard CORS grant');
+  r = await call('GET', '/v1/health', undefined, undefined, { Origin: 'https://ui.cybnate.test' });
+  assert.strictEqual(r.headers.get('access-control-allow-origin'), 'https://ui.cybnate.test', 'configured browser origin is allowed exactly');
+  r = await call('GET', '/v1/health', undefined, undefined, { Origin: 'https://attacker.example' });
+  assert.strictEqual(r.status, 403, 'unconfigured browser origin is rejected');
+  assert.strictEqual(r.headers.get('access-control-allow-origin'), null, 'rejected origin receives no CORS grant');
+  r = await call('OPTIONS', '/v1/exec', undefined, undefined, { Origin: 'https://attacker.example' });
+  assert.strictEqual(r.status, 403, 'unconfigured preflight origin is rejected');
   assert.strictEqual((await call('GET', '/v1/nothing', undefined, A)).status, 404); assert.strictEqual((await call('PUT', '/v1/files', {}, A)).status, 405);
   console.log('1 registration ok');
 
