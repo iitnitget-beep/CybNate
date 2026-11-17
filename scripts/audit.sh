@@ -60,8 +60,11 @@ workflow_runs_audit() {
   grep -Eq '^[[:space:]]*-[[:space:]]+name: Repository audit' .github/workflows/build-apk.yml &&
     grep -Fq 'run: bash scripts/audit.sh' .github/workflows/build-apk.yml
 }
-workflow_gate_accepts_skip_count() {
-  grep -Eiq 'run:[[:space:]]*grep .*CYBTEST DONE pass=.*fail=0 skip=' .github/workflows/build-apk.yml
+workflow_uses_selftest_report_checker() {
+  test -f scripts/check-selftest.sh &&
+    test -f tests/selftest-report.test.sh &&
+    grep -Fq 'bash tests/selftest-report.test.sh' .github/workflows/build-apk.yml &&
+    grep -Fq 'bash scripts/check-selftest.sh release/selftest.txt' .github/workflows/build-apk.yml
 }
 
 check 'keystore is not tracked' not_tracked_keystore
@@ -86,6 +89,6 @@ check 'no tracked .env, .jks, .keystore, .pem, .p12, .bks, or .key files' no_tra
 check 'sensitive file patterns are ignored in .gitignore' sensitive_patterns_ignored
 check 'server/package.json exists and server/src JavaScript passes node --check' server_package_and_syntax
 check 'build workflow runs scripts/audit.sh' workflow_runs_audit
-check 'device gate requires DONE pass, zero failures, and skip count' workflow_gate_accepts_skip_count
+check 'device workflow tests and validates complete self-test reports' workflow_uses_selftest_report_checker
 printf '%d passed, %d failed\n' "$passed" "$failed"
 test "$failed" -eq 0

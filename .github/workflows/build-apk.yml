@@ -50,6 +50,7 @@ jobs:
           set -e
           node tests/cleartext.test.js
           for t in core safety orchestra router devtools engine cli; do node tests/$t.test.js; done
+          bash tests/selftest-report.test.sh
           # the backend: a real server on a local port with real bash, python and git; then, as root, that users are kept apart
           node server/test/server.test.js
           sudo env "PATH=$PATH" node server/test/isolation.test.js
@@ -115,5 +116,20 @@ jobs:
           git commit -m "test: on-device self test #${{ github.run_number }} [skip ci]" || exit 0
           git pull --rebase origin "${{ github.ref_name }}"
           git push origin "HEAD:${{ github.ref_name }}"
-      - name: Fail when the self test did not finish clean
-        run: grep -Eq "CYBTEST DONE pass=[0-9]+ fail=0 skip=[0-9]+" release/selftest.txt
+      - name: Upload device diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: CybNate-device-diagnostics
+          path: |
+            release/selftest.txt
+            release/device-console.txt
+            release/model-raw.txt
+            release/screenshot-home.png
+            release/screenshot-home2.png
+            release/screenshot-selftest.png
+            release/screenshot-chat.png
+          if-no-files-found: warn
+      - name: Validate complete device self-test report
+        if: always()
+        run: bash scripts/check-selftest.sh release/selftest.txt
