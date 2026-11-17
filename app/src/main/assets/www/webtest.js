@@ -32,10 +32,14 @@
       var all = body ? body.getElementsByTagName('*') : [], q = function (s) { return d.querySelectorAll(s).length; };
       var text = body ? String(body.innerText != null ? body.innerText : body.textContent || '') : '';
       text = text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
-      if (window.__CYB_PROJECT) {
+      if (window.__CYB_PROJECT && window.__CYB_PROJECT.react) {
         var appRoot = d.querySelector('#root, #app');
         if (!appRoot) errors.push('React project mount target #root/#app is missing');
-        else if (!String(appRoot.textContent || '').trim() && !appRoot.querySelector('canvas,img,svg,video,iframe,input,button')) errors.push('React preview rendered a blank #root/#app');
+        else {
+          var hasContent = !!String(appRoot.textContent || '').trim() || !!appRoot.querySelector('canvas,img,svg,video,iframe,input,button');
+          if (!hasContent) { var nodes = appRoot.querySelectorAll('*'); for (var ri = 0; ri < nodes.length && !hasContent; ri++) { var node = nodes[ri], rect = node.getBoundingClientRect(), style = window.getComputedStyle ? window.getComputedStyle(node) : null; hasContent = rect.width > 0 && rect.height > 0 && (!style || (style.display !== 'none' && style.visibility !== 'hidden')); } }
+          if (!hasContent) errors.push('React preview rendered a blank #root/#app');
+        }
       }
       try {
         var de = d.documentElement;
@@ -76,11 +80,17 @@
       try { fn = new Function(names.join(','), 'return (async function () {\n' + CFG.script + '\n})()'); } catch (e) { return Promise.reject(new Error('The test script has a syntax error: ' + str(e))); }
       try { return Promise.resolve(fn.apply(null, names.map(function (n) { return api[n]; }))); } catch (e) { return Promise.reject(e); }
     }
+    function waitForReactRender() {
+      if (!window.__CYB_PROJECT || !window.__CYB_PROJECT.react) return Promise.resolve();
+      return new Promise(function (resolve) { var end = Date.now() + 3500; (function poll() {
+        var root = document.querySelector('#root, #app'), ready = false;
+        if (root) { ready = !!String(root.textContent || '').trim() || !!root.querySelector('canvas,img,svg,video,iframe,input,button'); if (!ready) { var nodes = root.querySelectorAll('*'); for (var i = 0; i < nodes.length && !ready; i++) { var r = nodes[i].getBoundingClientRect(); ready = r.width > 0 && r.height > 0; } } }
+        if (ready || Date.now() >= end) return resolve(); setTimeout(poll, 100);
+      })(); });
+    }
     function start() {
       if (started) return; started = true;
-      setTimeout(function () {
-        runTest().then(function (v) { finish({ ran: !!CFG.script, ok: true, value: v === undefined ? null : str(v) }); }, function (e) { finish({ ran: true, ok: false, error: str(e) }); });
-      }, CFG.wait);
+      setTimeout(function () { runTest().then(function (v) { return waitForReactRender().then(function () { finish({ ran: !!CFG.script, ok: true, value: v === undefined ? null : str(v) }); }); }, function (e) { finish({ ran: true, ok: false, error: str(e) }); }); }, CFG.wait);
     }
     if (document.readyState === 'complete') start(); else window.addEventListener('load', start);
     setTimeout(start, 4000); // a resource that never finishes loading must not hang the test

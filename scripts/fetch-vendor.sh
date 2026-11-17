@@ -18,8 +18,18 @@ trap 'rm -rf "$TMP"' EXIT
 
 verify_tarball() {
   local file="$1" integrity="$2" actual expected
-  actual="$(sha512sum "$file" | awk '{print $1}')"
-  expected="$(printf '%s' "${integrity#sha512-}" | base64 -d | od -An -tx1 | tr -d ' \n')"
+  if command -v sha512sum >/dev/null 2>&1; then
+    actual="$(sha512sum "$file" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    actual="$(shasum -a 512 "$file" | awk '{print $1}')"
+  else
+    echo "Need sha512sum or shasum to verify vendor package integrity" >&2; return 1
+  fi
+  if base64 --help 2>&1 | grep -q -- '-d'; then
+    expected="$(printf '%s' "${integrity#sha512-}" | base64 -d | od -An -tx1 | tr -d ' \\n')"
+  else
+    expected="$(printf '%s' "${integrity#sha512-}" | base64 -D | od -An -tx1 | tr -d ' \\n')"
+  fi
   if [[ "$actual" != "$expected" ]]; then
     echo "Integrity mismatch for $(basename "$file"): expected $expected, got $actual" >&2
     return 1

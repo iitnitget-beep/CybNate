@@ -9,7 +9,7 @@
   'use strict';
 
   const CODE_EXT = /\.(?:js|jsx|ts|tsx)$/i;
-  const SERIAL_EXT = /\.(?:js|jsx|ts|tsx|css|json)$/i;
+  const SERIAL_EXT = /\.(?:html?|js|jsx|ts|tsx|css|json)$/i;
   const ENTRY_ORDER = ['src/main.jsx', 'src/main.tsx', 'src/index.jsx', 'src/index.tsx', 'src/main.js', 'src/main.ts', 'src/index.js', 'src/index.ts', 'src/App.jsx', 'src/App.tsx', 'App.jsx', 'App.tsx', 'App.js', 'App.ts'];
   const SERVER_ORDER = ['server.js', 'backend/server.js', 'api/server.js'];
   const IMPORT_RE = /\b(?:import|export)\s+(?:[\s\S]*?\s+from\s*)?(['"])([^'"\n]+)\1\s*;?/g;
@@ -26,6 +26,10 @@
     files = values(files);
     if (Object.keys(files).some((p) => /\.(?:jsx|tsx)$/i.test(p) || (CODE_EXT.test(p) && hasImport(typeof files[p] === 'string' ? files[p] : '')))) return true;
     return Object.keys(files).some((p) => /(^|\/)package\.json$/i.test(p) && typeof files[p] === 'string' && /\"(?:react|react-dom|react-native|react-native-web)\"\s*:/.test(files[p]));
+  }
+  function isReactProject(files) {
+    files = values(files);
+    return Object.keys(files).some((p) => /\.(?:jsx|tsx)$/i.test(p) || (CODE_EXT.test(p) && /(?:from\s*|import\s*)['\"](?:react|react-dom|react-native|react-native-web)(?:\/|['\"])/.test(String(files[p] || '')))) || Object.keys(files).some((p) => /(^|\/)package\.json$/i.test(p) && typeof files[p] === 'string' && /\"(?:react|react-dom|react-native|react-native-web)\"\s*:/.test(files[p]));
   }
   function resolveEntry(files, requested, html) {
     const keys = Object.keys(files).map(cleanPath);
@@ -79,13 +83,15 @@ function FlatList(p) { var data = p.data || []; return h(View, propsOf(p, { flex
 function SafeAreaView(p) { return h(View, Object.assign({}, p, { style: [ { paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }, p.style ] })); }
 function Image(p) { var q = propsOf(p); q.src = p.source && (p.source.uri || p.source) || p.src; q.alt = p.accessibilityLabel || ''; return h('img', q); }
 function ActivityIndicator(p) { return h('span', propsOf(p), p.hidesWhenStopped === false || p.animating !== false ? '◌' : null); }
+function Button(p) { return h('button', propsOf({ disabled: p.disabled, onPress: p.onPress, accessibilityLabel: p.accessibilityLabel }, { cursor: p.disabled ? 'default' : 'pointer' }), p.title || p.children || ''); }
+function StatusBar() { return null; }
 const StyleSheet = { create: function (s) { return s; }, flatten: flattenStyle, compose: function (a, b) { return a && b ? [a, b] : a || b; }, absoluteFillObject: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }, hairlineWidth: 1 };
 const registry = Object.create(null);
 const AppRegistry = { registerComponent: function (name, provider) { registry[name] = provider; return name; }, getAppKeys: function () { return Object.keys(registry); }, runApplication: function (name, options) { var get = registry[name]; if (!get) throw new Error('React Native app is not registered: ' + name); var Component = typeof get === 'function' ? get() : get; var target = options && options.rootTag || document.getElementById('root') || document.getElementById('app'); if (!target || !globalThis.ReactDOM || !globalThis.ReactDOM.createRoot) throw new Error('React Native preview root or ReactDOM runtime is unavailable'); globalThis.ReactDOM.createRoot(target).render(h(Component)); } };
 const Dimensions = { get: function () { return { width: window.innerWidth || 360, height: window.innerHeight || 640, scale: window.devicePixelRatio || 1, fontScale: 1 }; }, addEventListener: function () { return { remove: function () {} }; } };
 const Platform = { OS: 'web', Version: 1, select: function (choices) { return choices.web != null ? choices.web : choices.default; }, isTV: false, isTesting: false };
-export { View, Text, Pressable, TouchableOpacity, TouchableHighlight, TextInput, ScrollView, FlatList, SafeAreaView, Image, ActivityIndicator, StyleSheet, AppRegistry, Dimensions, Platform };
-export default { View, Text, Pressable, TouchableOpacity, TouchableHighlight, TextInput, ScrollView, FlatList, SafeAreaView, Image, ActivityIndicator, StyleSheet, AppRegistry, Dimensions, Platform };
+export { View, Text, Pressable, TouchableOpacity, TouchableHighlight, TextInput, ScrollView, FlatList, SafeAreaView, Image, ActivityIndicator, Button, StatusBar, StyleSheet, AppRegistry, Dimensions, Platform };
+export default { View, Text, Pressable, TouchableOpacity, TouchableHighlight, TextInput, ScrollView, FlatList, SafeAreaView, Image, ActivityIndicator, Button, StatusBar, StyleSheet, AppRegistry, Dimensions, Platform };
 function TouchableOpacity(p) { return h(Pressable, p); }
 function TouchableHighlight(p) { return h(Pressable, p); }
 `;
@@ -95,7 +101,7 @@ function TouchableHighlight(p) { return h(Pressable, p); }
     const exports = REACT_EXPORTS.map((name) => 'export const ' + name + '=R.' + name + ';').join('');
     const jsx = 'const R=globalThis.React;export default R;' + exports;
     const jsxRuntime = 'const R=globalThis.React;export const Fragment=R.Fragment;export function jsx(t,p,k){return R.createElement(t,k==null?p:Object.assign({},p,{key:k}))}export const jsxs=jsx;export const jsxDEV=jsx;';
-    const dom = 'const D=globalThis.ReactDOM;export default D;export const createPortal=D.createPortal.bind(D);';
+    const dom = 'const D=globalThis.ReactDOM;export default D;export const createPortal=(...a)=>D.createPortal(...a);export const flushSync=(...a)=>D.flushSync(...a);export const unstable_batchedUpdates=(...a)=>D.unstable_batchedUpdates(...a);export const version=D.version;';
     const client = 'const D=globalThis.ReactDOM;export const createRoot=D.createRoot.bind(D);export const hydrateRoot=D.hydrateRoot.bind(D);';
     return { react: dataModule(jsx), jsx: dataModule(jsxRuntime), dom: dataModule(dom), client: dataModule(client), rn: dataModule(RN_SHIM_SOURCE) };
   }
@@ -156,7 +162,7 @@ function TouchableHighlight(p) { return h(Pressable, p); }
     const template = htmlPath ? input[htmlPath] : '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CybNate Preview</title></head><body></body></html>';
     const entry = resolveEntry(files, requested, template);
     const apiPath = serverEntry(files);
-    const project = { entry, files, apiPath, importMap: importMap(files), tailwind: tailwindNeeded(files), cssImports: cssImports(files) };
+    const project = { entry, files, apiPath, react: isReactProject(files), importMap: importMap(files), tailwind: tailwindNeeded(files), cssImports: cssImports(files) };
     let html = template.replace(/<script\b[^>]*\bsrc=["'][^"']+\.(?:jsx?|tsx?)(?:[?#][^"']*)?["'][^>]*>\s*<\/script\s*>/gi, '');
     if (!/<(?:div|main|section)\b[^>]*\bid=["'](?:root|app)["']/i.test(html)) html = inject(html, '<div id="root"></div>', 'body');
     const safeMap = safeJson(project.importMap).replace(/<\/script/gi, '<\\/script');
@@ -194,5 +200,5 @@ async function virtualFetch(u,init,input){if(!window.__cybPreviewApiReady)runApi
 function mount(mod){var root=document.getElementById("root")||document.getElementById("app");if(!root)throw new Error("Preview HTML has no #root mount");if(root.childNodes.length)return;var App=mod&&(mod.default||mod.App);if(!App)return;import("react-dom/client").then(function(R){R.createRoot(root).render(typeof App==="function"?R.createElement(App):App)})}
 window.__cybPreviewStart=(async function(){if(!window.Babel)throw new Error("Babel compiler is unavailable");if(P.apiPath)runApi();if(!P.entry)throw new Error("No React/JavaScript entry file found. Expected src/main.jsx, src/index.jsx, App.jsx, or an equivalent project entry.");var u=await moduleUrl(P.entry,[]),mod=await import(u),root=document.getElementById("root")||document.getElementById("app");if(root&&!root.childNodes.length)mount(mod);try{var rn=await import("react-native"),keys=rn.AppRegistry&&rn.AppRegistry.getAppKeys?rn.AppRegistry.getAppKeys():[];if(keys.length&&root&&!root.childNodes.length)rn.AppRegistry.runApplication(keys[0],{rootTag:root})}catch(e){if(/Failed to resolve module specifier|imported module/.test(String(e)))throw e}return true})().catch(err);window.addEventListener("beforeunload",function(){made.forEach(function(u){try{URL.revokeObjectURL(u)}catch(e){}})});`;
 
-  return { isProject, resolveEntry, bareSpecifiers, importMap, projectHtml, safeJson, tailwindNeeded, SERVER_ORDER, BOOTSTRAP };
+  return { isProject, isReactProject, resolveEntry, bareSpecifiers, importMap, projectHtml, safeJson, tailwindNeeded, SERVER_ORDER, BOOTSTRAP };
 });
