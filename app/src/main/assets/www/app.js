@@ -560,7 +560,9 @@
     if (!ws.has(path)) return { code: 2, out: 'test_webapp: file not found: ' + path + '. HTML files in the workspace: ' + (ws.list().filter((p) => /\.html?$/i.test(p)).slice(0, 12).join(', ') || 'none'), files: [] };
     if (!/\.html?$/i.test(path) || ws.isBinary(path)) return { code: 2, out: 'test_webapp needs an HTML file (got ' + path + '). Test other code with python or node.', files: [] };
     const id = 't' + (++ntSeq), limit = Math.max(3, Math.min(timeoutSec || 20, 45)) * 1000;
-    const html = WebTest.instrument(buildPreview(path), script, 600, id);
+    const textFiles = previewTextFiles();
+    const projectPreview = !!(window.ProjectPreview && window.ProjectPreview.isProject(textFiles));
+    const html = WebTest.instrument(buildPreview(path, true), script, projectPreview ? 1800 : 600, id);
     let rep = null;
     if (Native) {
       // In the app an iframe is not safe: Android gives every frame the native bridge. The page runs in a separate WebView without one.
@@ -1405,11 +1407,16 @@
   }
 
   /** Inline workspace CSS/JS/images referenced by an HTML file so it can run inside a sandboxed frame. */
-  function buildPreview(p) {
-    const previewFiles = {};
-    ws.list().forEach((path) => { if (!ws.isBinary(path)) previewFiles[path] = ws.get(path); });
+  function previewTextFiles() {
+    const files = {};
+    ws.list().forEach((path) => { if (!ws.isBinary(path)) files[path] = ws.get(path); });
+    return files;
+  }
+  function buildPreview(p, testMode) {
+    const previewFiles = previewTextFiles();
     if (window.ProjectPreview && (window.ProjectPreview.isProject(previewFiles) || /\.(?:jsx|tsx)$/i.test(p))) {
-      return window.ProjectPreview.projectHtml(p, previewFiles, window.__CYB_BABEL_SOURCE || '');
+      const assetBase = Native ? 'https://appassets.androidplatform.net/assets/www/vendor/' : 'vendor/';
+      return window.ProjectPreview.projectHtml(p, previewFiles, { testMode: !!testMode, assetBase });
     }
     const dir = p.indexOf('/') >= 0 ? p.slice(0, p.lastIndexOf('/') + 1) : '';
     const res = (ref) => { if (/^(https?:|data:|\/\/|#)/i.test(ref)) return null; const q = C.Workspace.norm(dir + ref.split(/[?#]/)[0]); return ws.has(q) ? q : null; };
@@ -1426,14 +1433,18 @@
   function openPreview(p) {
     // In the app the page opens in a separate WebView that has no native bridge. An iframe is not enough there:
     // Android injects the bridge object into every frame, sandboxed or not.
-    if (Native) {
-      if (Native.openPreview) Native.openPreview(p, buildPreview(p)); else toast('Preview needs a newer app build');
-      return;
-    }
-    openSheet('▶ ' + p, (body) => {
-      const f = el('iframe', 'preview'); f.setAttribute('sandbox', 'allow-scripts allow-modals allow-forms');
-      f.srcdoc = buildPreview(p); body.appendChild(f);
-    }, [['↻', drawSheet]]);
+    const show = () => {
+      const html = buildPreview(p, false);
+      if (Native) {
+        if (Native.openPreview) Native.openPreview(p, html); else toast('Preview needs a newer app build');
+        return;
+      }
+      openSheet('▶ ' + p, (body) => {
+        const f = el('iframe', 'preview'); f.setAttribute('sandbox', 'allow-scripts allow-modals allow-forms');
+        f.srcdoc = html; body.appendChild(f);
+      }, [['↻', drawSheet]]);
+    };
+    show();
   }
 
   // -------------------------------------------------------------- terminal

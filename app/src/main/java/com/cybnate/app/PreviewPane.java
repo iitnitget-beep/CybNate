@@ -12,6 +12,7 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import androidx.webkit.WebViewAssetLoader;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -106,6 +107,9 @@ final class PreviewPane {
         s.setAllowContentAccess(false);
         s.setTextZoom(100);
         // Deliberately no addJavascriptInterface here: this is the whole point of the separate view.
+        final WebViewAssetLoader loader = new WebViewAssetLoader.Builder()
+                .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(act))
+                .build();
         view.setWebChromeClient(new WebChromeClient() {
             @Override public void onReceivedTitle(WebView v, String t) { title = t == null ? "" : t; }
             @Override public boolean onConsoleMessage(ConsoleMessage m) {
@@ -123,6 +127,10 @@ final class PreviewPane {
             }
         });
         view.setWebViewClient(new WebViewClient() {
+            @Override
+            public android.webkit.WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest rq) {
+                return loader.shouldInterceptRequest(rq.getUrl());
+            }
             @Override
             public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest rq) {
                 String scheme = String.valueOf(rq.getUrl().getScheme());

@@ -16,3 +16,4 @@ keystore/
 *.key
 app/src/main/assets/www/vendor/pyodide/
 app/src/main/assets/www/vendor/babel/
+app/src/main/assets/www/vendor/react-runtime/
