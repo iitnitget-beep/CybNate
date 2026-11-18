@@ -9,6 +9,7 @@
   const Safety = (typeof module === 'object' && module.exports) ? require('./safety.js') : (typeof self !== 'undefined' ? self : this).Safety;
   const DevTools = (typeof module === 'object' && module.exports) ? require('./devtools.js') : (typeof self !== 'undefined' ? self : this).DevTools;
   const UrlPolicy = (typeof module === 'object' && module.exports) ? require('./url-policy.js') : (typeof self !== 'undefined' ? self : this).UrlPolicy;
+  const Planner = (typeof module === 'object' && module.exports) ? require('./planner.js') : (typeof self !== 'undefined' ? self : this).Planner;
 
   // ---------------------------------------------------------------- providers
   // Every provider speaks the OpenAI chat-completions protocol.
@@ -1726,7 +1727,7 @@
   }
 
   return {
-    PROVIDERS, AGENTS, TOOL_DOCS, TOOL_PARAMS, FINAL, FS_WRITE, EXEC, ENGINEER_BLOCKS, DevTools, sqliteScript, isFinalReply, toolSchemas, parseSkill, findSkillPath, recoverFailedGeneration, PASSIVE, SUBAGENT_TYPES, BODY_TOOLS, isAllowedHttpUrl: UrlPolicy.isAllowedHttpUrl, parseModelList, buildSystemPrompt, parseToolCalls, displayText, Workspace,
+    PROVIDERS, AGENTS, TOOL_DOCS, TOOL_PARAMS, FINAL, FS_WRITE, EXEC, ENGINEER_BLOCKS, Planner, DevTools, sqliteScript, isFinalReply, toolSchemas, parseSkill, findSkillPath, recoverFailedGeneration, PASSIVE, SUBAGENT_TYPES, BODY_TOOLS, isAllowedHttpUrl: UrlPolicy.isAllowedHttpUrl, parseModelList, buildSystemPrompt, parseToolCalls, displayText, Workspace,
     stripThink, followupsOf, nativeCallToText, nativeCallsToText, tokenize, parseCommand, matchGlob, callLabel,
     Safety, Orchestra, previewEdits, runTool, runTools, formatToolResults, fileInfo, detectType, extractStrings, hexdump, zipEntries, zipRead, zipCreate,
     decodeAxml, decodeIfText, createSseParser, trimHistory, compactDigest, toNativePrompt, fmtSize, crc32, utf8,
