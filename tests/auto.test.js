@@ -94,11 +94,23 @@ async function boot() {
   assert.ok(/Coder ✓ → Reviewer ✓ → Coder fix ✓/.test(r.tl.querySelector('summary').textContent), r.tl.querySelector('summary').textContent);
 
   // 3. big task: Planner first; no file changes, so the review is skipped
-  newChat(); script.reply = (c) => (c.role === 'planner' ? '1. Create app.py\n2. Add login' : 'I need more details before writing code.');
+  newChat(); script.reply = (c) => (c.role === 'planner' ? JSON.stringify({ goal: 'Build inventory management', rationale: 'Deliver in verifiable increments', tasks: [{ id: 'schema', title: 'Add data model', detail: 'Create inventory entities and persistence schema', verify: 'Run schema tests', dependsOn: [] }, { id: 'login', title: 'Add login', detail: 'Implement authenticated access', verify: 'Run authentication tests', dependsOn: ['schema'] }] }) : 'I need more details before writing code.');
   r = await say('Build a complete inventory management system with login, reports and an admin dashboard');
   assert.deepStrictEqual(calls.map((c) => c.role), ['planner', 'coder']);
-  assert.ok(/<untrusted_data source="planner agent">\n1\. Create app\.py/.test(calls[1].messages[1].content) && calls[1].messages.length === 2, 'plan handed to the coder as untrusted data in one user turn');
+  assert.ok(/<untrusted_data source="validated planner output">[\s\S]*\[schema\] Add data model[\s\S]*\[login\] Add login/.test(calls[1].messages[1].content) && calls[1].messages.length === 2, 'validated topological plan handed to the coder as untrusted data in one user turn');
   assert.ok(has(r.rows, /Planner.*deepseek-r1/) && has(r.rows, /Reviewer.*no file changes/), r.rows.join(' | '));
+
+  // 3b. one failed tool batch permits exactly one validated replan and one Coder follow-up
+  newChat(); script.reply = (c, all) => {
+    const n = all.filter((x) => x.role === c.role).length;
+    if (c.role === 'planner') return JSON.stringify({ goal: 'Recover safely', rationale: 'Keep the failed operation visible', tasks: [{ id: 'recover', title: 'Recover from tool failure', detail: 'Choose a safe in-workspace approach', verify: 'Check the resulting file and run its test', dependsOn: [] }] });
+    if (n === 1) return '<write_file path="../outside.txt">\nnot allowed\n</write_file>';
+    return 'The tool failure is acknowledged; no unsafe retry was made.';
+  };
+  r = await say('Build a complete inventory management system with login, reports and an admin dashboard');
+  assert.deepStrictEqual(calls.map((c) => c.role), ['planner', 'coder', 'coder', 'planner', 'coder']);
+  assert.ok(has(r.rows, /Planner replan/) && has(r.rows, /Coder after replan/) && has(r.rows, /Reviewer.*no file changes/), r.rows.join(' | '));
+  assert.strictEqual(T.ws.has('outside.txt'), false, 'failed out-of-workspace write never escaped the normal tool validator');
 
   // 4. fallback: the coder's model fails, the next one in the chain answers
   newChat(); script.fail = (c) => c.model === 'qwen/qwen3-coder:free'; script.reply = () => 'Nothing to change.';

@@ -13,6 +13,7 @@ command -v node >/dev/null 2>&1 || fail 'Node.js is required to run tests/core.t
 [ -f tests/core.test.js ] || fail 'Verification gate is incomplete: tests/core.test.js is missing.'
 [ -f tests/safety.test.js ] || fail 'Verification gate is incomplete: tests/safety.test.js is missing.'
 [ -f tests/cleartext.test.js ] || fail 'Verification gate is incomplete: tests/cleartext.test.js is missing.'
+[ -f tests/planner.test.js ] || fail 'Verification gate is incomplete: tests/planner.test.js is missing.'
 
 printf '%s\n' '==> bash scripts/audit.sh'
 bash scripts/audit.sh
@@ -22,6 +23,8 @@ printf '%s\n' '==> node tests/core.test.js'
 node tests/core.test.js
 printf '%s\n' '==> node tests/safety.test.js'
 node tests/safety.test.js
+printf '%s\n' '==> node tests/planner.test.js'
+node tests/planner.test.js
 
 if [ "${VERIFY_JS_ONLY:-0}" = '1' ]; then
   printf '%s\n' 'JS-only checks passed. Android build gate was explicitly skipped (not a full verify).'
