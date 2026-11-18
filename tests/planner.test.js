@@ -27,7 +27,7 @@ const expectCode=(fn, code)=>assert.throws(fn,e=>e.code===code);
  x=base(); x.user_goal=''; expectCode(()=>P.validatePlan(x),'invalid_plan');
  x=base(); x.project_context=[]; expectCode(()=>P.validatePlan(x),'invalid_plan');
  x=base(); x.overall_status='MAGIC'; expectCode(()=>P.validatePlan(x),'invalid_plan');
- x=base(); x.steps[0].required_tools=['read_file']; assert.strictEqual(P.validatePlan(x,{knownTools:['read_file']}).steps.length,3);
+ x=base(); x.steps[0].required_tools=['read_file']; assert.strictEqual(P.validatePlan(x,{knownTools:['list_files','read_file','write_file','edit_file','run_terminal_command']}).steps.length,3);
  x=base(); expectCode(()=>P.validatePlan(x,{knownAgents:['coder']}),'unknown_agent');
  p=P.validatePlan(base()); P.setStepStatus(p,'inspect','READY'); P.setStepStatus(p,'inspect','RUNNING'); P.setStepStatus(p,'inspect','COMPLETED'); assert.strictEqual(p.steps[0].status,'COMPLETED');
  p=P.validatePlan(base()); P.setStepStatus(p,'inspect','READY'); P.setStepStatus(p,'inspect','RUNNING'); P.setStepStatus(p,'inspect','FAILED'); assert.strictEqual(p.steps[1].status,'BLOCKED');
