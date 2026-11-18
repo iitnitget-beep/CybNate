@@ -34,6 +34,10 @@ Production branch: `main` (do not modify directly)
 7. **Artifact and preview service** — isolated preview origin, build outputs, logs and screenshots.
 8. **Persistence and observability** — resumable run state, checkpoints, structured events, metrics and retention policy.
 
+## Structured Planner Agent (Task 02)
+
+Auto mode uses the existing read-only Planner helper to propose a validated dependency-aware JSON plan before the Coder stage. The plan is advisory, untrusted, and held only in conversation memory; execution stays in the existing Coder tool loop and its approval/cancellation controls. Validation retry and failure-triggered replan are bounded. See [Planner Agent](PLANNER_AGENT.md) for the schema, recovery rules, test coverage and limitations.
+
 ## Non-negotiable security boundaries
 
 - Never run untrusted agent-supplied executable templates with in-process `eval`.
