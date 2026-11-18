@@ -25,7 +25,8 @@ async function boot(settings) {
         const body = opt.body ? JSON.parse(opt.body) : null;
         if (!body) return { status: 200, headers: hdr('application/json'), body: stream('[]') };
         const c = { role: roleOf(body.messages[0].content), model: body.model, messages: body.messages, tools: body.tools }; calls.push(c);
-        await new Promise((r) => setTimeout(r, 10));
+        if (script.never) return new Promise(() => {}); // deliberately ignores AbortSignal to exercise the request deadline
+        await new Promise((r) => setTimeout(r, script.delay == null ? 10 : script.delay));
         const rep = script.reply(c, calls);
         if (rep && rep.native) return { status: 200, headers: hdr('application/json'), body: stream(JSON.stringify({ choices: [{ message: { content: '', tool_calls: rep.native } }] })) };
         return { status: 200, headers: hdr('text/event-stream'), body: stream(sse(rep)) };
@@ -39,13 +40,15 @@ async function boot(settings) {
   const pick = (name) => [...d.querySelectorAll('#agents .pill')].find((b) => new RegExp(name).test(b.textContent)).click();
   const say = async (text) => {
     calls.length = 0; d.getElementById('input').value = text; d.getElementById('btnSend').click();
+    let request = T.activeRequest;
     for (let i = 0; i < 600; i++) {
+      if (T.activeRequest) request = T.activeRequest;
       await new Promise((r) => setTimeout(r, 25));
       const btn = d.querySelector('.approval .abtn.allow'); if (btn) btn.click();
       if (!d.querySelector('#btnSend.stop') && i > 2) break;
     }
     assert.ok(!d.querySelector('#btnSend.stop'), 'run finished: ' + text);
-    return { errors: [...d.querySelectorAll('.msg.error')].map((x) => x.textContent), users: [...d.querySelectorAll('.msg.user')].map((x) => x.textContent) };
+    return { errors: [...d.querySelectorAll('.msg.error')].map((x) => x.textContent), users: [...d.querySelectorAll('.msg.user')].map((x) => x.textContent), lifecycle: request ? request.trace.map((x) => x.state) : [], outcome: request && request.outcome };
   };
   const lastUser = (c) => c.messages[c.messages.length - 1].content;
   return { w, d, T, calls, net, script, say, pick, lastUser, newChat: () => d.getElementById('btnNew').click() };
@@ -66,12 +69,21 @@ async function boot(settings) {
   };
   let r = await say('Write a Python module that hashes files, with a test');
   assert.deepStrictEqual(r.errors, []);
+  assert.ok(r.lifecycle.includes('WAITING_FOR_MODEL') && r.lifecycle.includes('SELECTING_TOOL') && r.lifecycle.includes('PROCESSING_RESULT'), 'the real send → model → tool → result lifecycle is traced');
+  assert.strictEqual(r.lifecycle[r.lifecycle.length - 1], 'PARTIAL');
+  assert.strictEqual(r.outcome.kind, 'partial', 'static diagnostics are not recorded as behavioral proof');
   assert.ok(T.ws.has('dedupe.py') && T.ws.get('test_dedupe.py').startsWith('from dedupe import digest'), 'files from named code fences were saved');
   assert.ok(/Created dedupe\.py[\s\S]*\[diagnostics: OK\]/.test(lastUser(calls[1])), 'auto-diagnostics after a write');
   assert.ok(/You modified code files but have not verified them yet/.test(lastUser(calls[2])), 'verification gate fired when the agent stopped');
   assert.strictEqual(calls.length, 4, 'gate fires once, attempt_completion ends the run');
   assert.ok(/<ROLE>/.test(calls[0].messages[0].content) && /<VERIFICATION_GATE>/.test(calls[0].messages[0].content) && /Repo map|Workspace/.test(calls[0].messages[0].content));
   assert.ok(/✅ dedupe\.py and its test are in place/.test(d.getElementById('messages').textContent), 'completion text is shown, not the raw tag');
+  assert.ok(/not been verified|not verified|not behavioral proof/i.test(d.getElementById('messages').textContent), 'partial code completion is disclosed');
+  const beforeOversize = calls.length, oversized = 'x'.repeat(40001);
+  d.getElementById('input').value = oversized; d.getElementById('btnSend').click();
+  assert.strictEqual(calls.length, beforeOversize, 'oversized input is rejected before provider traffic');
+  assert.strictEqual(d.getElementById('input').value, oversized, 'rejected text is preserved for editing');
+  assert.match(d.getElementById('toast').textContent, /too long/i);
 
   // 2. documentation only: no gate
   newChat(); pick('Coder');
@@ -160,5 +172,37 @@ async function boot(settings) {
   assert.strictEqual(B.T.ws.get('srv/app.py'), 'def handler(x):\n    return x * 2', 'a native call under a borrowed tool name was executed');
   assert.ok(/Initialized empty repository/.test(B.lastUser(B.calls[1])), 'execute_bash alias ran');
   console.log('ENGINE UI TEST PASSED (native calls)');
+
+  // A provider that ignores cancellation must not let its late response continue the request.
+  const Z = await boot(); Z.pick('Coder'); Z.script.delay = 100;
+  Z.d.getElementById('input').value = 'This request will be stopped'; Z.d.getElementById('btnSend').click();
+  const stoppedRequest = Z.T.activeRequest; assert.ok(stoppedRequest, 'request lifecycle starts on send');
+  Z.d.getElementById('btnSend').click();
+  for (let i = 0; i < 100 && Z.d.querySelector('#btnSend.stop'); i++) await new Promise((r2) => setTimeout(r2, 10));
+  assert.ok(!Z.d.querySelector('#btnSend.stop'), 'cancelled request releases the UI');
+  assert.strictEqual(stoppedRequest.state, 'CANCELLED');
+  assert.strictEqual(stoppedRequest.outcome.kind, 'cancelled');
+  assert.strictEqual(Z.T.ws.list().length, 0, 'late provider output did not run tools or change files');
+  assert.strictEqual(Z.calls.length, 1, 'no retry or follow-up request was launched after cancellation');
+  console.log('ENGINE UI TEST PASSED (cancellation)');
+
+  // A deterministic short fake deadline bounds a provider that never resolves and ignores abort.
+  const Q = await boot(); Q.pick('Coder'); Q.script.never = true;
+  Q.w.AgentRuntime.createDeadline = (parent) => {
+    const ctl = new Q.w.AbortController(); let timedOut = false;
+    const onParent = () => ctl.abort();
+    if (parent) parent.addEventListener('abort', onParent, { once: true });
+    const timer = Q.w.setTimeout(() => { timedOut = true; ctl.abort(); }, 5);
+    return { signal: ctl.signal, timedOut: () => timedOut, dispose: () => { Q.w.clearTimeout(timer); if (parent) parent.removeEventListener('abort', onParent); } };
+  };
+  Q.d.getElementById('input').value = 'Model timeout test'; Q.d.getElementById('btnSend').click();
+  const timeoutRequest = Q.T.activeRequest; assert.ok(timeoutRequest);
+  for (let i = 0; i < 100 && Q.d.querySelector('#btnSend.stop'); i++) await new Promise((r2) => setTimeout(r2, 10));
+  assert.ok(!Q.d.querySelector('#btnSend.stop'), 'deadline releases a hung request');
+  assert.strictEqual(timeoutRequest.state, 'FAILED');
+  assert.strictEqual(timeoutRequest.outcome.kind, 'failed');
+  assert.strictEqual(Q.calls.length, 1, 'a timed-out non-idempotent model request is not replayed');
+  assert.match(Q.d.querySelector('.msg.error').textContent, /timed out/);
+  console.log('ENGINE UI TEST PASSED (deadline)');
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

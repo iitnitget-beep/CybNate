@@ -151,6 +151,7 @@
 
   /** Called before every tool runs. Fails closed: with no approval handler, anything that needs approval is refused. */
   async function ensureApproved(call, env, gate, preview) {
+    if (env && env.signal && env.signal.aborted) { const e = new Error('Stopped'); e.name = 'AbortError'; e.code = 'cancelled'; throw e; }
     const need = approvalFor(call, modeOf(env));
     if (!need) return;
     if (gate && gate.ok.has(call)) return;

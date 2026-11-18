@@ -67,7 +67,8 @@ const requests = [];
   assert.ok(/Applied 1 edit to s\.css/.test(chat[2].body.messages.at(-1).content));
   assert.ok(/s\.css/.test(chat[2].body.messages[0].content), 'workspace listing is in the system prompt');
   assert.strictEqual(d.querySelectorAll('.msg.assistant').length, 5);
-  assert.strictEqual(d.querySelectorAll('.msg.tool').length, 4);
+  assert.strictEqual(d.querySelectorAll('.msg.tool').length, 5, 'the user is shown a partial-verification note');
+  assert.ok(/static diagnostics alone are not behavioral proof/.test(d.getElementById('messages').textContent));
   assert.strictEqual(d.querySelectorAll('.msg.error').length, 0);
   // Phase 1: results reach the model as untrusted data, and the run can be undone with one tap
   assert.ok(/<untrusted_data source="write_file index\.html">/.test(chat[1].body.messages.at(-1).content), 'tool results are wrapped');

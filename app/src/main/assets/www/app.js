@@ -15,7 +15,7 @@
   }, load('cyb.settings', {}));
   let sessions = load('cyb.sessions', []);
   let current = null;
-  let busy = false, abortCtl = null;
+  let busy = false, abortCtl = null, activeRequest = null, requestSeq = 0;
   const saveSettings = () => save('cyb.settings', settings);
   const saveSessions = () => {
     // localStorage is small (about 5 MB), so drop the oldest chats until the rest fits.
@@ -230,15 +230,32 @@
     const api = p.api || '';
     if (api) { stream = true; tools = null; }
     const sse = api ? Wire.parser(api) : C.createSseParser(); let full = '', raw = '', err = '';
-    const res = await httpStream(p.chatUrl, {
-      method: 'POST', signal, direct: !!p.direct,
-      headers: Object.assign({ 'Content-Type': 'application/json' }, api ? { Accept: 'text/event-stream' } : {}, authHeaders(target.provider)),
-      body: JSON.stringify(api ? Wire.body(api, target.model, messages) : Object.assign({ model: target.model, messages }, stream ? { stream: true } : {}, tools && tools.length ? { tools: C.toolSchemas(tools), tool_choice: 'auto' } : {})),
-    }, (chunk) => {
-      if (raw.length < 400000) raw += chunk;
-      if (!stream) return;
-      for (const ev of sse.feed(chunk)) { if (ev.error) err = ev.error; else if (ev.thinking) { if (!full) setStatus('thinking…'); } else { full += ev.text; onText(full); } }
+    const deadline = AgentRuntime.createDeadline(signal, 120000);
+    let onDeadlineAbort;
+    const timeout = new Promise((resolve, reject) => {
+      onDeadlineAbort = () => {
+        if (!deadline.timedOut()) { reject(abortError()); return; }
+        const e = new Error('Model request timed out after 120 seconds.'); e.name = 'TimeoutError'; e.code = 'timeout'; reject(e);
+      };
+      if (deadline.signal.aborted) onDeadlineAbort();
+      else deadline.signal.addEventListener('abort', onDeadlineAbort, { once: true });
     });
+    let res;
+    try {
+      res = await Promise.race([httpStream(p.chatUrl, {
+        method: 'POST', signal: deadline.signal, direct: !!p.direct,
+        headers: Object.assign({ 'Content-Type': 'application/json' }, api ? { Accept: 'text/event-stream' } : {}, authHeaders(target.provider)),
+        body: JSON.stringify(api ? Wire.body(api, target.model, messages) : Object.assign({ model: target.model, messages }, stream ? { stream: true } : {}, tools && tools.length ? { tools: C.toolSchemas(tools), tool_choice: 'auto' } : {})),
+      }, (chunk) => {
+        if (deadline.signal.aborted) return;
+        if (raw.length < 400000) raw += chunk;
+        if (!stream) return;
+        for (const ev of sse.feed(chunk)) { if (ev.error) err = ev.error; else if (ev.thinking) { if (!full) setStatus('thinking…'); } else { full += ev.text; onText(full); } }
+      }), timeout]);
+    } finally {
+      if (onDeadlineAbort) deadline.signal.removeEventListener('abort', onDeadlineAbort);
+      deadline.dispose();
+    }
     if (stream) for (const ev of sse.feed('\n')) if (ev.text) { full += ev.text; onText(full); }
     let native = sse.toolCalls();
     if (!full && !native.length && res.status < 400) {
@@ -791,7 +808,7 @@
     const chain = task && task.roles ? task.roles[type] : null;
     const step = tlStep(label || ('↳ ' + agent.name), chain && chain[0] ? chain[0].model : settings.model);
     const via = chain ? { chain, onModel: (t, note) => { step.model = t.model; if (note) step.note = note; tlDraw(); } } : undefined;
-    const env = { mode: permMode, approve: (r) => askApproval(r, signal), exec: (c, t, sec) => helperExec(type, c, t, signal, sec), search: (q) => webSearch(q, signal), readUrl: (u) => readUrl(u, signal), skill: loadSkill,
+    const env = { mode: permMode, allowedTools: agent.tools, signal, approve: (r) => askApproval(r, signal), exec: (c, t, sec) => helperExec(type, c, t, signal, sec), search: (q) => webSearch(q, signal), readUrl: (u) => readUrl(u, signal), skill: loadSkill,
       writeError: (q) => O.subWriteError(type, q) };
     let last = '', acts = 0;
     try {
@@ -1001,7 +1018,7 @@
    * `st` collects what happened: st.wrote (files changed), st.proof ({cmd, ok} of the last command run after the last write).
    */
   async function agentLoop(agentId, chain, st, stepRow) {
-    const box = $('messages'), agent = C.AGENTS[agentId];
+    const box = $('messages'), agent = C.AGENTS[agentId], request = activeRequest, signal = abortCtl && abortCtl.signal;
     const maxSteps = agent.tools.length ? Math.max(1, settings.maxSteps | 0) : 1;
     const via = chain ? { chain, onModel: (t, note) => { if (stepRow) { stepRow.model = t.model; if (note) stepRow.note = note; tlDraw(); } } } : undefined;
     let badCalls = 0, lastFail = '', warned = '';
@@ -1014,16 +1031,21 @@
       let pending = false, latest = '';
       const paint = () => {
         pending = false;
+        if ((signal && signal.aborted) || (request && activeRequest !== request)) return;
         const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
         node.replaceChild(renderMd(latest), node.lastChild);
         if (stick) box.scrollTop = box.scrollHeight;
       };
       let full;
       try {
+        if (request && request.isActive()) request.transition('WAITING_FOR_MODEL');
         full = await chatStream([{ role: 'system', content: sys }].concat(apiHistory(chain, sys.length)), (t) => {
+          if ((signal && signal.aborted) || (request && activeRequest !== request)) return;
           latest = t; setStatus('writing… ' + t.length + ' chars');
           if (!pending) { pending = true; setTimeout(paint, 90); }
-        }, abortCtl.signal, toolsFor(agent), via);
+        }, signal, toolsFor(agent), via);
+        if (signal && signal.aborted) throw abortError();
+        if (request && request.isActive()) request.transition('THINKING');
       } catch (e) {
         if (latest) { msg.content = latest; current.messages.push(msg); }
         node.remove(); if (latest) box.appendChild(msgNode(msg));
@@ -1038,16 +1060,28 @@
       const calls = C.parseToolCalls(full, agent.tools);
       let toolMsg;
       if (calls.length && !calls.every((c) => C.PASSIVE.indexOf(c.name) >= 0)) {
-        const sig = abortCtl.signal;
-        const env = { mode: permMode, approve: (r) => askApproval(r, sig), exec: (c, t, sec) => runCommand(c, t, sig, sec), search: (q) => webSearch(q, sig), readUrl: (u) => readUrl(u, sig), spawn: (type, p) => askAgent(type, p, sig), skill: loadSkill,
+        const sig = signal;
+        if (task && task.evidence) { task.evidence.failedTools = []; task.evidence.denied = false; }
+        if (request && request.isActive()) request.transition('SELECTING_TOOL');
+        const env = { mode: permMode, allowedTools: agent.tools, signal: sig, approve: (r) => askApproval(r, sig), exec: (c, t, sec) => runCommand(c, t, sig, sec), search: (q) => webSearch(q, sig), readUrl: (u) => readUrl(u, sig), spawn: (type, p) => askAgent(type, p, sig), skill: loadSkill,
+          onPhase: (phase) => { if (request && activeRequest === request && request.isActive() && request.state !== phase) request.transition(phase); },
           serial: !!(task && task.single) };
         const parts = await C.runTools(calls, ws, env, (label) => setStatus(label.slice(0, 60) + '…'));
+        if (sig && sig.aborted) throw abortError();
         let extra = '';
         calls.forEach((c, k) => {
           const ok = parts[k] && parts[k].ok;
-          if (['write_file', 'edit_file', 'delete_file'].indexOf(c.name) >= 0 && ok) { st.wrote = true; st.proof = null; if (isCodeFile((c.attrs || {}).path)) { st.code = true; st.checked = false; } }
+          if (!ok && task && task.evidence) {
+            task.evidence.failedTools.push(1);
+            if (parts[k] && parts[k].status === 'denied') task.evidence.denied = true;
+          }
+          if (['write_file', 'edit_file', 'delete_file', 'zip_extract'].indexOf(c.name) >= 0 && ok) {
+            st.wrote = true; st.proof = null; if (task && task.evidence) task.evidence.proof = null;
+            const filePath = c.name === 'zip_extract' ? ((c.attrs || {}).dest || (c.attrs || {}).entry) : (c.attrs || {}).path;
+            if (isCodeFile(filePath)) { st.code = true; st.checked = false; if (task && task.evidence) task.evidence.codeChanged = true; }
+          }
           // a run of the code, its tests or the page counts as proof; looking around (git, curl, ls, cat) does not
-          if (c.name === 'run_terminal_command' && isProofRun(c)) { st.proof = { cmd: C.callLabel(c).replace(/^\$ /, '').slice(0, 60), ok }; st.checked = true; }
+          if (c.name === 'run_terminal_command' && isProofRun(c)) { st.proof = { cmd: C.callLabel(c).replace(/^\$ /, '').slice(0, 60), ok }; if (task && task.evidence) task.evidence.proof = ok; st.checked = true; }
           if (c.name === 'get_diagnostics') st.checked = true;
           // the same call failing twice in a row: the agent is stuck, make it step back
           const sig2 = c.name + '|' + JSON.stringify(c.attrs || {}) + '|' + (c.body || '') + '|' + JSON.stringify(c.edits || c.diffText || '');
@@ -1103,7 +1137,9 @@
     if (slash && slash.error) return toast(slash.error);
     if (slash && slash.agent) forced = slash.agent;
     const att = attachMentions(slash ? slash.prompt : typed);
-    const text = att.text;
+    let text;
+    try { text = AgentRuntime.validateUserRequest(att.text, 40000); }
+    catch (e) { toast(e.message || 'Invalid request.'); return; }
     $('input').value = ''; autoGrow(); hideMentions();
     if (!current.messages.length) current.title = typed.slice(0, 60);
     current.messages.push(text === typed ? { role: 'user', content: text } : { role: 'user', content: text, shown: typed + (att.files.length ? '\n📎 ' + att.files.join(', ') : '') });
@@ -1111,20 +1147,35 @@
     sessions = [current].concat(sessions.filter((s) => s !== current));
     renderMessages();
     busy = true; abortCtl = new AbortController();
+    const request = AgentRuntime.createRequest('req-' + Date.now() + '-' + (++requestSeq), current.id);
+    request.transition('VALIDATING').transition('THINKING'); activeRequest = request;
     const checkpoint = S.makeCheckpoint(ws); // lets the user undo everything this run changes
     $('btnSend').classList.add('stop'); sendIcon = sendIcon || $('btnSend').innerHTML; $('btnSend').textContent = '■';
-    task = { budget: O.createBudget(settings.taskBudget || 30, () => tlDraw()), asks: 0, roles: null, single: '', tl: null, tlNode: null };
-    let failed = '';
+    task = { budget: O.createBudget(settings.taskBudget || 30, () => tlDraw()), asks: 0, roles: null, single: '', tl: null, tlNode: null, evidence: { failedTools: [], denied: false, proof: null, codeChanged: false } };
+    let failed = '', runOutcome = null;
     try {
       const oldChips = $('messages').querySelector('.followups'); if (oldChips) oldChips.remove();
-      if (current.agent === 'auto' || forced) await runAuto(text, forced, checkpoint, abortCtl.signal, !!slash);
+      if (current.agent === 'auto' || forced) { request.transition('PLANNING'); await runAuto(text, forced, checkpoint, abortCtl.signal, !!slash); }
       else await agentLoop(current.agent, null, { wrote: false, proof: null });
     } catch (e) {
       failed = e.name === 'AbortError' ? 'stop' : 'fail';
+      runOutcome = e.name === 'AbortError' ? { kind: 'cancelled', reason: 'request cancelled' }
+        : e.name === 'BudgetError' ? { kind: 'partial', reason: 'request budget ended the run' } : { kind: 'failed', reason: 'run ended after an error' };
       if (e.name === 'BudgetError') pushError(budgetReport(e, checkpoint));
       else if (e.name !== 'AbortError') pushError(e.message || String(e)); else toast('Stopped');
     } finally {
       if (task.tl) { task.tl.steps.forEach((x) => { if (x.status === 'run') x.status = failed || 'ok'; }); tlDraw(); }
+      const changedCode = S.changedSince(ws, checkpoint).filter((p) => isCodeFile(String(p).replace(/ \((?:new|deleted)\)$/, '')));
+      const codeChanged = changedCode.length > 0 || task.evidence.codeChanged;
+      if (!runOutcome) runOutcome = AgentRuntime.classifyOutcome({ blocked: task.evidence.denied ? 'a tool operation was denied' : '', failedTools: task.evidence.failedTools, changedFiles: codeChanged ? (changedCode.length ? changedCode : ['code file']) : [], proof: task.evidence.proof });
+      request.finish(runOutcome);
+      if (runOutcome.kind === 'blocked') pushNote('Task blocked: a required operation was denied; no claim of completion is made.');
+      else if (runOutcome.kind === 'cancelled' && codeChanged) pushNote('Request stopped after partial work. Code files changed, and the remaining work or verification may be incomplete.');
+      else if (runOutcome.kind === 'partial' && (codeChanged || task.evidence.failedTools.length)) {
+        const why = task.evidence.proof === false ? 'The last verification command failed.' : codeChanged ? 'Code files changed, but no successful run or test was recorded; static diagnostics alone are not behavioral proof.' : 'One or more tool operations did not complete successfully.';
+        pushNote('Partial completion: ' + why + ' Review the tool results and verify the changes before treating the task as complete.');
+      }
+      if (activeRequest === request) activeRequest = null;
       task = null;
       busy = false; abortCtl = null; setStatus(''); renderFollowups(); offerUndo(checkpoint);
       $('btnSend').classList.remove('stop'); $('btnSend').innerHTML = sendIcon;
@@ -2431,7 +2482,7 @@
 
   if (!C.PROVIDERS[settings.provider]) { settings.provider = 'pollinations'; settings.model = 'openai-fast'; }
   $('ver').textContent = Native ? 'v' + Native.version() : 'web';
-  window.__cyb = { backend, openServer, secretsUp, setSecret, wireCall, codexSignIn, codexFresh, setCodex, googleConnect, googleToken, freshGoogle, fetchModels, openProviders, chatStream, openIntegrations, testIntegration, saveIntegration, removeIntegration, connectedIds, extraPrompt, cli, testWebapp, slashCommand, attachMentions, compactChat, kv, Native, nativeStream, fetchModels, C, ws, settings, limiter, health, usageReport, openUsage, freeCheck, metaOf, apiHistory, modelPool, spawnAgent, helperExec, rerunAs, get task() { return task; }, askApproval, openPreview, offerUndo, namedSecrets, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
+  window.__cyb = { backend, openServer, secretsUp, setSecret, wireCall, codexSignIn, codexFresh, setCodex, googleConnect, googleToken, freshGoogle, fetchModels, openProviders, chatStream, openIntegrations, testIntegration, saveIntegration, removeIntegration, connectedIds, extraPrompt, cli, testWebapp, slashCommand, attachMentions, compactChat, kv, Native, nativeStream, fetchModels, C, ws, settings, limiter, health, usageReport, openUsage, freeCheck, metaOf, apiHistory, modelPool, spawnAgent, helperExec, rerunAs, get task() { return task; }, get activeRequest() { return activeRequest; }, askApproval, openPreview, offerUndo, namedSecrets, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
   window.addEventListener('error', (e) => { console.log('CYBERR ' + e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno); });
   window.addEventListener('unhandledrejection', (e) => { console.log('CYBERR promise ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)); });
 

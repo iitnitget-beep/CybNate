@@ -955,10 +955,89 @@
     if (['write_file', 'edit_file', 'delete_file', 'zip_extract'].indexOf(call.name) < 0) return '';
     return env.writeError(path || '') || '';
   }
+  const MAX_TOOL_CALLS_PER_RESPONSE = 24;
+  const PATH_KEYS = new Set(['path', 'db', 'dest']);
+  function validateWorkspacePath(value, label) {
+    if (typeof value !== 'string' || !value.trim()) return 'missing ' + (label || 'path');
+    const p = value.trim().replace(/\\/g, '/');
+    if (p.indexOf(String.fromCharCode(0)) >= 0 || p[0] === '/' || /^[A-Za-z]:/.test(p)) return 'unsafe workspace path: ' + value;
+    let depth = 0;
+    for (const part of p.split('/')) {
+      if (part === '..') { if (!depth) return 'unsafe workspace path: ' + value; depth--; }
+      else if (part && part !== '.') depth++;
+    }
+    return '';
+  }
+  /** Validate a parsed/canonical tool call before approval or side effects. */
+  function validateToolCall(call, allowed) {
+    if (!call || typeof call.name !== 'string' || !TOOL_PARAMS[call.name]) return 'unknown tool: ' + String(call && call.name || '(missing)');
+    if (allowed && allowed.indexOf(call.name) < 0) return 'tool is not allowed for this agent: ' + call.name;
+    const schema = TOOL_PARAMS[call.name], props = schema[0] || {}, required = schema[1] || [], attrs = call.attrs || {};
+    if (!attrs || typeof attrs !== 'object' || Array.isArray(attrs)) return 'tool arguments must be an object';
+    if (call.bad) return String(call.bad);
+    const internal = call.name === 'read_file' ? ['numbered'] : call.name === 'edit_file' ? ['unique'] : [];
+    const keys = Object.keys(props).concat(internal);
+    const extra = Object.keys(attrs).filter((k) => keys.indexOf(k) < 0);
+    if (extra.length) return 'unsupported argument' + (extra.length > 1 ? 's: ' : ': ') + extra.join(', ');
+    const fromCall = (key) => {
+      if (key === 'content' && call.name === 'write_file') return call.body;
+      if (key === 'command' && call.name === 'run_terminal_command') return call.body;
+      if (key === 'code' && call.name === 'execute_python') return call.body;
+      if (key === 'sql' && call.name === 'sqlite_query') return call.body;
+      if (key === 'question' && call.name === 'ask_followup_question') return call.body;
+      if (key === 'result' && call.name === 'attempt_completion') return call.body;
+      if (key === 'edits' && call.name === 'edit_file') return call.edits || call.diffText || call.diff || call.insert || call.undo;
+      if (key === 'diff' && call.name === 'apply_diff') return call.diffText;
+      if (key === 'prompt' && call.name === 'spawn_agent') return call.body;
+      if (key === 'todos' && call.name === 'write_todos') return call.body;
+      if (key === 'followups' && call.name === 'suggest_followups') return call.body;
+      return attrs[key];
+    };
+    for (const key of required) {
+      const v = fromCall(key);
+      if (v == null || (typeof v === 'string' && !v.trim() && !(call.name === 'write_file' && key === 'content'))) return 'missing required argument: ' + key;
+    }
+    for (const key of Object.keys(attrs)) {
+      const spec = props[key]; if (!spec) continue;
+      const v = attrs[key];
+      if (spec.type === 'integer' && !/^-?\d+$/.test(String(v))) return key + ' must be an integer';
+      if (spec.type === 'string' && typeof v !== 'string') return key + ' must be text';
+      if (spec.enum && spec.enum.indexOf(v) < 0) return key === 'type' && call.name === 'spawn_agent' ? 'unknown agent type: ' + v : 'invalid ' + key + ': ' + v;
+    }
+    for (const key of PATH_KEYS) if (attrs[key] != null) { const e = validateWorkspacePath(attrs[key], key); if (e) return e; }
+    if (call.name === 'zip_extract' && attrs.entry != null) {
+      const entry = String(attrs.entry).replace(/\\/g, '/');
+      if (entry.indexOf(String.fromCharCode(0)) >= 0 || entry.startsWith('/') || /^[A-Za-z]:/.test(entry) || entry.split('/').some((p) => p === '..')) return 'unsafe archive entry path: ' + attrs.entry;
+    }
+    if (call.name === 'run_terminal_command' && typeof call.body !== 'string') return 'command must be text';
+    if (call.name === 'run_terminal_command' && !(String(call.body || attrs.command || '').trim())) return 'empty command';
+    if (call.name === 'write_file' && typeof call.body !== 'string') return 'write_file requires text content';
+    if (call.name === 'edit_file' && call.insert && (!Number.isInteger(Number(call.insert.line)) || Number(call.insert.line) < 0 || typeof call.insert.text !== 'string')) return 'insert needs a non-negative line and text';
+    if (call.name === 'edit_file' && call.undo && call.undo !== true) return 'undo must be true';
+    if (call.name === 'edit_file' && !call.undo && !call.insert && !call.diff && !call.diffText && (!Array.isArray(call.edits) || !call.edits.length)) return 'edit_file needs at least one valid edit';
+    if (call.name === 'edit_file' && Array.isArray(call.edits) && call.edits.some((e) => !e || typeof e.search !== 'string' || typeof e.replace !== 'string' || !e.search)) return 'each edit needs non-empty search text and replacement text';
+    if (call.name === 'edit_file' && call.diff && (!Array.isArray(call.diff.hunks) || call.diff.hunks.some((h) => !h || !Array.isArray(h.before) || !Array.isArray(h.after)))) return 'diff must contain valid hunks';
+    if (call.name === 'spawn_agent' && Orchestra.ASK_TYPES.indexOf(String(attrs.type || '').toLowerCase()) < 0) return 'invalid agent type: ' + String(attrs.type || '(missing)');
+    if (call.name === 'spawn_agent' && !String(call.body || '').trim()) return 'spawn_agent needs instructions';
+    if ((call.name === 'write_todos' || call.name === 'suggest_followups') && !String(call.body || '').trim()) return call.name + ' needs a non-empty body';
+    if (call.name === 'strings' && attrs.filter) { try { new RegExp(attrs.filter, 'i'); } catch (e) { return 'filter is not a valid regular expression'; } }
+    return '';
+  }
+  function toolSignature(call) {
+    return JSON.stringify([call.name, call.attrs || {}, call.body || '', call.edits || [], call.diff || null, call.diffText || '', call.insert || null, !!call.undo]);
+  }
+  function resultStatus(call, status, text, extra) {
+    return Object.assign({ id: call && call.id || '', label: callLabel(call || {}), status, ok: status === 'success', text: String(text || '') }, extra || {});
+  }
+  function abortToolError() { const e = new Error('Stopped'); e.name = 'AbortError'; e.code = 'cancelled'; return e; }
+
   async function runTool(call, ws, env, gate) {
     env = env || {};
-    const refused = writeRefusal(call, env); if (refused) throw new Error(refused);
+    if (env.signal && env.signal.aborted) throw abortToolError();
+    const invalid = validateToolCall(call, env.allowedTools); if (invalid) { const e = new Error(invalid); e.code = 'invalid_arguments'; throw e; }
+    const refused = writeRefusal(call, env); if (refused) { const e = new Error(refused); e.denied = true; e.code = 'denied'; throw e; }
     await Safety.ensureApproved(call, env, gate, (c) => previewEdits([c], ws)[0]);
+    if (env.signal && env.signal.aborted) throw abortToolError();
     return runToolRaw(call, ws, env);
   }
   async function runToolRaw(call, ws, env) {
@@ -1188,38 +1267,91 @@
     return s.slice(0, head) + '\n… [' + (s.length - max) + ' characters omitted] …\n' + s.slice(s.length - (max - head));
   }
   function callLabel(c) {
+    if (!c || typeof c.name !== 'string') return 'invalid tool call';
     const a = c.attrs || {};
     if (c.name === 'run_terminal_command') return c.label || (c.via === 'execute_python' ? 'execute_python' : c.via === 'http_request' ? (c.body || '').replace(/^curl -i -X (\S+).* '([^']*)'$/, '$1 $2').slice(0, 70) : '$ ' + (c.body || '').split('\n')[0].replace(/\s*<<.*$/, '').slice(0, 70));
     if (c.name === 'spawn_agent') return 'agent ' + (a.type || '');
     return c.name + (a.path ? ' ' + a.path : a.query ? ' ' + a.query : a.pattern ? ' ' + a.pattern : a.url ? ' ' + a.url : a.name ? ' ' + a.name : '');
   }
-  /** Run calls in order. Independent helper agents run in parallel, like Freebuff's spawn_agents. */
+  /** Run calls in model order. Only independent reads/research may share a bounded parallel batch. */
   const MAX_PARALLEL = 6;
   async function runTools(calls, ws, env, onProgress) {
-    const parts = new Array(calls.length);
     env = env || {};
-    const gate = { ok: new Set(), no: new Set() };
-    // all file edits of this step are shown to the user in one sheet
-    // calls a helper agent is not allowed to make are never shown for approval; they fail in runTool below
-    const askable = calls.filter((c) => !writeRefusal(c, env));
-    await Safety.approveEdits(askable, env, gate, (list) => previewEdits(list, ws));
-    const one = async (c, i) => {
-      let res, ok = true;
-      if (onProgress) onProgress(callLabel(c));
-      try { res = await runTool(c, ws, env, gate); if (c.name === 'run_terminal_command' && !/\[exit code 0\]/.test(res)) ok = false; }
-      catch (e) { if (e && e.name === 'AbortError') throw e; ok = false; res = 'ERROR: ' + (e && e.message ? e.message : e); }
-      parts[i] = { label: callLabel(c), ok, text: res };
-    };
-    let i = 0;
-    while (i < calls.length) {
-      if (calls[i].name === 'spawn_agent' || calls[i].name === 'web_search' || calls[i].name === 'read_url') {
-        const batch = [];
-        const kind = calls[i].name === 'spawn_agent';
-        // env.serial: the request budget is low, so helpers run one after another
-        while (i < calls.length && batch.length < MAX_PARALLEL && ((calls[i].name === 'spawn_agent') === kind) && ['spawn_agent', 'web_search', 'read_url'].indexOf(calls[i].name) >= 0) { const job = one(calls[i], i); if (env.serial && kind) await job; else batch.push(job); i++; }
-        await Promise.all(batch);
-      } else { await one(calls[i], i); i++; }
+    calls = Array.isArray(calls) ? calls.map((call, i) => {
+      const c = call && typeof call === 'object' && !Array.isArray(call) ? call : { name: '', attrs: {}, body: '' };
+      return Object.assign({}, c, { id: c.id || (String(env.requestId || 'tool') + ':' + i) });
+    }) : [];
+    const parts = new Array(calls.length), gate = { ok: new Set(), no: new Set() }, firstBySignature = new Map(), duplicateOf = new Map();
+    const statusPhase = (phase) => { if (typeof env.onPhase === 'function') env.onPhase(phase); };
+    const stopped = () => !!(env.signal && env.signal.aborted);
+    calls.forEach((c, i) => {
+      if (i >= MAX_TOOL_CALLS_PER_RESPONSE) { parts[i] = resultStatus(c, 'failure', 'Too many tool calls in one model response (limit ' + MAX_TOOL_CALLS_PER_RESPONSE + ').'); return; }
+      const invalid = validateToolCall(c, env.allowedTools);
+      if (invalid) { parts[i] = resultStatus(c, 'failure', 'INVALID_ARGUMENTS: ' + invalid, { code: 'invalid_arguments' }); return; }
+      const refusal = writeRefusal(c, env);
+      if (refusal) { parts[i] = resultStatus(c, 'denied', 'DENIED: ' + refusal, { code: 'denied' }); return; }
+      const signature = toolSignature(c);
+      if (firstBySignature.has(signature)) duplicateOf.set(i, firstBySignature.get(signature));
+      else firstBySignature.set(signature, i);
+    });
+    const runnable = calls.filter((c, i) => !parts[i] && !duplicateOf.has(i));
+    // Batch approval is limited to structurally valid, unique and permitted writes.
+    const askable = runnable.filter((c) => !writeRefusal(c, env));
+    if (stopped()) { calls.forEach((c, i) => { if (!parts[i]) parts[i] = resultStatus(c, 'cancelled', 'CANCELLED: request stopped before approval or execution.', { code: 'cancelled' }); }); }
+    else {
+      const mode = typeof env.mode === 'function' ? env.mode() : env.mode;
+      if (askable.some((c) => !!Safety.approvalFor(c, mode))) statusPhase('WAITING_FOR_APPROVAL');
+      try { await Safety.approveEdits(askable, env, gate, (list) => previewEdits(list, ws)); }
+      catch (e) { if (e && e.name === 'AbortError') { /* recorded as cancelled below */ } else throw e; }
+      if (stopped()) calls.forEach((c, i) => { if (!parts[i]) parts[i] = resultStatus(c, 'cancelled', 'CANCELLED: request stopped while waiting for approval.', { code: 'cancelled' }); });
     }
+    const one = async (c, i) => {
+      if (parts[i]) return;
+      if (stopped()) { parts[i] = resultStatus(c, 'cancelled', 'CANCELLED: request stopped before execution.', { code: 'cancelled' }); return; }
+      if (onProgress) onProgress(callLabel(c));
+      statusPhase('EXECUTING_TOOL');
+      try {
+        const res = await runTool(c, ws, env, gate);
+        let status = 'success', code = '';
+        if (c.name === 'run_terminal_command' && !/\[exit code 0\]/.test(res)) {
+          status = /\[exit code 124(?:, timed out)?\]/.test(res) || /timed out/i.test(res) ? 'timeout' : 'failure';
+          code = status === 'timeout' ? 'timeout' : 'nonzero_exit';
+        }
+        parts[i] = resultStatus(c, status, res, code ? { code } : {});
+      } catch (e) {
+        const status = e && e.name === 'AbortError' ? 'cancelled' : e && (e.denied || e.code === 'denied') ? 'denied' : e && (e.code === 'timeout' || e.name === 'TimeoutError') ? 'timeout' : 'failure';
+        parts[i] = resultStatus(c, status, 'ERROR: ' + (e && e.message ? e.message : e), { code: e && e.code || status });
+      }
+    };
+    const duplicateResult = (i) => {
+      const first = parts[duplicateOf.get(i)];
+      if (!first) return resultStatus(calls[i], 'cancelled', 'Duplicate call suppressed because its first occurrence did not run.', { deduplicated: true });
+      return resultStatus(calls[i], first.status, 'Duplicate call suppressed; original result reused.\n' + first.text, { code: first.code, deduplicated: true, reusedIndex: duplicateOf.get(i) });
+    };
+    let i = 0, prerequisiteFailed = false;
+    while (i < calls.length) {
+      if (parts[i]) { if (env.stopOnFailure && parts[i].status !== 'success') prerequisiteFailed = true; i++; continue; }
+      if (duplicateOf.has(i)) { parts[i] = duplicateResult(i); if (env.stopOnFailure && parts[i].status !== 'success') prerequisiteFailed = true; i++; continue; }
+      if (prerequisiteFailed && env.stopOnFailure) {
+        parts[i] = resultStatus(calls[i], 'cancelled', 'NOT RUN: an earlier tool failed; inspect its result and re-plan before continuing.', { code: 'prerequisite_failed' }); i++; continue;
+      }
+      if (stopped()) { parts[i] = resultStatus(calls[i], 'cancelled', 'CANCELLED: request stopped before execution.', { code: 'cancelled' }); i++; continue; }
+      if (['spawn_agent', 'web_search', 'read_url'].indexOf(calls[i].name) >= 0) {
+        const group = calls[i].name === 'spawn_agent' ? 'spawn_agent' : 'research';
+        const indexes = [];
+        while (i < calls.length && indexes.length < MAX_PARALLEL && !parts[i] && !duplicateOf.has(i) && ((calls[i].name === 'spawn_agent') === (group === 'spawn_agent')) && ['spawn_agent', 'web_search', 'read_url'].indexOf(calls[i].name) >= 0) indexes.push(i++);
+        if (env.serial && group === 'spawn_agent') { for (const k of indexes) await one(calls[k], k); }
+        else await Promise.all(indexes.map((k) => one(calls[k], k)));
+        if (env.stopOnFailure && indexes.some((k) => parts[k] && parts[k].status !== 'success')) prerequisiteFailed = true;
+      } else {
+        await one(calls[i], i);
+        if (env.stopOnFailure && parts[i] && parts[i].status !== 'success') prerequisiteFailed = true;
+        i++;
+      }
+    }
+    // A duplicate that followed an invalid/denied first occurrence reuses that exact failure, never executes.
+    duplicateOf.forEach((first, index) => { if (!parts[index]) parts[index] = duplicateResult(index); });
+    statusPhase('PROCESSING_RESULT');
     return parts;
   }
   function formatToolResults(parts) {
