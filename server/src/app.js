@@ -37,7 +37,14 @@ function create(cfg) {
       req.on('error', reject);
     });
   }
-  const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, Idempotency-Key', 'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS', 'Access-Control-Max-Age': '600' };
+  // Browser access is restricted to explicitly configured origins. Native clients without an Origin header remain supported.
+  const corsOrigins = new Set((cfg.corsOrigins || ['https://appassets.androidplatform.net']).map((v) => String(v).trim()).filter(Boolean));
+  const corsFor = (req) => {
+    const origin = req.headers.origin;
+    if (!origin) return {};
+    return corsOrigins.has(origin) ? { 'Access-Control-Allow-Origin': origin, 'Vary': 'Origin' } : null;
+  };
+  const CORS = { 'Access-Control-Allow-Headers': 'Authorization, Content-Type, Idempotency-Key', 'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS', 'Access-Control-Max-Age': '600' };
   const send = (res, status, body, headers) => { if (res.headersSent) return; const text = typeof body === 'string' ? body : JSON.stringify(body); res.writeHead(status, Object.assign({ 'Content-Type': typeof body === 'string' ? 'text/html; charset=utf-8' : 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }, CORS, headers || {})); res.end(text); };
 
   /** Values for the secret names a request asks for: stored secrets, or a fresh token of a sign-in. */
@@ -180,8 +187,11 @@ function create(cfg) {
 
   const server = http.createServer(async (req, res) => {
     const started = Date.now(); let user = null, beat = null;
+    let cors = null;
     try {
-      if (req.method === 'OPTIONS') { res.writeHead(204, CORS); return res.end(); }
+      cors = corsFor(req);
+      if (cors === null) { send(res, 403, { error: 'This origin is not allowed.' }); return; }
+      if (req.method === 'OPTIONS') { res.writeHead(204, Object.assign({}, CORS, cors)); return res.end(); }
       const u = new URL(req.url, 'http://x'); const pathName = u.pathname.replace(/\/+$/, '') || '/';
       let params = null; const route = routes.find((r) => r.method === req.method && (params = r.re.exec(pathName)));
       if (!route) throw err(routes.some((r) => r.re.test(pathName)) ? 405 : 404, 'No such call: ' + req.method + ' ' + pathName);
@@ -195,11 +205,11 @@ function create(cfg) {
       if (body === null || typeof body !== 'object' || Array.isArray(body)) throw err(400, 'The request body must be a JSON object.');
       // A long command would look like a dead connection to a phone or a proxy. Such calls start the answer early and
       // send a space now and then (valid before JSON); the real status then travels inside the body as `status`.
-      if (route.opt.beat) beat = setInterval(() => { if (!res.headersSent) res.writeHead(200, Object.assign({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' }, CORS)); res.write(' '); }, cfg.beatMs || 15000);
+      if (route.opt.beat) beat = setInterval(() => { if (!res.headersSent) res.writeHead(200, Object.assign({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' }, CORS, cors)); res.write(' '); }, cfg.beatMs || 15000);
       const out = await route.handler({ req, res, user, token, ip, body, params: Object.assign({}, params.groups), query: Object.fromEntries(u.searchParams) });
       clearInterval(beat);
       if (out && res.headersSent) res.end(JSON.stringify(out.status === 200 ? out.body : Object.assign({}, out.body, { status: out.status })));
-      else if (out) send(res, out.status, out.body, out.replayed ? { 'Idempotent-Replay': 'true' } : null);
+      else if (out) send(res, out.status, out.body, Object.assign({}, cors, out.replayed ? { 'Idempotent-Replay': 'true' } : {}));
       log({ t: started, ms: Date.now() - started, method: req.method, path: pathName, status: out ? out.status : res.statusCode, user: user && user.id });
     } catch (e) {
       const status = e.status || 500;
@@ -207,7 +217,7 @@ function create(cfg) {
       clearInterval(beat);
       const said = { error: e.status ? e.message : 'The server hit an unexpected problem.' };
       if (res.headersSent) { try { res.end(beat ? JSON.stringify(Object.assign(said, { status })) : undefined); } catch (er) {} return; }
-      send(res, status, said);
+      send(res, status, said, cors || {});
     }
   });
   server.requestTimeout = 0; server.headersTimeout = 60000; server.keepAliveTimeout = 65000;

@@ -10,6 +10,7 @@ try {
   app = App.create({
     dataDir: path.resolve(env.CYB_DATA_DIR || './data'),
     accessKey: env.CYB_ACCESS_KEY, masterKey: env.CYB_MASTER_KEY, publicUrl: env.CYB_PUBLIC_URL || '',
+    corsOrigins: (env.CYB_CORS_ORIGINS || 'https://appassets.androidplatform.net').split(',').map((v) => v.trim()).filter(Boolean),
     allowShared: env.CYB_ALLOW_SHARED === '1', allowPrivate: env.CYB_ALLOW_PRIVATE === '1', trustProxy: env.CYB_TRUST_PROXY === '1',
     maxParallel: parseInt(env.CYB_MAX_PARALLEL, 10) || 4, maxTimeoutSec: parseInt(env.CYB_MAX_TIMEOUT, 10) || 900,
     lspServers, env: { GOOGLE_CLIENT_ID: env.GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET: env.GOOGLE_CLIENT_SECRET, GITHUB_CLIENT_ID: env.GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET: env.GITHUB_CLIENT_SECRET },

@@ -37,7 +37,8 @@ Put it behind HTTPS (Caddy, nginx, or the host's own TLS). Without Docker: `cd s
 | `CYB_ACCESS_KEY` | **required**, 16+ characters. Typed once in the app to register a phone. |
 | `CYB_PUBLIC_URL` | the https address phones use. Needed for Google / GitHub sign-in (redirect address `<url>/v1/oauth/callback`). |
 | `CYB_DATA_DIR` | where everything is stored (default `./data`, `/data` in the image). Back this folder up. |
-| `CYB_MASTER_KEY` | 64 hex characters used to encrypt secrets and tokens. If unset a key is created in `<data>/master.key`; then the key sits next to the data, so prefer setting it. Losing it makes stored secrets unreadable. |
+| `CYB_MASTER_KEY` | **required in production**: 64 hex characters (32 bytes) used to encrypt secrets and tokens. Keep it in a secret manager, outside the data volume. Development mode may create `<data>/master.key`; production refuses to start without this variable. Losing it makes stored secrets unreadable. |
+| `CYB_CORS_ORIGINS` | comma-separated exact browser origins allowed to call the API (default: `https://appassets.androidplatform.net`). Add the exact web app origin if using the browser UI; do not use `*`. Requests without an `Origin` header (native clients) remain supported. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | a **Web application** OAuth client from Google Cloud (not the Android one). |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | optional, a GitHub OAuth app. |
 | `PORT` | default 8787. |
@@ -49,6 +50,7 @@ Put it behind HTTPS (Caddy, nginx, or the host's own TLS). Without Docker: `cd s
 
 ## What protects what
 
+- Browser API access uses an exact origin allowlist (`CYB_CORS_ORIGINS`); wildcard CORS is not used. Native clients without an `Origin` header remain supported.
 - A phone registers with the access key and gets its own token; the database stores only a hash of it.
 - Secrets and sign-in tokens are encrypted (AES-256-GCM). There is no call that returns a secret value. A command gets a secret only when the request names it, and the value is replaced by `***` in the output.
 - Each user has an own folder. When the server runs as root (the Docker image) each user's commands also run under an own Unix user id, so one user cannot read another's files, the database or the key. Not as root: one user only.
