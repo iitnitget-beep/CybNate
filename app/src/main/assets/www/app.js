@@ -1061,7 +1061,7 @@
       let toolMsg;
       if (calls.length && !calls.every((c) => C.PASSIVE.indexOf(c.name) >= 0)) {
         const sig = signal;
-        if (task && task.evidence) { task.evidence.failedTools = []; task.evidence.denied = false; }
+        if (task && task.evidence) task.evidence.failedTools = []; // Denial is sticky for the whole request: never replan around a user's refusal.
         if (request && request.isActive()) request.transition('SELECTING_TOOL');
         const env = { mode: permMode, allowedTools: agent.tools, signal: sig, approve: (r) => askApproval(r, sig), exec: (c, t, sec) => runCommand(c, t, sig, sec), search: (q) => webSearch(q, sig), readUrl: (u) => readUrl(u, sig), spawn: (type, p) => askAgent(type, p, sig), skill: loadSkill,
           onPhase: (phase) => { if (request && activeRequest === request && request.isActive() && request.state !== phase) request.transition(phase); },
