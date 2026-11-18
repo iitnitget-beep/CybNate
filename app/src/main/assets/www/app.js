@@ -1073,6 +1073,7 @@
           const ok = parts[k] && parts[k].ok;
           if (!ok && task && task.evidence) {
             task.evidence.failedTools.push(1);
+            task.evidence.toolFailureCount = (task.evidence.toolFailureCount || 0) + 1;
             if (parts[k] && parts[k].status === 'denied') task.evidence.denied = true;
           }
           if (['write_file', 'edit_file', 'delete_file', 'zip_extract'].indexOf(c.name) >= 0 && ok) {
@@ -1151,7 +1152,7 @@
     request.transition('VALIDATING').transition('THINKING'); activeRequest = request;
     const checkpoint = S.makeCheckpoint(ws); // lets the user undo everything this run changes
     $('btnSend').classList.add('stop'); sendIcon = sendIcon || $('btnSend').innerHTML; $('btnSend').textContent = '■';
-    task = { budget: O.createBudget(settings.taskBudget || 30, () => tlDraw()), asks: 0, roles: null, single: '', tl: null, tlNode: null, evidence: { failedTools: [], denied: false, proof: null, codeChanged: false } };
+    task = { budget: O.createBudget(settings.taskBudget || 30, () => tlDraw()), asks: 0, roles: null, single: '', tl: null, tlNode: null, evidence: { failedTools: [], toolFailureCount: 0, denied: false, proof: null, codeChanged: false } };
     let failed = '', runOutcome = null;
     try {
       const oldChips = $('messages').querySelector('.followups'); if (oldChips) oldChips.remove();
@@ -1326,9 +1327,9 @@
       } else {
         const id = stage === 'fix' ? 'coder' : stage, chain = task.roles[id];
         const row = tlStep(stage === 'fix' ? 'Coder fix' : C.AGENTS[id].name, chain[0].model);
-        const failuresBefore = task.evidence ? task.evidence.failedTools.length : 0;
+        const failuresBefore = task.evidence ? (task.evidence.toolFailureCount || 0) : 0;
         await agentLoop(id, chain, st, row); row.status = 'ok'; tlDraw();
-        if (stage === 'coder' && task.plan && Planner.canReplan(task.plan) && task.evidence && task.evidence.failedTools.length > failuresBefore && task.budget.left() >= 4) {
+        if (stage === 'coder' && task.plan && Planner.canReplan(task.plan) && task.evidence && (task.evidence.toolFailureCount || 0) > failuresBefore && task.budget.left() >= 4) {
           const evidence = current.messages.slice(-10).filter((m) => m.tool).map((m) => m.content || '').join('\n\n').slice(-5000);
           const replanRaw = await spawnAgent('planner', Planner.replanPrompt(task.plan, evidence, text, ws.list()), sig, 'Planner replan');
           let revisedPlan = null;
