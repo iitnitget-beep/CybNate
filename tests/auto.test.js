@@ -112,6 +112,18 @@ async function boot() {
   assert.ok(has(r.rows, /Planner replan/) && has(r.rows, /Coder after replan/) && has(r.rows, /Reviewer.*no file changes/), r.rows.join(' | '));
   assert.strictEqual(T.ws.has('outside.txt'), false, 'failed out-of-workspace write never escaped the normal tool validator');
 
+  // 3c. a denied operation remains sticky across later tool batches and must suppress replanning
+  newChat(); script.reply = (c, all) => {
+    const n = all.filter((x) => x.role === c.role).length;
+    if (c.role === 'planner') return JSON.stringify({ goal: 'Respect denied action', rationale: 'Do not bypass a refusal', tasks: [{ id: 'safe', title: 'Inspect safely', detail: 'Do not perform the refused write', verify: 'Confirm no file was created', dependsOn: [] }] });
+    if (n === 1) return '<write_file path="denied.txt">\\nno\\n</write_file>';
+    if (n === 2) return '<write_file path="../outside.txt">\\nno\\n</write_file>';
+    return 'Stop after the refused operation and the blocked path attempt.';
+  };
+  r = await say('Build a complete inventory management system with login, reports and an admin dashboard', 'deny');
+  assert.deepStrictEqual(calls.map((c) => c.role), ['planner', 'coder', 'coder', 'coder'], 'a refusal suppresses the planner replan even after a later tool failure');
+  assert.ok(!has(r.rows, /Planner replan/) && !T.ws.has('denied.txt') && !T.ws.has('outside.txt'), 'no denied or unsafe file write was applied');
+
   // 4. fallback: the coder's model fails, the next one in the chain answers
   newChat(); script.fail = (c) => c.model === 'qwen/qwen3-coder:free'; script.reply = () => 'Nothing to change.';
   r = await say('fix the typo in calc.py');
