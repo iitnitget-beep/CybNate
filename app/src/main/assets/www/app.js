@@ -1331,17 +1331,21 @@
         if (stage === 'coder' && task.plan && Planner.canReplan(task.plan) && task.evidence && task.evidence.failedTools.length > failuresBefore && task.budget.left() >= 4) {
           const evidence = current.messages.slice(-10).filter((m) => m.tool).map((m) => m.content || '').join('\n\n').slice(-5000);
           const replanRaw = await spawnAgent('planner', Planner.replanPrompt(task.plan, evidence, text, ws.list()), sig, 'Planner replan');
+          let revisedPlan = null;
           try {
-            task.plan = Planner.applyReplan(task.plan, Planner.parsePlan(replanRaw, { requestId: activeRequest ? activeRequest.id : 'unknown-request', files: ws.list(), knownAgents: Object.keys(C.AGENTS), knownTools: Object.keys(C.TOOL_DOCS) }), { requestId: activeRequest ? activeRequest.id : 'unknown-request', files: ws.list(), knownAgents: Object.keys(C.AGENTS), knownTools: Object.keys(C.TOOL_DOCS) });
+            revisedPlan = Planner.applyReplan(task.plan, Planner.parsePlan(replanRaw, { requestId: activeRequest ? activeRequest.id : 'unknown-request', files: ws.list(), knownAgents: Object.keys(C.AGENTS), knownTools: Object.keys(C.TOOL_DOCS) }), { requestId: activeRequest ? activeRequest.id : 'unknown-request', files: ws.list(), knownAgents: Object.keys(C.AGENTS), knownTools: Object.keys(C.TOOL_DOCS) });
+          } catch (replanError) {
+            const failedPlan = tlStep('Planner replan', '');
+            failedPlan.status = 'fail'; failedPlan.note = String(replanError.message || replanError).slice(0, 100); tlDraw();
+            pushNote('Automatic replan was not used: ' + failedPlan.note + '. Continue from the original request and actual tool results.');
+          }
+          if (revisedPlan) {
+            task.plan = revisedPlan;
             pushReport('revised implementation plan', JSON.stringify(task.plan, null, 2), 'One bounded replan was triggered by observed tool failures. This is revised guidance, not evidence of completed work.');
             const retry = tlStep('Coder replan', chain[0].model);
             pushNote('A tool operation failed. Follow the revised plan where relevant, inspect the actual error and workspace, avoid repeating the same failed call unchanged, then verify any new changes.');
             await agentLoop('coder', chain, st, retry);
             retry.status = 'ok'; tlDraw();
-          } catch (replanError) {
-            const retry = tlStep('Planner replan', '');
-            retry.status = 'fail'; retry.note = String(replanError.message || replanError).slice(0, 100); tlDraw();
-            pushNote('Automatic replan was not used: ' + retry.note + '. Continue from the original request and actual tool results.');
           }
         }
       }
