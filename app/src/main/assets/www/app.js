@@ -1589,6 +1589,60 @@
       }
     });
   }
+  // ---- Plugins: marketplace over the declarative plugin registry (Day 7). Install state is kept
+  // on the phone (settings.plugins); sign-in state comes from the server, so the screen always
+  // shows the real connection state. Scopes and permissions are shown before any authorization.
+  function openMarketplace() {
+    closeDrawer();
+    let query = '', providers = null, loading = false;
+    const states = () => settings.plugins || (settings.plugins = {});
+    const entryOf = (id) => Marketplace.CATALOGUE.find((en) => en.manifest.id === id);
+    const manifestOf = (id) => { const en = entryOf(id); try { return PluginRegistry.applyState(en.manifest, states()[id] || {}); } catch (e) { return PluginRegistry.normalize(en.manifest); } };
+    const keep = (m) => { states()[m.id] = { installState: m.installState, connectionState: m.connectionState }; saveSettings(); };
+    async function loadProviders() {
+      if (providers || loading) return;
+      loading = true;
+      if (backend.on()) { try { providers = (await backend.signIns()).providers || []; } catch (e) { providers = []; } }
+      else providers = [];
+      loading = false; drawSheet();
+    }
+    async function act(action, item) {
+      try {
+        if (action === 'disconnect-account') { await backend.oauthOff(item.id); providers = null; toast('Disconnected ' + item.name); loadProviders(); return; }
+        const m = manifestOf(item.id);
+        if (action === 'install' || action === 'uninstall' || action === 'disconnect') {
+          keep(Marketplace.transition(m, action));
+          if (action === 'disconnect' && item.provider && backend.on()) await backend.oauthOff(item.provider).catch(() => {});
+          if (action === 'disconnect') providers = null;
+          drawSheet(); return;
+        }
+        if (action === 'connect') {
+          if (item.authType === 'oauth2') {
+            if (!backend.on()) { toast('Connect a server in Settings first.'); return; }
+            const st = await backend.oauthStart(item.provider, item.scopes.slice());
+            openExternal(st.url);
+            toast('Finish sign-in in the browser, then reopen Plugins.');
+            providers = null; return;
+          }
+          keep(Marketplace.transition(m, 'connect')); drawSheet();
+        }
+      } catch (e) { toast(e.message); }
+    }
+    openSheet('Plugins', (body) => {
+      loadProviders();
+      body.appendChild(el('p', 'intsub', 'Install plugins, then connect them. Permissions and scopes are shown before you authorize anything.'));
+      const q = el('input', 'field'); q.type = 'search'; q.placeholder = 'Search plugins'; q.value = query; q.autocapitalize = 'off'; q.autocomplete = 'off'; q.id = 'mkSearch';
+      body.appendChild(q);
+      const box = el('div', 'mklist'); body.appendChild(box);
+      const draw = () => {
+        const model = Marketplace.buildModel({ states: states(), providers: providers || [], mcpServers: [], serverConnected: backend.on() });
+        const cards = Marketplace.filterCards(model.cards, { query });
+        Marketplace.render(box, { cards, categories: model.categories, accounts: model.accounts }, { onAction: act });
+      };
+      q.oninput = () => { query = q.value; draw(); };
+      draw();
+    });
+  }
   // ---- Google sign-in (Gmail, Drive / Docs / Sheets, Calendar). Play services recognise the app by its package and signing key.
   let gaSeq = 0; const gaReqs = {};
   window.__ga = (id, res) => { const r = gaReqs[id]; if (r) { delete gaReqs[id]; r(res); } };
@@ -2401,7 +2455,7 @@
   $('dNew').onclick = () => { if (busy) return; closeDrawer(); newSession(); };
   $('btnFiles').onclick = openFiles; $('dFiles').onclick = () => { closeDrawer(); openFiles(); };
   $('dSettings').onclick = openSettings;
-  $('btnTerm').onclick = openTerminal; $('dTerm').onclick = openTerminal; $('dGit').onclick = openGitHub; $('dInt').onclick = () => openIntegrations();
+  $('btnTerm').onclick = openTerminal; $('dTerm').onclick = openTerminal; $('dGit').onclick = openGitHub; $('dInt').onclick = () => openIntegrations(); $('dMarket').onclick = () => openMarketplace();
   $('btnModel').onclick = () => openModels();
   $('btnMode').onclick = openModeMenu;
   $('dSearch').onclick = () => { const f = $('dFilter'); f.hidden = !f.hidden; if (f.hidden) { f.value = ''; openDrawer(); } else f.focus(); };
@@ -2431,7 +2485,7 @@
 
   if (!C.PROVIDERS[settings.provider]) { settings.provider = 'pollinations'; settings.model = 'openai-fast'; }
   $('ver').textContent = Native ? 'v' + Native.version() : 'web';
-  window.__cyb = { backend, openServer, secretsUp, setSecret, wireCall, codexSignIn, codexFresh, setCodex, googleConnect, googleToken, freshGoogle, fetchModels, openProviders, chatStream, openIntegrations, testIntegration, saveIntegration, removeIntegration, connectedIds, extraPrompt, cli, testWebapp, slashCommand, attachMentions, compactChat, kv, Native, nativeStream, fetchModels, C, ws, settings, limiter, health, usageReport, openUsage, freeCheck, metaOf, apiHistory, modelPool, spawnAgent, helperExec, rerunAs, get task() { return task; }, askApproval, openPreview, offerUndo, namedSecrets, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
+  window.__cyb = { backend, openServer, secretsUp, setSecret, wireCall, codexSignIn, codexFresh, setCodex, googleConnect, googleToken, freshGoogle, fetchModels, openProviders, chatStream, openIntegrations, openMarketplace, testIntegration, saveIntegration, removeIntegration, connectedIds, extraPrompt, cli, testWebapp, slashCommand, attachMentions, compactChat, kv, Native, nativeStream, fetchModels, C, ws, settings, limiter, health, usageReport, openUsage, freeCheck, metaOf, apiHistory, modelPool, spawnAgent, helperExec, rerunAs, get task() { return task; }, askApproval, openPreview, offerUndo, namedSecrets, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
   window.addEventListener('error', (e) => { console.log('CYBERR ' + e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno); });
   window.addEventListener('unhandledrejection', (e) => { console.log('CYBERR promise ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)); });
 
