@@ -2559,12 +2559,36 @@
   } catch (e) { /* pairing is best-effort */ }
   // Built-in test server: on first launch, connect by itself so installing the app is all it takes.
   // TEST ONLY — the production build signs in with an account instead of a baked key.
-  const DEFAULT_BACKEND = { url: 'https://ad6b5427bb821b.app.lhr.life', key: 'c6d86b1900e58c07afaf99020f4e477e' };
+  // The test server's public address rotates, so the app first asks a stable
+  // discovery file for the current address and falls back to the baked one.
+  const DEFAULT_BACKEND = { url: 'https://47b359b0ebbfab.app.lhr.life', key: 'c6d86b1900e58c07afaf99020f4e477e' };
+  const BACKEND_DISCOVERY = 'https://raw.githubusercontent.com/iitnitget-beep/CybNate/work/10-day-platform-sprint/release/backend.json';
+  async function discoverBackend() {
+    try {
+      const r = await fetch(BACKEND_DISCOVERY, { cache: 'no-store' });
+      if (!r.ok) return null;
+      const j = await r.json();
+      return j && j.url && j.key ? j : null;
+    } catch (e) { return null; }
+  }
   try {
     // only inside the real Android app (appassets origin), never in a browser or a test harness
-    if (/appassets\.androidplatform\.net$/.test(location.hostname) && !settings.backend && DEFAULT_BACKEND.url && !localStorage.getItem('cyb.defaultBackendTried')) {
-      localStorage.setItem('cyb.defaultBackendTried', '1');
-      pairBackend(DEFAULT_BACKEND.url, DEFAULT_BACKEND.key, true);
+    if (/appassets\.androidplatform\.net$/.test(location.hostname)) {
+      (async () => {
+        if (settings.backend) {
+          // paired before: if that address is dead (rotated), discover the new one and re-pair
+          let alive = false;
+          try { alive = !!(await Promise.race([backend.call('GET', '/v1/health'), new Promise((_, rej) => setTimeout(rej, 6000))])); } catch (e) { alive = false; }
+          if (alive) return;
+          const found = await discoverBackend();
+          if (found && found.url !== settings.backend.url) { settings.backend = null; saveSettings(); pairBackend(found.url, found.key, true); }
+          return;
+        }
+        if (localStorage.getItem('cyb.defaultBackendTried')) return;
+        localStorage.setItem('cyb.defaultBackendTried', '1');
+        const found = await discoverBackend();
+        pairBackend((found && found.url) || DEFAULT_BACKEND.url, (found && found.key) || DEFAULT_BACKEND.key, true);
+      })();
     }
   } catch (e) { /* first-launch connect is best-effort */ }
   console.log('CYBUI ready agents=' + $('agents').children.length + ' model=' + settings.model);
