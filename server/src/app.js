@@ -9,7 +9,7 @@ const Lsp = require('./lsp');
 const OAuth = require('./oauth');
 const Net = require('./net');
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 const err = (status, message) => Object.assign(new Error(message), { status });
 const safeEq = (a, b) => { const x = crypto.createHash('sha256').update(String(a)).digest(), y = crypto.createHash('sha256').update(String(b)).digest(); return crypto.timingSafeEqual(x, y); };
 const NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
