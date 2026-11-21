@@ -37,8 +37,9 @@ function create(cfg) {
       req.on('error', reject);
     });
   }
-  const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, Idempotency-Key', 'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS', 'Access-Control-Max-Age': '600' };
-  const send = (res, status, body, headers) => { if (res.headersSent) return; const text = typeof body === 'string' ? body : JSON.stringify(body); res.writeHead(status, Object.assign({ 'Content-Type': typeof body === 'string' ? 'text/html; charset=utf-8' : 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }, CORS, headers || {})); res.end(text); };
+  /* CORS: auth is Bearer-only (no cookies), so a wildcard origin cannot leak a session; operators can pin one origin with corsOrigin. */
+  const CORS = { 'Access-Control-Allow-Origin': cfg.corsOrigin || '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, Idempotency-Key', 'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS', 'Access-Control-Max-Age': '600' };
+  const send = (res, status, body, headers) => { if (res.headersSent) return; const text = typeof body === 'string' ? body : JSON.stringify(body); res.writeHead(status, Object.assign({ 'Content-Type': typeof body === 'string' ? 'text/html; charset=utf-8' : 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' }, CORS, headers || {})); res.end(text); };
 
   /** Values for the secret names a request asks for: stored secrets, or a fresh token of a sign-in. */
   async function resolveSecrets(user, names) {
@@ -76,10 +77,11 @@ function create(cfg) {
     if (!safeEq(c.body.accessKey || '', cfg.accessKey)) throw err(403, 'The access key is wrong.');
     if (workspace.isolation() === 'none' && store.userCount() >= 1 && !cfg.allowShared) throw err(403, 'This server does not run as root, so it cannot keep users apart. It accepts one user only. Run it in the Docker image (as root) for more, or set CYB_ALLOW_SHARED=1 if every user is trusted.');
     const u = store.register(c.body.name, c.body.device); workspace.ensure(u);
+    store.auditPut(u.id, 'auth.registered', null, null);
     return ok({ userId: u.id, token: u.token });
   }, { open: true });
   on('GET', '/v1/me', async (c) => ok({ userId: c.user.id, name: c.user.name, isolation: workspace.isolation() }));
-  on('POST', '/v1/auth/logout', async (c) => ok({ ok: store.logout(c.token) }));
+  on('POST', '/v1/auth/logout', async (c) => { const removed = store.logout(c.token); if (removed) store.auditPut(c.user.id, 'auth.logout', null, null); return ok({ ok: removed }); });
 
   // ---- workspace files
   on('GET', '/v1/files', async (c) => ok({ files: await workspace.list(c.user) }));
@@ -115,9 +117,12 @@ function create(cfg) {
     if (oauth.providerOfSecret(c.params.name)) throw err(409, 'That name belongs to a sign-in; its token is managed by the server.');
     if (typeof c.body.value !== 'string' || !c.body.value) throw err(400, 'The secret value is empty.');
     if (c.body.value.length > 16384) throw err(413, 'The secret value is too long.');
-    store.secretPut(c.user.id, c.params.name, c.body.value); return ok({ ok: true });
+    store.secretPut(c.user.id, c.params.name, c.body.value); store.auditPut(c.user.id, 'secret.put', c.params.name, null); return ok({ ok: true });
   });
-  on('DELETE', '/v1/secrets/:name', async (c) => ok({ ok: store.secretDel(c.user.id, c.params.name) }));
+  on('DELETE', '/v1/secrets/:name', async (c) => { const removed = store.secretDel(c.user.id, c.params.name); if (removed) store.auditPut(c.user.id, 'secret.deleted', c.params.name, null); return ok({ ok: removed }); });
+
+  // ---- audit events (own events only; never token or secret values)
+  on('GET', '/v1/audit', async (c) => ok({ events: store.auditList(c.user.id, c.query.limit) }));
 
   // ---- outbound request with secrets filled in on the server ($NAME in the address, headers or body)
   on('POST', '/v1/http', async (c) => idempotent(c.user, c.req, async () => {
@@ -138,7 +143,7 @@ function create(cfg) {
   on('GET', '/v1/oauth/codex/status', async (c) => ok(oauth.codexStatus(c.user)));
   on('DELETE', '/v1/oauth/codex/device', async (c) => { oauth.codexCancel(c.user); return ok({ ok: true }); });
   on('GET', '/v1/oauth/:provider/status', async (c) => ok(oauth.status(c.user, c.params.provider)));
-  on('POST', '/v1/oauth/:provider/start', async (c) => ok(oauth.start(c.user, c.params.provider, Array.isArray(c.body.scopes) ? c.body.scopes.map(String) : [], { reconsent: c.body.reconsent === true })));
+  on('POST', '/v1/oauth/:provider/start', async (c) => { const r = oauth.start(c.user, c.params.provider, Array.isArray(c.body.scopes) ? c.body.scopes.map(String) : [], { reconsent: c.body.reconsent === true }); store.auditPut(c.user.id, 'oauth.start', c.params.provider, 'scopes:' + r.scopes.join(' ')); return ok(r); });
   on('DELETE', '/v1/oauth/:provider', async (c) => { if (c.params.provider === 'codex') oauth.codexCancel(c.user); return ok({ ok: await oauth.disconnect(c.user, c.params.provider) }); });
   on('GET', '/v1/oauth/callback', async (c) => {
     const r = await oauth.callback(c.query);
@@ -158,7 +163,7 @@ function create(cfg) {
     const s = await oauth.codexSession(c.user);
     const ctl = new AbortController(); c.res.on('close', () => { if (!c.res.writableEnded) ctl.abort(); });
     const r = await fetch(oauth.codex.api + '/responses', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json', Accept: 'text/event-stream' }, oauth.codexHeaders(s)), body: JSON.stringify(c.body), signal: ctl.signal });
-    c.res.writeHead(r.status, Object.assign({ 'Content-Type': r.headers.get('content-type') || 'application/json', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' }, CORS));
+    c.res.writeHead(r.status, Object.assign({ 'Content-Type': r.headers.get('content-type') || 'application/json', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' }, CORS));
     if (r.body) for await (const chunk of r.body) c.res.write(chunk); // passed on as it arrives, so the app shows the reply while it is written
     c.res.end(); return null;
   }, { max: 32 * 1024 * 1024 });

@@ -41,6 +41,8 @@ function create(store, cfg) {
   const refreshing = new Map(), devices = new Map();
   const http = async (url, o) => { const r = await fetch(url, Object.assign({ signal: AbortSignal.timeout(30000) }, o)); const text = await r.text(); let json = null; try { json = JSON.parse(text); } catch (e) {} return { status: r.status, text, json }; };
   const said = (r) => { const j = r.json || {}; const m = j.error_description || (j.error && (j.error.message || j.error)) || j.message || ''; return typeof m === 'string' ? m : JSON.stringify(m); };
+  /* Audit trail for credential events. Detail carries names/scopes/status only — never token values. */
+  const audit = (userId, event, subject, detail) => { try { if (store.auditPut) store.auditPut(userId, event, subject, detail); } catch (e) { /* auditing must never break sign-in */ } };
 
   const configured = (id) => { const p = providers[id]; return !!(p && p.clientId && publicUrl); };
   function list(user) {
@@ -93,6 +95,7 @@ function create(store, cfg) {
     const s = { access: r.json.access_token, refresh: r.json.refresh_token || prev.refresh || '', exp: r.json.expires_in ? Date.now() + r.json.expires_in * 1000 : 0, scopes: r.json.scope ? String(r.json.scope).split(/[ ,]+/).filter(Boolean) : st.scopes, who: '', at: Date.now() };
     if (p.who) { try { const w = await http(p.who.url, { headers: { Authorization: 'Bearer ' + s.access, Accept: 'application/json', 'User-Agent': 'cybnate-server' } }); if (w.json && w.json[p.who.field]) s.who = String(w.json[p.who.field]); } catch (e) { /* the session works without the name */ } }
     store.oauthPut(st.user, st.provider, s);
+    audit(st.user, 'oauth.connected', st.provider, 'scopes:' + s.scopes.join(' '));
     return { ok: true, message: 'Connected to ' + p.name + (s.who ? ' as ' + s.who : '') + '. You can go back to CybNate.' };
   }
   const once = (key, fn) => { if (!refreshing.has(key)) refreshing.set(key, fn().finally(() => refreshing.delete(key))); return refreshing.get(key); };
@@ -105,14 +108,32 @@ function create(store, cfg) {
         const r = await http(p.tokenUrl, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }, body: form({ grant_type: 'refresh_token', refresh_token: s.refresh, client_id: p.clientId, client_secret: p.clientSecret || undefined }) });
         if (r.status >= 400 || !r.json || !r.json.access_token) {
           // a refused refresh token will never work again: forget the session so the app shows "sign in again"
-          if (r.status === 400 || r.status === 401) store.oauthDel(user.id, id);
+          if (r.status === 400 || r.status === 401) { store.oauthDel(user.id, id); audit(user.id, 'oauth.refresh_refused', id, 'http:' + r.status); }
           throw Object.assign(new Error(p.name + ' sign-in has expired' + (said(r) ? ': ' + said(r) : '') + '. Sign in again.'), { status: 401 });
         }
         const n = Object.assign({}, s, { access: r.json.access_token, refresh: r.json.refresh_token || s.refresh, exp: r.json.expires_in ? Date.now() + r.json.expires_in * 1000 : 0 });
-        store.oauthPut(user.id, id, n); return n;
+        store.oauthPut(user.id, id, n); audit(user.id, 'oauth.refreshed', id, null); return n;
       });
     }
     return s.access;
+  }
+  /** Least-privilege check for credential/tool use. Denied when not connected (including revoked) or a needed scope was not granted. */
+  function canUse(user, id, neededScopes) {
+    const needed = [...new Set((neededScopes || []).map((s) => String(s).trim()).filter(Boolean))];
+    if (id === 'codex') { const s = store.oauthGet(user.id, 'codex'); return s ? { ok: true, missing: [] } : { ok: false, reason: 'not_connected', missing: needed }; }
+    const p = providers[id];
+    if (!p) return { ok: false, reason: 'unknown_provider', missing: needed };
+    const s = store.oauthGet(user.id, id);
+    if (!s) return { ok: false, reason: 'not_connected', missing: needed };
+    const granted = s.scopes || [];
+    const missing = needed.filter((sc) => !granted.includes(sc));
+    return missing.length ? { ok: false, reason: 'missing_scopes', missing } : { ok: true, missing: [] };
+  }
+  /** Same check as canUse, as a gate: throws 403 (and audits the denial) instead of returning false. */
+  function requireUse(user, id, neededScopes) {
+    const r = canUse(user, id, neededScopes);
+    if (!r.ok) { audit(user.id, 'credential.denied', id, r.reason + (r.missing.length ? ':' + r.missing.join(' ') : '')); throw Object.assign(new Error(r.reason === 'missing_scopes' ? 'Missing granted scope(s) for ' + id + ': ' + r.missing.join(', ') : 'Not connected to ' + id + '. Connect it first.'), { status: 403, reason: r.reason, missing: r.missing }); }
+    return true;
   }
   /** Secret names that stand for a sign-in ("GMAIL_ACCESS_TOKEN" -> google). */
   const providerOfSecret = (name) => Object.keys(providers).find((id) => providers[id].secrets.includes(name)) || '';
@@ -120,7 +141,9 @@ function create(store, cfg) {
     const s = store.oauthGet(user.id, id); if (!s) return false;
     const p = providers[id];
     if (p && p.revokeUrl) { try { await http(p.revokeUrl, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form({ token: s.refresh || s.access }) }); } catch (e) { /* removed here either way */ } }
-    return store.oauthDel(user.id, id);
+    const removed = store.oauthDel(user.id, id);
+    if (removed) audit(user.id, 'oauth.disconnected', id, null);
+    return removed;
   }
 
   // ---------------------------------------------------------------- Codex (device code)
@@ -146,7 +169,7 @@ function create(store, cfg) {
         const t = await http(codex.issuer + '/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form({ grant_type: 'authorization_code', client_id: codex.clientId, code: p.json.authorization_code, redirect_uri: codex.issuer + '/deviceauth/callback', code_verifier: p.json.code_verifier }) });
         if (t.status >= 400 || !t.json || !t.json.access_token) throw new Error('OpenAI refused the sign-in' + (said(t) ? ': ' + said(t) : ' (HTTP ' + t.status + ')') + '.');
         if (d.cancelled) return;
-        store.oauthPut(user.id, 'codex', codexFromTokens(t.json)); d.state = 'connected';
+        store.oauthPut(user.id, 'codex', codexFromTokens(t.json)); audit(user.id, 'oauth.connected', 'codex', null); d.state = 'connected';
       } catch (e) { d.state = 'error'; d.error = e.message; }
     };
     d.timer = setTimeout(poll, d.intervalMs);
@@ -165,7 +188,7 @@ function create(store, cfg) {
     if (s.refresh && s.exp && s.exp - Date.now() < 5 * 60 * 1000) {
       s = await once(user.id + ':codex', async () => {
         const r = await http(codex.issuer + '/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form({ grant_type: 'refresh_token', client_id: codex.clientId, refresh_token: s.refresh }) });
-        if (r.status >= 400 || !r.json || !r.json.access_token) { if (r.status === 400 || r.status === 401) store.oauthDel(user.id, 'codex'); throw Object.assign(new Error('The ChatGPT sign-in has expired' + (said(r) ? ': ' + said(r) : '') + '. Sign in again.'), { status: 401 }); }
+        if (r.status >= 400 || !r.json || !r.json.access_token) { if (r.status === 400 || r.status === 401) { store.oauthDel(user.id, 'codex'); audit(user.id, 'oauth.refresh_refused', 'codex', 'http:' + r.status); } throw Object.assign(new Error('The ChatGPT sign-in has expired' + (said(r) ? ': ' + said(r) : '') + '. Sign in again.'), { status: 401 }); }
         const n = codexFromTokens(r.json, s); store.oauthPut(user.id, 'codex', n); return n;
       });
     }
@@ -174,7 +197,7 @@ function create(store, cfg) {
   const codexHeaders = (s) => Object.assign({ Authorization: 'Bearer ' + s.access, originator: 'cybnate' }, s.account ? { 'ChatGPT-Account-ID': s.account } : {});
   const stop = () => devices.forEach((d) => { d.cancelled = true; clearTimeout(d.timer); });
 
-  return { providers, codex, redirectUri, configured, list, status, start, callback, accessToken, providerOfSecret, disconnect, codexStart, codexStatus, codexCancel, codexSession, codexHeaders, stop };
+  return { providers, codex, redirectUri, configured, list, status, start, callback, accessToken, canUse, requireUse, providerOfSecret, disconnect, codexStart, codexStatus, codexCancel, codexSession, codexHeaders, stop };
 }
 
 module.exports = { create };

@@ -20,6 +20,7 @@ function loadMasterKey(dataDir, fromEnv) {
   // (kept out of the data volume) is what protects the secrets when the volume itself leaks.
   const file = path.join(dataDir, 'master.key');
   if (!fs.existsSync(file)) fs.writeFileSync(file, crypto.randomBytes(32).toString('hex'), { mode: 0o600 });
+  try { const mode = fs.statSync(file).mode & 0o777; if (mode & 0o077) fs.chmodSync(file, 0o600); } catch (e) { /* best effort on filesystems without modes */ }
   return { key: Buffer.from(fs.readFileSync(file, 'utf8').trim(), 'hex'), source: 'file' };
 }
 
@@ -36,6 +37,8 @@ function open(dataDir, masterKeyEnv) {
     CREATE TABLE IF NOT EXISTS kv (user TEXT, key TEXT, value TEXT, version INTEGER, updated INTEGER, PRIMARY KEY (user, key));
     CREATE TABLE IF NOT EXISTS idem (user TEXT, key TEXT, status INTEGER, body TEXT, created INTEGER, PRIMARY KEY (user, key));
     CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value TEXT, expires INTEGER);
+    CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, user TEXT NOT NULL, event TEXT NOT NULL, subject TEXT, detail TEXT, at INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS audit_user_at ON audit (user, at);
   `);
 
   const seal = (text, aad) => {
@@ -65,6 +68,8 @@ function open(dataDir, masterKeyEnv) {
     kvUpd: q('UPDATE kv SET value = ?, version = version + 1, updated = ? WHERE user = ? AND key = ? AND version = ?'), kvDel: q('DELETE FROM kv WHERE user = ? AND key = ?'),
     idGet: q('SELECT status, body FROM idem WHERE user = ? AND key = ?'), idPut: q('INSERT OR REPLACE INTO idem (user, key, status, body, created) VALUES (?, ?, ?, ?, ?)'), idGc: q('DELETE FROM idem WHERE created < ?'),
     caGet: q('SELECT value, expires FROM cache WHERE key = ?'), caPut: q('INSERT OR REPLACE INTO cache (key, value, expires) VALUES (?, ?, ?)'), caGc: q('DELETE FROM cache WHERE expires < ?'),
+    auPut: q('INSERT INTO audit (user, event, subject, detail, at) VALUES (?, ?, ?, ?, ?)'),
+    auList: q('SELECT event, subject, detail, at FROM audit WHERE user = ? ORDER BY id DESC LIMIT ?'),
   };
   const now = () => Date.now();
 
@@ -91,6 +96,9 @@ function open(dataDir, masterKeyEnv) {
     oauthPut(user, provider, data) { st.oaPut.run(user, provider, seal(JSON.stringify(data), 'oauth:' + user + ':' + provider), now()); },
     oauthGet(user, provider) { const r = st.oaGet.get(user, provider); return r ? JSON.parse(unseal(r.blob, 'oauth:' + user + ':' + provider)) : null; },
     oauthDel: (user, provider) => st.oaDel.run(user, provider).changes > 0,
+    // ---- audit events (names and outcomes only; never token or secret values)
+    auditPut(user, event, subject, detail) { st.auPut.run(user, String(event).slice(0, 64), subject == null ? null : String(subject).slice(0, 128), detail == null ? null : String(detail).slice(0, 256), now()); },
+    auditList(user, limit) { const n = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200); return st.auList.all(user, n).map((r) => ({ event: r.event, subject: r.subject, detail: r.detail, at: r.at })); },
     // ---- saved app state with versions: a write must name the version it was based on
     kvGet(user, key) { const r = st.kvGet.get(user, key); return r ? { value: JSON.parse(r.value), version: r.version, updated: r.updated } : null; },
     kvList: (user) => st.kvList.all(user),
