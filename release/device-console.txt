@@ -1,10 +1,18 @@
 CYBUI ready agents=6 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:2538)
-CYBUI layout t=1500 header=56 welcome=516 frames=39 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2556)
-CYBUI layout t=6000 header=56 welcome=516 frames=229 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2556)
-CYBUI layout t=12000 header=56 welcome=516 frames=229 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2556)
-CYBUI layout t=25000 header=56 welcome=516 frames=229 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2556)
-FOCUS1   mCurrentFocus=Window{28bf79a u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{d3b650b u0 com.cybnate.app/.MainActivity t8} 
-  mCurrentFocus=Window{28bf79a u0 com.cybnate.app/com.cybnate.app.MainActivity}
-  mFocusedApp=ActivityRecord{d3b650b u0 com.cybnate.app/.MainActivity t8}
-11-21 05:55:42.096  1767  2192 W A       : 	at org.chromium.net.impl.CronetUrlRequest.onError(:com.google.android.gms.dynamite_cronetdynamite@231818047@23.18.18 (190800-0):5)
-11-21 05:55:47.427   520   539 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +5s167ms
+CYBUI layout t=1500 header=56 welcome=516 frames=57 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2556)
+CYBUI layout t=6000 header=56 welcome=516 frames=284 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2556)
+CYBUI layout t=12000 header=56 welcome=516 frames=284 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2556)
+CYBUI layout t=25000 header=56 welcome=516 frames=284 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2556)
+FOCUS1   mCurrentFocus=Window{a427ffb u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{dc58463 u0 com.cybnate.app/.MainActivity t8} 
+  mCurrentFocus=Window{a427ffb u0 com.cybnate.app/com.cybnate.app.MainActivity}
+  mFocusedApp=ActivityRecord{dc58463 u0 com.cybnate.app/.MainActivity t8}
+11-21 06:01:07.446  3261  3434 E chromium: [ERROR:simple_file_enumerator.cc(21)] opendir /data/user/0/com.cybnate.app/cache/WebView/Default/HTTP Cache/Code Cache/wasm: No such file or directory (2)
+11-21 06:01:07.446  3261  3434 E chromium: [ERROR:simple_index_file.cc(614)] Could not reconstruct index from disk
+11-21 06:01:07.446  3261  3433 E chromium: [ERROR:simple_file_enumerator.cc(21)] opendir /data/user/0/com.cybnate.app/cache/WebView/Default/HTTP Cache/Code Cache/js: No such file or directory (2)
+11-21 06:01:07.446  3261  3433 E chromium: [ERROR:simple_index_file.cc(614)] Could not reconstruct index from disk
+11-21 06:01:08.293   521   538 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +2s829ms
+CybNateJS: CYBUI ready agents=6 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:2538)
+CybNateJS: CYBUI layout t=1500 header=56 welcome=516 frames=7 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2556)
+CybNateJS: CYBUI layout t=6000 header=56 welcome=516 frames=246 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2556)
+CybNateJS: CYBUI layout t=12000 header=56 welcome=516 frames=300 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2556)
+CybNateJS: CYBUI layout t=25000 header=56 welcome=516 frames=300 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2556)

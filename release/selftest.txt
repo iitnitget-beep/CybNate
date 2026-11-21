@@ -1,4 +1,4 @@
-CybNate on-device self test (2026-11-21T05:48Z, Android 14, versionName=113.0.5672.136)
+CybNate on-device self test (2026-11-21T06:02Z, Android 14, versionName=113.0.5672.136)
 CYBTEST START ua=Mozilla/5.0 (Linux; Android 14; sdk_gphone64_x86_64 Build/UE1A.230829.050; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/113.0.5672.136 Mobile Safari/537.36
 CYBTEST PASS shell echo + workspace mirror :: hello.py lib main.js 34 done 
 CYBTEST PASS shell writes file back into workspace :: main.js,gen/a.txt,lib/add.js (deleted)
@@ -9,12 +9,12 @@ CYBTEST PASS python error exit code :: traceback ok
 CYBTEST PASS python numpy from CDN :: 15 
 CYBTEST PASS pip install pure package :: cowsay ok
 CYBTEST PASS node runs + require + fs :: node says 5 
-CYBTEST PASS timeout kills runaway python :: 6348 ms incl. restart
+CYBTEST PASS timeout kills runaway python :: 6017 ms incl. restart
 CYBTEST PASS pollinations model list :: 1 models: openai-fast
 CYBTEST SKIP pollinations chat (keyless) :: live model calls are not deterministic under the bounded device smoke-test budget
 CYBTEST SKIP agent tool call from real model :: requires a live provider call; excluded from bounded device smoke tests
 CYBTEST SKIP full agent run through the UI :: requires a long live model interaction; covered by bounded UI and unit tests
-CYBTEST PASS web search :: 8 results; first: Pyodide — Version 314.0.8 https://pyodide.org/
+CYBTEST FAIL web search :: endpoints: https://html.duckduckgo.com/html/, https://lite.duckduckgo.com/lite/; error: search returned nothing after 3 attempts (attempt 1: The search engine blocked this request (HTTP 202). Try again later, or open a known URL with read_url.; attempt 2: The 
 CYBTEST PASS read url :: # Example Domain https://example.com This domain is for use in documentation ex
 CYBTEST PASS github api CORS and rate-limit handling :: GitHub API CORS ok; core quota limit=60
 CYBTEST PASS gate: denied shell command does not run :: refused
@@ -25,22 +25,22 @@ CYBTEST PASS secrets reach a command only when named and output is redacted :: n
 CYBTEST PASS injection page stays inside untrusted_data :: wrapped
 CYBTEST PASS checkpoint undo restores changed, deleted and new files :: {"restored":2,"removed":1,"skipped":[]}
 CYBTEST PASS preview cannot reach the native bridge :: probe:blocked-undefined, no file written
-CYBTEST PASS Stop ends a running shell command :: stopped after 610 ms, exit 130
+CYBTEST PASS Stop ends a running shell command :: stopped after 608 ms, exit 130
 CYBTEST PASS large shell output file is kept on disk and reported :: kept, reported, forgotten after rm
 CYBTEST PASS auto: routing rules pick the agent :: apk→reverse, question→chat, plan→planner, fix→coder
 CYBTEST PASS auto: limiter (2 at a time) and task budget cap :: peak 2, budget stops at 2/2
 CYBTEST PASS router: pace follows provider replies; paid model refused before sending :: waits 20 s when asked, refuses a 1 h wait, paid model not sent
-CYBTEST PASS router: rate-limit headers reach the app through the native bridge :: HTTP 200, limit 60, remaining 58, resets in 13 min
+CYBTEST PASS router: rate-limit headers reach the app through the native bridge :: HTTP 200, limit 60, remaining 50, resets in 29 min
 CYBTEST PASS auto: helper agents cannot change project files through the shell :: reviewer: 2 undone; reverse: analysis/ kept, outside undone
 CYBTEST PASS test_webapp: working page + interaction script :: Page: wt/index.html (viewport 320x616, 0.7 s)
 CYBTEST PASS test_webapp: offline React Native JSX preview compiles and renders :: offline Babel + React Native shim + virtual Express /api route rendered #root
 CYBTEST PASS test_webapp: catches error, rejection, failed assert, overflow :: Layout issues (2): ! Horizontal overflow: the page is 1408 px wide in a 320 px viewport. Widest elements: div#wide (right edge at 1408 px) ! 1 tap target(s) smaller than 24 px: button#b 12x12 
-CYBTEST PASS test_webapp: page has no bridge, unfinished script is stopped :: isolated; unfinished script stopped after 4819 ms
-CYBTEST PASS built-in git: init, commit, diff, restore, log :: 15e05bb (HEAD -> main) first commit
+CYBTEST PASS test_webapp: page has no bridge, unfinished script is stopped :: isolated; unfinished script stopped after 4858 ms
+CYBTEST PASS built-in git: init, commit, diff, restore, log :: ad2bf48 (HEAD -> main) first commit
 CYBTEST PASS built-in npm: install a real package, require it :: left-pad -> 007 
 CYBTEST PASS built-in curl: JSON GET, -o file, HTTP error code :: GET ok, -o ok, 404 -> exit 22
 CYBTEST SKIP python sqlite3 + unittest :: requires Pyodide initialization; covered by the JS worker/unit suite
 CYBTEST PASS edits without tool tags: named code fence + SEARCH/REPLACE :: fuzzy edit applied; add(2,3)=5 
 CYBTEST PASS integrations: catalogue + a wrong key is refused by the real service :: 76 services; GitLab: The service refused the key (HTTP 401): 401 Unauthorized. Check that i | Telegram: The service refused the key (HTTP 401): Unauthorized. Check 
 CYBTEST PASS sign-in: Google bridge answers without hanging, OpenAI device-code endpoint is read :: Google: Google wants you to sign in again. | OpenAI: HTTP 200, code of 10 characters, poll every 5s
-CYBTEST DONE pass=39 fail=0 skip=4
+CYBTEST DONE pass=38 fail=1 skip=4
