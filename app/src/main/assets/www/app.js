@@ -2559,7 +2559,7 @@
   } catch (e) { /* pairing is best-effort */ }
   // Built-in test server: on first launch, connect by itself so installing the app is all it takes.
   // TEST ONLY — the production build signs in with an account instead of a baked key.
-  const DEFAULT_BACKEND = { url: 'https://511a5baf0d5e42.app.lhr.life', key: 'c6d86b1900e58c07afaf99020f4e477e' };
+  const DEFAULT_BACKEND = { url: 'https://ad6b5427bb821b.app.lhr.life', key: 'c6d86b1900e58c07afaf99020f4e477e' };
   try {
     // only inside the real Android app (appassets origin), never in a browser or a test harness
     if (/appassets\.androidplatform\.net$/.test(location.hostname) && !settings.backend && DEFAULT_BACKEND.url && !localStorage.getItem('cyb.defaultBackendTried')) {
