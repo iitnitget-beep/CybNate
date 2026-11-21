@@ -159,7 +159,7 @@ public class MainActivity extends Activity {
         if (savedInstanceState != null) web.restoreState(savedInstanceState);
         else {
             // Load only once the view has a real size: a page loaded into a 0x0 WebView can stay blank.
-            final String url = getIntent() != null && getIntent().getBooleanExtra("selftest", false) && workspaceIsEmpty() ? HOME + "?selftest=1" : HOME;
+            final String url = startUrl(getIntent());
             if (web.getWidth() > 0) web.loadUrl(url);
             else web.addOnLayoutChangeListener(new android.view.View.OnLayoutChangeListener() {
                 boolean done;
@@ -172,6 +172,22 @@ public class MainActivity extends Activity {
                 }
             });
         }
+    }
+
+    /** The start page, carrying a one-tap pairing request (cybnate://pair?url=..&key=..) or the self-test flag. */
+    private String startUrl(Intent intent) {
+        if (intent != null && intent.getData() != null && "cybnate".equals(intent.getData().getScheme()) && "pair".equals(intent.getData().getHost())) {
+            String u = intent.getData().getQueryParameter("url"), k = intent.getData().getQueryParameter("key");
+            if (u != null && k != null) return HOME + "?pairurl=" + android.net.Uri.encode(u) + "&pairkey=" + android.net.Uri.encode(k);
+        }
+        return intent != null && intent.getBooleanExtra("selftest", false) && workspaceIsEmpty() ? HOME + "?selftest=1" : HOME;
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (web != null) web.loadUrl(startUrl(intent));
     }
 
     @Override

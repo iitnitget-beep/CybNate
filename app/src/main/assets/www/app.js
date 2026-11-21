@@ -2343,6 +2343,29 @@
 
   /** Settings → Server: connect this phone to a CybNate server, which then runs the commands and keeps the secrets and sign-ins. */
   let serverUi = { working: false, error: '', info: null, note: '' };
+  /** Pair with a server and do the first transfer. Used by the Server sheet and by one-tap pairing links. */
+  async function connectServer(url, key) {
+    serverUi = { working: true, error: '', info: null, note: '' };
+    try {
+      const cfg = await backend.pair(url, key, '');
+      settings.backend = cfg; saveSettings();
+      const moved = (settings.secrets || []).filter((x) => x.value).length;
+      let note = '';
+      try { await secretsUp(); const r = await backend.sync(); note = r.written + ' file' + (r.written === 1 ? '' : 's') + ' sent' + (moved ? ', ' + moved + ' secret' + (moved === 1 ? '' : 's') + ' moved to the server' : '') + '.'; }
+      catch (e) { note = 'Connected, but the first transfer failed: ' + e.message + ' It is tried again with the next command.'; }
+      serverUi = { working: false, error: '', info: null, note }; toast('Server connected');
+    } catch (e) { serverUi = { working: false, error: String(e && e.message ? e.message : e), info: null, note: '' }; }
+    return serverUi;
+  }
+
+  /** One-tap pairing (cybnate://pair?url=..&key=..): connect, then show the Server sheet with the result. */
+  async function pairBackend(url, key) {
+    if (backend.on()) { toast('A server is already connected'); openServer(); return; }
+    openServer();
+    await connectServer(url, key);
+    if (sheetStack.length && sheetStack[sheetStack.length - 1].title === 'Server') drawSheet();
+  }
+
   function openServer() {
     const top = () => sheetStack.length && sheetStack[sheetStack.length - 1].title === 'Server';
     const redraw = () => { if (top()) drawSheet(); };
@@ -2359,19 +2382,7 @@
         const k = el('input', 'field mono'); k.id = 'srvKey'; k.type = 'password'; k.autocomplete = 'off'; k.value = keyDraft; k.oninput = () => { keyDraft = k.value; }; c.appendChild(k);
         if (serverUi.error) { const n = el('div', 'note err', '✗ ' + serverUi.error); n.id = 'srvMsg'; c.appendChild(n); }
         const go = el('button', 'wide', serverUi.working ? 'Connecting…' : 'Connect'); go.id = 'srvGo'; go.disabled = serverUi.working; c.appendChild(go);
-        go.onclick = async () => {
-          serverUi = { working: true, error: '', info: null, note: '' }; redraw();
-          try {
-            const cfg = await backend.pair(urlDraft, keyDraft, '');
-            settings.backend = cfg; saveSettings(); keyDraft = '';
-            const moved = (settings.secrets || []).filter((x) => x.value).length;
-            let note = '';
-            try { await secretsUp(); const r = await backend.sync(); note = r.written + ' file' + (r.written === 1 ? '' : 's') + ' sent' + (moved ? ', ' + moved + ' secret' + (moved === 1 ? '' : 's') + ' moved to the server' : '') + '.'; }
-            catch (e) { note = 'Connected, but the first transfer failed: ' + e.message + ' It is tried again with the next command.'; }
-            serverUi = { working: false, error: '', info: null, note }; toast('Server connected'); look();
-          } catch (e) { serverUi = { working: false, error: String(e && e.message ? e.message : e), info: null, note: '' }; }
-          redraw();
-        };
+        go.onclick = async () => { await connectServer(urlDraft, keyDraft); keyDraft = ''; redraw(); };
         c.appendChild(el('p', 'hint', 'How to run a server: see docs/BACKEND.md in the project. Use an https address; with plain http anyone on the network can read the traffic.'));
         return;
       }
@@ -2527,15 +2538,23 @@
     return false;
   };
 
-  if (!C.PROVIDERS[settings.provider]) { settings.provider = 'pollinations'; settings.model = 'openai-fast'; }
+  if (!C.PROVIDERS[settings.provider]) { settings.provider = 'openrouter'; settings.model = 'openrouter/free'; }
   $('ver').textContent = Native ? 'v' + Native.version() : 'web';
-  window.__cyb = { backend, openServer, secretsUp, setSecret, wireCall, codexSignIn, codexFresh, setCodex, googleConnect, googleToken, freshGoogle, fetchModels, openProviders, chatStream, openIntegrations, openMarketplace, openMemory, testIntegration, saveIntegration, removeIntegration, connectedIds, extraPrompt, cli, testWebapp, slashCommand, attachMentions, compactChat, kv, Native, nativeStream, fetchModels, C, ws, settings, limiter, health, usageReport, openUsage, freeCheck, metaOf, apiHistory, modelPool, spawnAgent, helperExec, rerunAs, get task() { return task; }, askApproval, openPreview, offerUndo, namedSecrets, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
+  window.__cyb = { backend, openServer, pairBackend, connectServer, secretsUp, setSecret, wireCall, codexSignIn, codexFresh, setCodex, googleConnect, googleToken, freshGoogle, fetchModels, openProviders, chatStream, openIntegrations, openMarketplace, openMemory, testIntegration, saveIntegration, removeIntegration, connectedIds, extraPrompt, cli, testWebapp, slashCommand, attachMentions, compactChat, kv, Native, nativeStream, fetchModels, C, ws, settings, limiter, health, usageReport, openUsage, freeCheck, metaOf, apiHistory, modelPool, spawnAgent, helperExec, rerunAs, get task() { return task; }, askApproval, openPreview, offerUndo, namedSecrets, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
   window.addEventListener('error', (e) => { console.log('CYBERR ' + e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno); });
   window.addEventListener('unhandledrejection', (e) => { console.log('CYBERR promise ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)); });
 
   // Draw the UI first; stored files load in the background so a slow database can never leave a blank screen.
   current = sessions.find((x) => !x.archived) || null;
   if (!current) newSession(); else renderAll();
+  // One-tap pairing link (cybnate://pair?url=..&key=.. arrives as ?pairurl=..&pairkey=..): connect without typing.
+  try {
+    const q = new URLSearchParams(location.search);
+    if (q.get('pairurl') && q.get('pairkey')) {
+      history.replaceState(null, '', location.pathname);
+      pairBackend(q.get('pairurl'), q.get('pairkey'));
+    }
+  } catch (e) { /* pairing is best-effort */ }
   console.log('CYBUI ready agents=' + $('agents').children.length + ' model=' + settings.model);
   // Safety net: if the page still has no size after a few seconds, reload it once.
   setTimeout(() => {
