@@ -1941,7 +1941,7 @@
         const off = el('button', 'wide danger', 'Disconnect and delete the key'); off.id = 'intOff'; card.appendChild(off);
         off.onclick = () => { removeIntegration(e); state = null; toast(e.name + ' disconnected'); drawSheet(); };
       }
-      if (e.chat && info) card.appendChild(el('p', '', e.chat.provider === 'custom' ? 'To chat with this model in the app: Settings → Provider → Custom, with the address ' + (e.chat.url || 'of your Ollama, ending in /v1') + '.' : 'The key is also set for the ' + C.PROVIDERS[e.chat.provider].name + ' chat provider in Settings.'));
+      if (e.chat && info && C.PROVIDERS[e.chat.provider]) card.appendChild(el('p', '', 'The key is also set for the ' + C.PROVIDERS[e.chat.provider].name + ' chat provider in Settings.'));
     });
   }
 

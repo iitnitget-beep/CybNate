@@ -162,8 +162,8 @@ const sse = (text) => 'data: ' + JSON.stringify({ choices: [{ delta: { content: 
   assert.ok(!stored().integrations.confluence && stored().secrets.some((x) => x.name === 'ATLASSIAN_API_TOKEN'), 'disconnecting Confluence keeps the token Jira still needs');
   back(); await tick();
   // 6. an AI key is also given to the chat provider of the same name
-  row('groq').click(); await tick(); type('GROQ_API_KEY', 'gsk_abc'); await go(); back(); await tick();
-  assert.strictEqual(stored().keys.groq, 'gsk_abc');
+  row('openrouter').click(); await tick(); type('OPENROUTER_API_KEY', 'sk-or-abc'); await go(); back(); await tick();
+  assert.strictEqual(stored().keys.openrouter, 'sk-test', 'an existing chat key is not overwritten by the integration key');
   // 7. a service without a check says so
   row('aws').click(); await tick(); type('AWS_ACCESS_KEY_ID', 'AKIA1'); type('AWS_SECRET_ACCESS_KEY', 'sec'); type('AWS_REGION', 'ap-south-1'); await go();
   assert.ok(/✓ Saved\. Saved without a check/.test(d.getElementById('intMsg').textContent)); back(); await tick();
