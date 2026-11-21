@@ -1,0 +1,26 @@
+# CybNate server — production compose file.
+# 1. cp .env.example .env   (then edit .env: CYB_ACCESS_KEY is required)
+# 2. docker compose up -d --build
+# 3. Put HTTPS in front (Cloudflare Tunnel, Caddy, or your host's TLS).
+#    The phone connects to the https address in Settings → Server.
+services:
+  cybnate-server:
+    build: .
+    container_name: cybnate-server
+    restart: unless-stopped
+    init: true
+    ports:
+      - "8787:8787"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: "8787"
+      CYB_DATA_DIR: /data
+    volumes:
+      - cybnate-data:/data
+    # The container is the outer wall for user commands. Never add
+    # privileged: true or mount the Docker socket.
+
+volumes:
+  cybnate-data:

@@ -33,6 +33,29 @@ const AUTO = { mode: 'auto' }; // these older tests exercise the tools themselve
   assert.ok(C.nativeCallToText('write_file', JSON.stringify(JSON.stringify({ path: 'd.txt', content: 'z' }))).includes('<write_file path="d.txt">'), 'double-encoded JSON parsed');
   assert.ok(C.nativeCallToText('write_file', 'not json at all').includes('malformed call'), 'hopeless args still reported malformed');
 
+  // --- per-model profiles + prompt notes
+  assert.strictEqual(C.modelProfile('openai-fast').tier, 'weak');
+  assert.strictEqual(C.modelProfile('deepseek/deepseek-chat-v3.1:free').tier, 'mid');
+  assert.strictEqual(C.modelProfile('claude-sonnet-4').tier, 'strong');
+  assert.ok(C.buildSystemPrompt('coder', '', '', { model: 'openai-fast' }).includes('at most 2 tool tags per reply'), 'weak models get small-step guidance');
+  assert.ok(!C.buildSystemPrompt('coder', '', '', { model: 'claude-sonnet-4' }).includes('# Model note'), 'strong models get no extra note');
+  assert.ok(!C.buildSystemPrompt('coder', '', '', {}).includes('# Model note'), 'no model in caps, no note');
+
+  // --- context pruning of old tool outputs
+  const big = 'x'.repeat(4000);
+  const hist = [
+    { role: 'user', content: 'go' },
+    { role: 'user', content: '<untrusted_data source="tool">' + big + '</untrusted_data>' },
+    { role: 'assistant', content: 'ok' }, { role: 'user', content: 'next' },
+    { role: 'assistant', content: 'done' }, { role: 'user', content: 'more' },
+    { role: 'assistant', content: 'sure' }, { role: 'user', content: 'last' },
+  ];
+  const pruned = C.pruneToolOutputs(hist, 6, 1500);
+  assert.ok(pruned[1].content.includes('[pruned '), 'old tool output pruned');
+  assert.ok(pruned[1].content.length < 1200, 'pruned content is short');
+  assert.strictEqual(pruned[7].content, 'last', 'recent messages untouched');
+  assert.strictEqual(C.pruneToolOutputs(hist, 99, 1500)[1].content.length, hist[1].content.length, 'keepLast covers all: nothing pruned');
+
   // --- edit_file exact + whitespace tolerant + failure
   ws.set('a.js', 'function f() {\n    return 1;\n}\nconst x = 2;\n');
   calls = C.parseToolCalls('<edit_file path="a.js">\n<search>const x = 2;</search>\n<replace>const x = 3;</replace>\n<search>\n  return 1;\n</search>\n<replace>\n    return 42;\n</replace>\n</edit_file>', allowed);

@@ -751,7 +751,7 @@
 
   // ------------------------------------------------------------ sub-agents
   let repoBase = load('cyb.repo', null);
-  const caps = (extra) => Object.assign({ server: backend.on(), shell: canShell, repo: repoBase ? repoBase.owner + '/' + repoBase.repo : '', skills: (settings.skills || []).filter((k) => k.on !== false), secrets: Object.keys(secretEnv()) }, extra || {});
+  const caps = (extra) => Object.assign({ server: backend.on(), shell: canShell, repo: repoBase ? repoBase.owner + '/' + repoBase.repo : '', skills: (settings.skills || []).filter((k) => k.on !== false), secrets: Object.keys(secretEnv()), model: settings.model }, extra || {});
   const loadSkill = (name) => { const n = String(name || '').toLowerCase().trim(); const k = (settings.skills || []).find((x) => x.on !== false && x.name === n) || (settings.skills || []).find((x) => x.on !== false && x.name.indexOf(n) >= 0 && n); if (!k) throw new Error('no installed skill named "' + name + '". Installed: ' + ((settings.skills || []).map((x) => x.name).join(', ') || 'none')); return '# Skill: ' + k.name + '\n' + k.body; };
   const toolsFor = (agent) => agent.tools.filter((t) => t !== 'load_skill' || caps().skills.length);
 
@@ -995,7 +995,7 @@
       // a request followed by a helper's report: one user turn, since some providers reject two in a row
       if (last && last.role === 'user' && m.role === 'user') last.content += '\n\n' + m.content; else out.push({ role: m.role, content: m.content });
     });
-    return C.trimHistory(out, O.historyBudget(ctxOf(chain), reserved, 70000));
+    return C.trimHistory(C.pruneToolOutputs(out, 6, 1500), O.historyBudget(ctxOf(chain), reserved, 70000));
   }
 
   /**

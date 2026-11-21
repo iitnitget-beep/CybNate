@@ -15,7 +15,7 @@
   const PROVIDERS = {
     pollinations: {
       name: 'Pollinations',
-      tag: 'No key needed',
+      tag: 'No key needed · slow free model (about 1 reply / 45 s)',
       needsKey: false,
       chatUrl: 'https://text.pollinations.ai/openai',
       modelsUrl: 'https://text.pollinations.ai/models',
@@ -466,6 +466,36 @@
       .replace('After writing tool tags, stop and wait for the results.', 'After calling functions, stop and wait for the results.');
   }
 
+  // Per-model tuning (pattern borrowed from Freebuff's per-model agent variants,
+  // original implementation): weaker models get stricter, smaller-step guidance.
+  function modelProfile(modelId) {
+    const id = String(modelId || '').toLowerCase();
+    if (/claude.*(sonnet|opus)|gpt-5|gpt-4o|\bo[34]\b/.test(id)) return { family: 'frontier', tier: 'strong', note: '' };
+    if (/openai-fast|pollinations|llama-3\.1-8b|8b-instant|flash-lite|mini|instant/.test(id)) return {
+      family: 'small', tier: 'weak',
+      note: '\n# Model note\nYou are a small, fast model with limited reasoning. Work in very small steps: at most 2 tool tags per reply, one file at a time, short files. Copy tool tag syntax exactly: attributes in double quotes, every tag closed. After each tool result, check it before continuing.\n',
+    };
+    return {
+      family: 'coder', tier: 'mid',
+      note: '\n# Model note\nPrefer one focused change per step and verify it (run a command or read the file back) before moving on.\n',
+    };
+  }
+
+  // Long tool outputs from older turns eat the context budget. Keep the head and
+  // tail of each old <untrusted_data> block and mark what was pruned.
+  function pruneToolOutputs(msgs, keepLast, maxChars) {
+    const keep = keepLast == null ? 6 : keepLast, max = maxChars || 1500;
+    return (msgs || []).map((m, i) => {
+      if (i >= msgs.length - keep || typeof m.content !== 'string') return m;
+      const content = m.content.replace(/<untrusted_data([^>]*)>([\s\S]*?)<\/untrusted_data>/g, (all, attrs, inner) => {
+        if (inner.length <= max) return all;
+        const cut = inner.length - 900;
+        return '<untrusted_data' + attrs + '>' + inner.slice(0, 600) + '\n[pruned ' + cut + ' chars of old tool output]\n' + inner.slice(-300) + '</untrusted_data>';
+      });
+      return content === m.content ? m : { role: m.role, content };
+    });
+  }
+
   function buildSystemPrompt(agentId, fileSummary, extra, caps) {
     const a = AGENTS[agentId] || AGENTS.coder;
     let tools = a.tools;
@@ -487,6 +517,7 @@
       if (tools.indexOf('ask_followup_question') >= 0 || tools.indexOf('attempt_completion') >= 0) s += '\nask_followup_question and attempt_completion end your turn: write nothing after them.\n';
     }
     if (extra && extra.trim()) s += '\n# User instructions\n' + extra.trim() + '\n';
+    if (caps && caps.model) s += modelProfile(caps.model).note;
     return s;
   }
 
@@ -1611,6 +1642,6 @@
     PROVIDERS, AGENTS, TOOL_DOCS, TOOL_PARAMS, FINAL, FS_WRITE, EXEC, ENGINEER_BLOCKS, DevTools, sqliteScript, isFinalReply, toolSchemas, parseSkill, findSkillPath, recoverFailedGeneration, PASSIVE, SUBAGENT_TYPES, BODY_TOOLS, isAllowedHttpUrl: UrlPolicy.isAllowedHttpUrl, parseModelList, buildSystemPrompt, parseToolCalls, displayText, Workspace,
     stripThink, followupsOf, nativeCallToText, nativeCallsToText, tokenize, parseCommand, matchGlob, callLabel,
     Safety, Orchestra, previewEdits, runTool, runTools, formatToolResults, fileInfo, detectType, extractStrings, hexdump, zipEntries, zipRead, zipCreate,
-    decodeAxml, decodeIfText, createSseParser, trimHistory, compactDigest, toNativePrompt, fmtSize, crc32, utf8,
+    decodeAxml, decodeIfText, createSseParser, trimHistory, compactDigest, toNativePrompt, fmtSize, crc32, utf8, modelProfile, pruneToolOutputs,
   };
 });
