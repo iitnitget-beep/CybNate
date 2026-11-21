@@ -13,7 +13,29 @@
      Installing a plugin never implies its account is connected or authorized. */
   const INSTALL_STATES = new Set(['available', 'installed', 'disabled']);
   const CONNECTION_STATES = new Set(['disconnected', 'configured', 'connected', 'authorized', 'error']);
+  /* Day 5: tools are declarative schemas with a permission requirement, never code.
+     Access is derived from the permission: :read -> read, deploy:write -> admin, other :write -> write. */
+  const ACCESS_LEVELS = new Set(['read', 'write', 'admin']);
+  const EXECUTABLE_KEYS = new Set(['code', 'script', 'command', 'eval', 'exec', 'handler', 'run']);
   const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+  function deriveAccess(permission) {
+    if (typeof permission !== 'string') return null;
+    if (permission.endsWith(':read')) return 'read';
+    if (permission === 'deploy:write') return 'admin';
+    if (permission.endsWith(':write')) return 'write';
+    return null;
+  }
+  /* Deep check that a tool definition stays declarative data: no functions, no executable keys. */
+  function findExecutable(value, depth) {
+    if (typeof value === 'function') return 'function value';
+    if (!value || typeof value !== 'object' || depth > 8) return null;
+    for (const k of Object.keys(value)) {
+      if (EXECUTABLE_KEYS.has(k)) return k;
+      const hit = findExecutable(value[k], depth + 1);
+      if (hit) return hit;
+    }
+    return null;
+  }
 
   function parseVersion(v) {
     if (typeof v !== 'string' || !VERSION.test(v)) return null;
@@ -58,10 +80,27 @@
     if (!Array.isArray(input.tools) || input.tools.length > 50) errors.push('tools must be an array of at most 50 entries');
     else {
       const seen = new Set();
+      const declared = Array.isArray(input.permissions) ? input.permissions : [];
       input.tools.forEach((t) => {
-        if (!t || typeof t !== 'object' || typeof t.id !== 'string' || !ID.test(t.id) || typeof t.name !== 'string' || !t.name.trim()) errors.push('each tool needs a valid id and name');
-        else if (seen.has(t.id)) errors.push('duplicate tool id: ' + t.id);
-        else seen.add(t.id);
+        if (!t || typeof t !== 'object' || typeof t.id !== 'string' || !ID.test(t.id) || typeof t.name !== 'string' || !t.name.trim()) { errors.push('each tool needs a valid id and name'); return; }
+        if (seen.has(t.id)) { errors.push('duplicate tool id: ' + t.id); return; }
+        seen.add(t.id);
+        /* Day 5 tool schema: declarative only, permission must be declared by the manifest. */
+        const execKey = findExecutable(t, 0);
+        if (execKey) errors.push('tool ' + t.id + ' must be declarative (no executable field: ' + execKey + ')');
+        let permission = null;
+        if (own(t, 'permission') && t.permission !== null) {
+          if (typeof t.permission !== 'string' || !PERMISSIONS.has(t.permission)) errors.push('tool ' + t.id + ' permission is not supported: ' + String(t.permission));
+          else if (!declared.includes(t.permission)) errors.push('tool ' + t.id + ' permission must be declared in manifest permissions: ' + t.permission);
+          else permission = t.permission;
+        }
+        if (own(t, 'access') && t.access !== null) {
+          if (typeof t.access !== 'string' || !ACCESS_LEVELS.has(t.access)) errors.push('tool ' + t.id + ' access must be read, write or admin');
+          else if (permission && deriveAccess(permission) !== t.access) errors.push('tool ' + t.id + ' access does not match its permission');
+          else if (!permission && t.access !== 'read') errors.push('tool ' + t.id + ' write/admin tools must declare a permission');
+        }
+        if (own(t, 'timeoutMs') && t.timeoutMs !== null && (!Number.isInteger(t.timeoutMs) || t.timeoutMs < 100 || t.timeoutMs > 120000)) errors.push('tool ' + t.id + ' timeoutMs must be an integer between 100 and 120000');
+        if (own(t, 'inputSchema') && t.inputSchema !== null && (typeof t.inputSchema !== 'object' || Array.isArray(t.inputSchema))) errors.push('tool ' + t.id + ' inputSchema must be an object');
       });
     }
     if (input.auth && input.auth.type === 'oauth2' && (typeof input.auth.provider !== 'string' || !ID.test(input.auth.provider))) errors.push('oauth2 auth requires a provider id');
@@ -99,7 +138,16 @@
     return Object.freeze({
       id: input.id, name: input.name.trim(), version: input.version, description: input.description.trim(),
       category: input.category, auth: Object.freeze({ type: input.auth.type, ...(input.auth.provider ? { provider: input.auth.provider } : {}), ...(input.auth.serverId ? { serverId: input.auth.serverId } : {}) }),
-      permissions: Object.freeze(input.permissions.slice()), tools: Object.freeze(input.tools.map((t) => Object.freeze({ id: t.id, name: t.name.trim() }))),
+      permissions: Object.freeze(input.permissions.slice()), tools: Object.freeze(input.tools.map((t) => {
+        const permission = (typeof t.permission === 'string') ? t.permission : null;
+        const access = (typeof t.access === 'string') ? t.access : (deriveAccess(permission) || 'read');
+        return Object.freeze({
+          id: t.id, name: t.name.trim(), permission, access,
+          requiresApproval: access !== 'read',
+          timeoutMs: Number.isInteger(t.timeoutMs) ? t.timeoutMs : 30000,
+          inputSchema: (t.inputSchema && typeof t.inputSchema === 'object' && !Array.isArray(t.inputSchema)) ? Object.freeze({ ...t.inputSchema }) : null
+        });
+      })),
       /* Day 2 fields */
       publisher: (typeof input.publisher === 'string' && input.publisher.trim()) ? input.publisher.trim() : null,
       official: input.official === true,
@@ -170,12 +218,19 @@
         official: m.official, publisher: m.publisher, category: m.category,
         minAppVersion: m.compatibility.minAppVersion, maxAppVersion: m.compatibility.maxAppVersion,
         installState: m.installState, connectionState: m.connectionState
-      }))
+      })),
+      /* Day 5: declarative tool descriptors across plugins, deterministic (plugin order, then tool id). */
+      toolsFor: (pluginId) => { const m = items.get(pluginId); return m ? m.tools : Object.freeze([]); },
+      listTools: () => Object.freeze(all().flatMap((m) => m.tools.slice().sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).map((t) => Object.freeze({
+        pluginId: m.id, id: t.id, name: t.name, permission: t.permission, access: t.access,
+        requiresApproval: t.requiresApproval, timeoutMs: t.timeoutMs, inputSchema: t.inputSchema
+      }))))
     });
   }
   return Object.freeze({
-    validate, normalize, createRegistry, applyState, checkCompatibility, compareVersions, parseVersion, isStableVersion,
+    validate, normalize, createRegistry, applyState, checkCompatibility, compareVersions, parseVersion, isStableVersion, deriveAccess,
     permissions: Object.freeze(Array.from(PERMISSIONS)), categories: Object.freeze(Array.from(CATEGORIES)),
-    installStates: Object.freeze(Array.from(INSTALL_STATES)), connectionStates: Object.freeze(Array.from(CONNECTION_STATES))
+    installStates: Object.freeze(Array.from(INSTALL_STATES)), connectionStates: Object.freeze(Array.from(CONNECTION_STATES)),
+    accessLevels: Object.freeze(Array.from(ACCESS_LEVELS))
   });
 });
