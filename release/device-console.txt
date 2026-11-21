@@ -1,9 +1,12 @@
 CYBUI ready agents=6 model=openrouter/free (https://appassets.androidplatform.net/assets/www/app.js:2570)
-CYBUI layout t=1500 header=56 welcome=585 frames=51 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2588)
-CYBUI layout t=6000 header=56 welcome=585 frames=253 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2588)
-CYBUI layout t=12000 header=56 welcome=585 frames=253 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2588)
-CYBUI layout t=25000 header=56 welcome=585 frames=253 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2588)
-FOCUS1   mCurrentFocus=Window{953a36e u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{32374fc u0 com.cybnate.app/.MainActivity t8} 
-  mCurrentFocus=Window{953a36e u0 com.cybnate.app/com.cybnate.app.MainActivity}
-  mFocusedApp=ActivityRecord{32374fc u0 com.cybnate.app/.MainActivity t8}
-11-21 07:16:53.241   523   540 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +3s832ms
+CYBUI layout t=1500 header=56 welcome=585 frames=1 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2588)
+CYBUI layout t=6000 header=56 welcome=585 frames=1 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2588)
+CYBUI layout t=12000 header=56 welcome=585 frames=1 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2588)
+CYBUI layout t=25000 header=56 welcome=585 frames=1 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2588)
+FOCUS1   mCurrentFocus=Window{ddffa3b u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{cac28e4 u0 com.cybnate.app/.MainActivity t8} 
+  mCurrentFocus=Window{ddffa3b u0 com.cybnate.app/com.cybnate.app.MainActivity}
+  mFocusedApp=ActivityRecord{cac28e4 u0 com.cybnate.app/.MainActivity t8}
+11-21 07:31:54.629   522   539 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +4s992ms
+CybNateJS: CYBUI ready agents=6 model=openrouter/free (https://appassets.androidplatform.net/assets/www/app.js:2570)
+CybNateJS: CYBUI layout t=1500 header=56 welcome=585 frames=5 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2588)
+CybNateJS: CYBUI layout t=6000 header=56 welcome=585 frames=216 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2588)
