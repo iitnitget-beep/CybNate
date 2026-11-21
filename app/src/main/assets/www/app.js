@@ -2354,6 +2354,7 @@
       try { await secretsUp(); const r = await backend.sync(); note = r.written + ' file' + (r.written === 1 ? '' : 's') + ' sent' + (moved ? ', ' + moved + ' secret' + (moved === 1 ? '' : 's') + ' moved to the server' : '') + '.'; }
       catch (e) { note = 'Connected, but the first transfer failed: ' + e.message + ' It is tried again with the next command.'; }
       serverUi = { working: false, error: '', info: null, note }; toast('Server connected');
+      try { serverUi.info = await backend.call('GET', '/v1/health'); } catch (e) { /* the sheet retries on open */ }
     } catch (e) { serverUi = { working: false, error: String(e && e.message ? e.message : e), info: null, note: '' }; }
     return serverUi;
   }
