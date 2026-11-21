@@ -11,8 +11,10 @@
   const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { toast('Storage is full. Delete some old chats.'); } };
 
   const settings = Object.assign({
-    provider: 'pollinations', model: 'openai-fast', keys: {}, customUrl: '', models: {}, extra: '', maxSteps: 25, taskBudget: 30, skills: [], secrets: [], startup: '', permission: 'ask',
+    provider: 'openrouter', model: 'openrouter/free', keys: {}, customUrl: '', models: {}, extra: '', maxSteps: 25, taskBudget: 30, skills: [], secrets: [], startup: '', permission: 'ask',
   }, load('cyb.settings', {}));
+  // providers removed in the OpenRouter-only cleanup: migrate saved settings
+  if (!C.PROVIDERS[settings.provider]) { settings.provider = 'openrouter'; settings.model = 'openrouter/free'; }
   let sessions = load('cyb.sessions', []);
   let current = null;
   let busy = false, abortCtl = null;
@@ -138,7 +140,7 @@
   }
 
   function providerCfg(id) {
-    const p = Object.assign({}, C.PROVIDERS[id || settings.provider] || C.PROVIDERS.pollinations);
+    const p = Object.assign({}, C.PROVIDERS[id || settings.provider] || C.PROVIDERS.openrouter);
     if (p.custom) {
       const base = (settings.customUrl || '').trim().replace(/\/+$/, '').replace(/\/chat\/completions$/, '');
       p.chatUrl = base ? base + '/chat/completions' : '';
@@ -161,7 +163,7 @@
     let hint = '';
     if (p.signIn && (status === 401 || status === 403)) hint = p.name + ' refused the sign-in. Open Settings → Model Providers and sign in again.';
     else if (status === 401 || status === 403) hint = p.needsKey ? 'Your ' + p.name + ' key was rejected. Check it in Settings.' : p.name + ' refused the request. It may now require a key; pick another provider in Settings.';
-    else if (status === 402) hint = p.paid ? p.name + ' reports a billing or account-credit issue. Check your NVIDIA account and usage limits.' : p.name + ' has stopped serving free replies for now. Add a free Groq, Gemini or OpenRouter key in Settings.';
+    else if (status === 402) hint = p.name + ' reports a billing or account-credit issue. Check your OpenRouter credits, or pick a free model (ids ending in :free).';
     else if (status === 429) hint = 'Free rate limit reached on ' + p.name + '. Wait a little, or switch model or provider.';
     else if (status === 404 || status === 400) hint = 'The model "' + settings.model + '" may no longer be available. Tap the model name and refresh the list.';
     else if (status >= 500) hint = p.name + ' is having problems right now. Try again or switch provider.';
@@ -210,7 +212,6 @@
   function singleMode() {
     const st = limiter.status(settings.provider);
     if (st.low) return 'daily limit nearly used (' + st.dailyUsed + '/' + st.dailyMax + ')';
-    if (settings.provider === 'pollinations' && !(settings.keys.pollinations || '').trim() && modelPool().every((t) => t.provider === 'pollinations')) return 'keyless tier allows one reply every 45 s';
     if (task && task.budget.left() < 6) return 'few requests left in this task';
     return '';
   }
@@ -283,7 +284,7 @@
     const p = providerCfg(target.provider);
     if (!p.chatUrl) throw new Error('Set the server URL for the Custom provider in Settings.');
     if (p.signIn && !(settings.keys[target.provider] || '').trim()) throw new Error('Sign in first: Settings → Model Providers → ' + p.name + '.');
-    if (p.needsKey && !(settings.keys[target.provider] || '').trim()) throw new Error('Add your ' + (p.paid ? '' : 'free ') + p.name + ' key in Settings, or switch to Pollinations (no key).');
+    if (p.needsKey && !(settings.keys[target.provider] || '').trim()) throw new Error('Add your ' + (p.paid ? '' : 'free ') + p.name + ' key in Settings first.');
     if (p.signIn === 'codex') await codexFresh(signal);
     const fc = freeCheck(target);
     if (!fc.ok) throw O.limitError('paid', 'Not sent: "' + target.model + '" on ' + p.name + ' is not a free model (' + fc.reason + '). Pick one from the model list, or turn on "Allow paid models" in Settings → General.');
@@ -1783,7 +1784,7 @@
   function setCodex(s) {
     if (s) { settings.codex = s; settings.keys.codex = s.access; }
     else {
-      if (settings.codex && settings.codex.remote && backend.on()) backend.oauthOff('codex').catch(() => {}); delete settings.codex; delete settings.keys.codex; delete settings.models.codex; if (settings.meta) delete settings.meta.codex; if (settings.provider === 'codex') { settings.provider = 'pollinations'; settings.model = C.PROVIDERS.pollinations.fallbackModels[0]; } }
+      if (settings.codex && settings.codex.remote && backend.on()) backend.oauthOff('codex').catch(() => {}); delete settings.codex; delete settings.keys.codex; delete settings.models.codex; if (settings.meta) delete settings.meta.codex; if (settings.provider === 'codex') { settings.provider = 'openrouter'; settings.model = C.PROVIDERS.openrouter.fallbackModels[0]; } }
     saveSettings();
   }
   const wireCall = (r, signal) => httpFull(r.url, { method: r.method, headers: r.headers, body: r.body, signal });

@@ -101,13 +101,12 @@ const AUTO = { mode: 'auto' }; // these older tests exercise the tools themselve
   assert.ok(p.feed('data: {"error":{"message":"rate limited"}}\n')[0].error === 'rate limited');
 
   // --- model lists
-  assert.deepStrictEqual(C.parseModelList({ data: [{ id: 'a/b:free' }, { id: 'c/d', pricing: { prompt: '1', completion: '1' } }] }, C.PROVIDERS.openrouter), ['a/b:free']);
-  assert.strictEqual(C.PROVIDERS.nvidia.chatUrl, 'https://integrate.api.nvidia.com/v1/chat/completions');
-  assert.strictEqual(C.PROVIDERS.nvidia.modelsUrl, 'https://integrate.api.nvidia.com/v1/models');
-  assert.strictEqual(C.PROVIDERS.nvidia.paidByDefault, true, 'NVIDIA calls require explicit paid-usage opt-in');
-  assert.deepStrictEqual(C.parseModelList({ data: [{ id: 'meta/llama-3.3-70b-instruct' }, { id: 'nvidia/embed-qa-4' }] }, C.PROVIDERS.nvidia), ['meta/llama-3.3-70b-instruct']);
-  assert.deepStrictEqual(C.parseModelList([{ name: 'openai' }, { name: 'openai-audio' }], C.PROVIDERS.pollinations), ['openai']);
-  assert.deepStrictEqual(C.parseModelList({ data: [{ id: 'models/gemini-2.5-flash' }, { id: 'models/text-embedding-004' }] }, C.PROVIDERS.gemini), ['gemini-2.5-flash']);
+  // OpenRouter is the one API provider; Claude/ChatGPT connect via its catalog
+  // (anthropic/*, openai/*) or directly (anthropic key, codex sign-in).
+  assert.deepStrictEqual(Object.keys(C.PROVIDERS).sort(), ['anthropic', 'codex', 'openrouter']);
+  assert.deepStrictEqual(C.parseModelList({ data: [{ id: 'a/b:free' }, { id: 'anthropic/claude-sonnet-4', pricing: { prompt: '1', completion: '1' } }, { id: 'x/embed-1' }] }, C.PROVIDERS.openrouter), ['a/b:free', 'anthropic/claude-sonnet-4'], 'paid models stay listed, embed models filtered');
+  assert.ok(C.PROVIDERS.openrouter.fallbackModels.some((m) => m.startsWith('anthropic/claude')), 'Claude in the fallback catalog');
+  assert.ok(C.PROVIDERS.openrouter.fallbackModels.some((m) => m.startsWith('openai/gpt')), 'ChatGPT models in the fallback catalog');
 
   // --- history trimming
   const h = C.trimHistory([{ role: 'user', content: 'x'.repeat(50) }, { role: 'assistant', content: 'y'.repeat(50) }, { role: 'user', content: 'z' }], 60);

@@ -13,7 +13,7 @@ const sse = (text) => 'data: ' + JSON.stringify({ choices: [{ delta: { content: 
     runScripts: 'dangerously', resources: 'usable', pretendToBeVisual: true,
     beforeParse(w) {
       w.TextEncoder = TextEncoder; w.TextDecoder = TextDecoder;
-      const store = { 'cyb.settings': JSON.stringify({ provider: 'openrouter', model: 'qwen/qwen3-coder:free', keys: { openrouter: 'sk-test', groq: 'gsk-test' }, nativeTools: false }) };
+      const store = { 'cyb.settings': JSON.stringify({ provider: 'openrouter', model: 'qwen/qwen3-coder:free', keys: { openrouter: 'sk-test' }, nativeTools: false }) };
       Object.defineProperty(w, 'localStorage', { value: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } } });
       const stream = (s) => { const chunks = [new TextEncoder().encode(s)]; return { getReader: () => ({ read: async () => (chunks.length ? { done: false, value: chunks.shift() } : { done: true }) }) }; };
       w.fetch = async (url, opt) => {
@@ -27,36 +27,37 @@ const sse = (text) => 'data: ' + JSON.stringify({ choices: [{ delta: { content: 
   const w = dom.window, d = w.document;
   for (let i = 0; i < 200 && !w.__cyb; i++) await new Promise((r) => setTimeout(r, 50));
   const T = w.__cyb; assert.ok(T, 'app started');
-  ['openrouter', 'groq', 'custom'].forEach((p) => { T.limiter.limits[p] = { concurrent: 2, rpm: 6000, daily: 0 }; });
+  ['openrouter'].forEach((p) => { T.limiter.limits[p] = { concurrent: 2, rpm: 6000, daily: 0 }; });
   const ask = (via) => T.chatStream([{ role: 'system', content: 's' }, { role: 'user', content: 'hi' }], () => {}, undefined, null, via);
   const chat = (c) => /chat\/completions/.test(c.url);
 
-  // NVIDIA NIM uses the OpenAI-compatible endpoints; model calls require a deliberate possible-billing opt-in.
-  T.settings.keys.nvidia = 'nvapi-test-only';
-  handler = () => ({ status: 200, body: JSON.stringify({ data: [{ id: 'meta/llama-3.3-70b-instruct' }, { id: 'nvidia/embed-qa-4' }] }) });
-  assert.strictEqual(String(await T.fetchModels('nvidia')), 'meta/llama-3.3-70b-instruct');
-  assert.strictEqual(calls.at(-1).url, 'https://integrate.api.nvidia.com/v1/models');
-  assert.strictEqual(calls.at(-1).auth, 'Bearer nvapi-test-only');
-  calls.length = 0; handler = () => ({ status: 200, body: sse('nvidia answer') });
-  await assert.rejects(ask({ chain: [{ provider: 'nvidia', model: 'meta/llama-3.3-70b-instruct' }] }), /may bill your account/);
-  assert.strictEqual(calls.length, 0, 'NVIDIA request is not sent without paid-usage opt-in');
+  // OpenRouter is the one API provider: Claude connects through its catalog, and
+  // paid models require a deliberate possible-billing opt-in.
+  T.settings.keys.openrouter = 'sk-or-test-only';
+  handler = () => ({ status: 200, body: JSON.stringify({ data: [{ id: 'anthropic/claude-sonnet-4', pricing: { prompt: '0.000003', completion: '0.000015' } }, { id: 'x/embed-1' }] }) });
+  assert.strictEqual(String(await T.fetchModels('openrouter')), 'anthropic/claude-sonnet-4');
+  assert.strictEqual(calls.at(-1).url, 'https://openrouter.ai/api/v1/models');
+  assert.strictEqual(calls.at(-1).auth, 'Bearer sk-or-test-only');
+  calls.length = 0; handler = () => ({ status: 200, body: sse('claude answer') });
+  await assert.rejects(ask({ chain: [{ provider: 'openrouter', model: 'anthropic/claude-sonnet-4' }] }), /not a free model/);
+  assert.strictEqual(calls.length, 0, 'paid Claude request is not sent without paid-usage opt-in');
   T.settings.allowPaid = true;
-  assert.strictEqual(await ask({ chain: [{ provider: 'nvidia', model: 'meta/llama-3.3-70b-instruct' }] }), 'nvidia answer');
-  assert.strictEqual(calls.at(-1).url, 'https://integrate.api.nvidia.com/v1/chat/completions');
-  assert.strictEqual(calls.at(-1).auth, 'Bearer nvapi-test-only');
+  assert.strictEqual(await ask({ chain: [{ provider: 'openrouter', model: 'anthropic/claude-sonnet-4' }] }), 'claude answer');
+  assert.strictEqual(calls.at(-1).url, 'https://openrouter.ai/api/v1/chat/completions');
+  assert.strictEqual(calls.at(-1).auth, 'Bearer sk-or-test-only');
   T.settings.allowPaid = false;
   T.openProviders();
-  const nvCard = [...d.querySelectorAll('#sheetBody .card')].find((c) => /NVIDIA NIM/.test(c.textContent));
-  assert.ok(nvCard && /nvapi-/.test(nvCard.querySelector('input[type=password]').placeholder) && /may incur charges|may be billed|pricing/i.test(nvCard.textContent), 'NVIDIA settings explain key and possible charges');
-  console.log('0 ok  NVIDIA NIM provider, model discovery, auth and paid opt-in');
+  const orCard = [...d.querySelectorAll('#sheetBody .card')].find((c) => /OpenRouter/.test(c.textContent));
+  assert.ok(orCard && orCard.querySelector('input[type=password]'), 'OpenRouter settings card offers a key field');
+  console.log('0 ok  OpenRouter provider, Claude discovery, auth and paid opt-in');
 
-  // 1. model list: paid models are left out, context windows are remembered
+  // 1. model list: paid models stay listed (labelled PAID in the picker), context windows are remembered
   handler = () => ({ status: 200, body: JSON.stringify({ data: [
     { id: 'qwen/qwen3-coder:free', context_length: 262144, pricing: { prompt: '0', completion: '0' } },
     { id: 'tiny/model:free', context_length: 8192, pricing: { prompt: '0', completion: '0' } },
     { id: 'anthropic/claude-x', context_length: 200000, pricing: { prompt: '0.000003', completion: '0.000015' } }] }) });
   const list = await T.fetchModels('openrouter');
-  assert.strictEqual(String(list), 'qwen/qwen3-coder:free,tiny/model:free');
+  assert.strictEqual(String(list), 'qwen/qwen3-coder:free,tiny/model:free,anthropic/claude-x');
   assert.strictEqual(T.metaOf({ provider: 'openrouter', model: 'tiny/model:free' }).ctx, 8192);
   assert.ok(T.modelPool().some((t) => t.model === 'tiny/model:free' && t.ctx === 8192), 'pool carries the context window');
   console.log('1 ok  model list: free filter + context windows');
@@ -80,49 +81,44 @@ const sse = (text) => 'data: ' + JSON.stringify({ choices: [{ delta: { content: 
 
   // 3. quota headers on a normal reply are shown on the Usage screen
   handler = () => ({ status: 200, body: sse('fine') + 'data: {"usage":{"total_tokens":321}}\n\n', headers: { 'x-ratelimit-limit-requests': '14400', 'x-ratelimit-remaining-requests': '14370', 'x-ratelimit-reset-requests': '2m59s', 'x-ratelimit-limit-tokens': '6000', 'x-ratelimit-remaining-tokens': '5400' } });
-  await ask({ chain: [{ provider: 'groq', model: 'llama-3.3-70b-versatile' }] });
-  let g = T.usageReport().find((p) => p.id === 'groq');
+  await ask({ chain: [{ provider: 'openrouter', model: 'qwen/qwen3-coder:free' }] });
+  let g = T.usageReport().find((p) => p.id === 'openrouter');
   assert.ok(g.lines.some((l) => /Provider reports: 14370 of 14400 requests left, resets in 3 min/.test(l)), g.lines.join(' | '));
   assert.ok(g.lines.some((l) => /Tokens\/min reported: 5400 of 6000/.test(l)));
-  assert.ok(/1 requests.*321 tokens.*health/.test(g.models[0].text), g.models[0].text);
+  assert.ok(g.models.some((m) => /321 tokens/.test(m.text)), g.models.map((m) => m.text).join(' | '));
   console.log('3 ok  provider-reported quota and token use recorded');
 
   // 4. short retry-after: waits as asked, then succeeds on the same model
   let n = 0; calls.length = 0;
   handler = (c) => (chat(c) && n++ === 0 ? { status: 429, body: '{"error":{"message":"slow down"}}', headers: { 'retry-after': '1' } } : { status: 200, body: sse('after wait') });
   let t0 = Date.now();
-  assert.strictEqual(await ask({ chain: [{ provider: 'groq', model: 'llama-3.3-70b-versatile' }] }), 'after wait');
+  assert.strictEqual(await ask({ chain: [{ provider: 'openrouter', model: 'qwen/qwen3-coder:free' }] }), 'after wait');
   assert.ok(Date.now() - t0 >= 1000, 'waited ' + (Date.now() - t0) + ' ms'); assert.strictEqual(calls.length, 2);
-  assert.strictEqual(T.limiter.status('groq').rpm, 3000, 'pace halved after the 429');
+  assert.strictEqual(T.limiter.status('openrouter').rpm, 3000, 'pace halved after the 429');
   console.log('4 ok  429 + retry-after 1 s: waited ' + (Date.now() - t0) + ' ms, then answered');
 
   // 5. long retry-after (a used-up quota): no waiting, the next provider in the chain answers
   calls.length = 0; t0 = Date.now(); const seenModels = [];
-  handler = (c) => (/openrouter/.test(c.url) ? { status: 429, body: '{"error":{"message":"free-models-per-day limit"}}', headers: { 'retry-after': '3600' } } : { status: 200, body: sse('from groq') });
-  const out = await ask({ chain: [{ provider: 'openrouter', model: 'qwen/qwen3-coder:free' }, { provider: 'groq', model: 'llama-3.3-70b-versatile' }], onModel: (t, note) => seenModels.push(t.model + (note ? ' (' + note + ')' : '')) });
-  assert.strictEqual(out, 'from groq'); assert.ok(Date.now() - t0 < 3000, 'no long wait');
-  assert.strictEqual(String(seenModels), 'qwen/qwen3-coder:free,llama-3.3-70b-versatile (fallback from qwen/qwen3-coder:free)');
+  T.settings.keys.anthropic = 'sk-ant-test-only';
+  const anthSse = 'data: ' + JSON.stringify({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'from claude' } }) + '\n\n';
+  handler = (c) => (/anthropic/.test(c.url) ? { status: 200, body: anthSse } : { status: 429, body: '{"error":{"message":"free-models-per-day limit"}}', headers: { 'retry-after': '3600' } });
+  const out = await ask({ chain: [{ provider: 'openrouter', model: 'qwen/qwen3-coder:free' }, { provider: 'anthropic', model: 'claude-sonnet-4-5' }], onModel: (t, note) => seenModels.push(t.model + (note ? ' (' + note + ')' : '')) });
+  assert.strictEqual(out, 'from claude'); assert.ok(Date.now() - t0 < 3000, 'no long wait');
+  assert.strictEqual(String(seenModels), 'qwen/qwen3-coder:free,claude-sonnet-4-5 (fallback from qwen/qwen3-coder:free)');
   // while blocked, OpenRouter is skipped without any request
   calls.length = 0;
-  await ask({ chain: [{ provider: 'openrouter', model: 'tiny/model:free' }, { provider: 'groq', model: 'llama-3.3-70b-versatile' }] });
-  assert.ok(calls.every((c) => !/openrouter/.test(c.url)), 'blocked provider not called');
+  await assert.rejects(ask({ chain: [{ provider: 'openrouter', model: 'tiny/model:free' }] }), /asked to wait/);
+  assert.strictEqual(calls.length, 0, 'blocked provider not called');
   // alone, the user gets the reason
   await assert.rejects(ask({ chain: [{ provider: 'openrouter', model: 'qwen/qwen3-coder:free' }] }), /openrouter asked to wait \d+ s \(provider asked to wait\)/);
   const o = T.usageReport().find((p) => p.id === 'openrouter');
   assert.ok(o.lines.some((l) => /^Waiting 1 h 0 min: provider asked to wait/.test(l)), o.lines.join(' | '));
-  assert.ok(/1 rate-limited/.test(o.models.find((m) => m.model === 'qwen/qwen3-coder:free').text));
+  assert.ok(/\d+ rate-limited/.test(o.models.find((m) => m.model === 'qwen/qwen3-coder:free').text));
   console.log('5 ok  429 + retry-after 1 h: fell back in ' + (Date.now() - t0) + ' ms; blocked provider skipped');
 
-  // 6. Ollama: no /v1/models, list comes from /api/tags
-  T.settings.customUrl = 'http://192.168.1.10:11434/v1'; calls.length = 0;
-  handler = (c) => (/\/api\/tags$/.test(c.url) ? { status: 200, body: JSON.stringify({ models: [{ name: 'qwen2.5-coder:7b' }, { name: 'llama3.2:3b' }, { name: 'nomic-embed-text' }] }) } : { status: 404, body: 'not found' });
-  assert.strictEqual(String(await T.fetchModels('custom')), 'qwen2.5-coder:7b,llama3.2:3b');
-  assert.strictEqual(String(calls.map((c) => c.url)), 'http://192.168.1.10:11434/v1/models,http://192.168.1.10:11434/api/tags');
-  handler = () => ({ status: 200, body: sse('local') }); calls.length = 0;
-  assert.strictEqual(await ask({ chain: [{ provider: 'custom', model: 'qwen2.5-coder:7b' }] }), 'local');
-  assert.strictEqual(calls[0].url, 'http://192.168.1.10:11434/v1/chat/completions');
-  assert.ok(T.modelPool().some((t) => t.provider === 'custom' && t.model === 'llama3.2:3b'), 'local models join the Auto pool');
-  console.log('6 ok  Ollama discovery through /api/tags, chat through /v1');
+  // 6. the custom/Ollama provider was removed in the OpenRouter-only cleanup
+  assert.ok(!T.C.PROVIDERS.custom && !T.C.PROVIDERS.groq && !T.C.PROVIDERS.pollinations, 'removed providers stay removed');
+  console.log('6 ok  OpenRouter-only provider set');
 
   // 7. Usage screen and the model list render
   T.openUsage();
@@ -131,7 +127,7 @@ const sse = (text) => 'data: ' + JSON.stringify({ choices: [{ delta: { content: 
   assert.ok(/Waiting 1 h/.test(cards.find((c) => c.dataset.provider === 'openrouter').textContent));
   assert.ok(/starting estimate|slowed/.test(cards[0].textContent));
   [...d.querySelectorAll('#sheetBody button')].find((b) => /Forget learned limits/.test(b.textContent)).click();
-  assert.strictEqual(T.limiter.status('openrouter').blockedMs, 0); assert.strictEqual(T.limiter.status('groq').rpm, 6000);
+  assert.strictEqual(T.limiter.status('openrouter').blockedMs, 0); assert.strictEqual(T.limiter.status('openrouter').rpm, 6000);
   console.log('7 ok  Usage & limits screen; "Forget learned limits" resets');
   console.log('ROUTER UI TEST PASSED');
   w.close();

@@ -138,7 +138,7 @@ let JSDOM; try { ({ JSDOM } = require('jsdom')); } catch (e) { console.log('SKIP
   assert.strictEqual(stored().codex.plan, 'plus', 'plan survives a refresh');
   // sign out forgets everything and falls back
   T.openProviders(); await tick(); d.getElementById('codexOut').click(); await tick();
-  st = stored(); assert.ok(!st.codex && !st.keys.codex && !st.models.codex && st.provider === 'pollinations');
+  st = stored(); assert.ok(!st.codex && !st.keys.codex && !st.models.codex && st.provider === 'openrouter');
   assert.strictEqual(d.getElementById('codexGo').textContent, 'Sign in with ChatGPT');
   await assert.rejects(T.chatStream([{ role: 'user', content: 'x' }], () => {}, null, null, { chain: [{ provider: 'codex', model: 'gpt-big' }] }), /Sign in first/);
   console.log('codex sign-in ok');

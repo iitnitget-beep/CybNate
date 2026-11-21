@@ -21,13 +21,13 @@ const requests = [];
     runScripts: 'dangerously', resources: 'usable', pretendToBeVisual: true,
     beforeParse(w) {
       w.TextEncoder = TextEncoder; w.TextDecoder = TextDecoder;
-      const store = {}; // jsdom has no localStorage on file:// origins
+      const store = { 'cyb.settings': JSON.stringify({ provider: 'openrouter', model: 'openrouter/free', keys: { openrouter: 'sk-or-test' }, taskBudget: 200 }) }; // jsdom has no localStorage on file:// origins
       Object.defineProperty(w, 'localStorage', { value: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } } });
       w.addEventListener('error', (e) => errors.push(e.message));
       w.confirm = () => true;
       w.fetch = async (url, opt) => {
         requests.push({ url, body: opt.body && JSON.parse(opt.body), headers: opt.headers });
-        if (/\/models$/.test(url)) return { status: 200, headers: { get: () => 'application/json' }, body: stream(JSON.stringify([{ name: 'openai' }, { name: 'qwen-coder' }])) };
+        if (/\/models$/.test(url)) return { status: 200, headers: { get: () => 'application/json' }, body: stream(JSON.stringify([{ name: 'openai' }, { name: 'qwen-coder:free' }])) };
         if (requests.filter((r) => r.body).length > replies.length) return { status: 401, headers: { get: () => '' }, body: stream('{"error":{"message":"slow down"}}') };
         return { status: 200, headers: { get: () => 'text/event-stream' }, body: stream(sse(replies[requests.filter((r) => r.body).length - 1])) };
       };
@@ -39,12 +39,12 @@ const requests = [];
   assert.deepStrictEqual(errors, []);
   assert.ok(d.querySelector('.welcome'), 'welcome screen');
   assert.strictEqual(d.querySelectorAll('#agents .pill').length, 6);
-  assert.ok(/^openai/.test(d.getElementById('btnModel').textContent));
+  assert.ok(/^openrouter\/free/.test(d.getElementById('btnModel').textContent));
   assert.ok(d.getElementById('modeBtn') && /Auto/.test(d.getElementById('btnMode').textContent), 'Auto is the default agent');
   // the rest of this file drives the Coder agent directly; Auto mode has its own test (tests/auto.test.js)
   [...d.querySelectorAll('#agents .pill')].find((b) => /Coder/.test(b.textContent)).click();
   assert.ok(/Coder/.test(d.getElementById('btnMode').textContent), 'mode selector');
-  w.__cyb.limiter.limits.pollinations = { concurrent: 2, rpm: 6000, daily: 0 };
+  w.__cyb.limiter.limits.openrouter = { concurrent: 2, rpm: 6000, daily: 0 };
 
   d.getElementById('input').value = 'Build a timer';
   d.getElementById('btnSend').click();
@@ -61,7 +61,7 @@ const requests = [];
   assert.strictEqual(chat.length, 5, 'agent loop made 5 model calls (3 + the verification gate round)');
   assert.ok(/You modified code files but have not verified them yet/.test(chat[3].body.messages.at(-1).content), 'verification gate');
   assert.ok(/No problems found/.test(chat[4].body.messages.at(-1).content), 'diagnostics result reached the model');
-  assert.strictEqual(chat[0].url, 'https://text.pollinations.ai/openai');
+  assert.strictEqual(chat[0].url, 'https://openrouter.ai/api/v1/chat/completions');
   assert.ok(chat[0].body.messages[0].role === 'system' && /<write_file/.test(chat[0].body.messages[0].content));
   assert.ok(/<tool_results>[\s\S]*Created index\.html/.test(chat[1].body.messages.at(-1).content));
   assert.ok(/Applied 1 edit to s\.css/.test(chat[2].body.messages.at(-1).content));
@@ -91,24 +91,25 @@ const requests = [];
   // model picker loads list
   d.getElementById('btnModel').click();
   await new Promise((r) => setTimeout(r, 300));
-  assert.ok([...d.querySelectorAll('.model')].some((m) => m.textContent === 'qwen-coder'));
-  [...d.querySelectorAll('.model')].find((m) => m.textContent === 'qwen-coder').click();
+  assert.ok([...d.querySelectorAll('.model')].some((m) => /^qwen-coder/.test(m.textContent)));
+  [...d.querySelectorAll('.model')].find((m) => /^qwen-coder/.test(m.textContent)).click();
   assert.ok(/qwen-coder/.test(d.getElementById('btnModel').textContent));
 
   // provider error is shown clearly
   d.getElementById('input').value = 'again';
   d.getElementById('btnSend').click();
   await new Promise((r) => setTimeout(r, 400));
-  assert.ok(/refused the request[\s\S]*slow down/i.test(d.querySelector('.msg.error').textContent), d.querySelector('.msg.error').textContent);
-  assert.strictEqual(requests.at(-1).body.model, 'qwen-coder');
+  assert.ok(/slow down/i.test(d.querySelector('.msg.error').textContent), d.querySelector('.msg.error').textContent);
+  assert.strictEqual(requests.at(-1).body.model, 'qwen-coder:free');
 
   // key-required provider without key
   d.getElementById('btnModel').click();
-  [...d.querySelectorAll('.tabs .pill')].find((b) => b.textContent === 'Groq').click();
-  d.querySelector('.model').click();
+  [...d.querySelectorAll('.tabs .pill')].find((b) => b.textContent === 'Claude (Anthropic API key)').click();
+  const addField = d.querySelector('#sheetBody input.field'); addField.value = 'claude-sonnet-4-5';
+  addField.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   d.getElementById('input').value = 'hi'; d.getElementById('btnSend').click();
   await new Promise((r) => setTimeout(r, 200));
-  assert.ok(/Add your free Groq key/.test([...d.querySelectorAll('.msg.error')].at(-1).textContent));
+  assert.ok(/Add your Claude \(Anthropic API key\) key/.test([...d.querySelectorAll('.msg.error')].at(-1).textContent));
 
   // settings sheet renders, persistence survived
   d.getElementById('dSettings').click();

@@ -38,7 +38,7 @@ manifest_cleartext_safe() {
   grep -Fq 'if (!isAllowedHttpUrl(next))' app/src/main/java/com/cybnate/app/MainActivity.java
 }
 no_tracked_sensitive_files() {
-  ! git ls-files | grep -Eiq '(^|/)\.env($|\.)|(^|/)[^/]*\.(jks|keystore|pem|p12|bks|key)$'
+  ! git ls-files | grep -Ei '(^|/)\.env($|\.)|(^|/)[^/]*\.(jks|keystore|pem|p12|bks|key)$' | grep -viq '\.env\.example$'
 }
 sensitive_patterns_ignored() {
   local pattern

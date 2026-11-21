@@ -12,56 +12,19 @@
 
   // ---------------------------------------------------------------- providers
   // Every provider speaks the OpenAI chat-completions protocol.
+  // One API provider by design: OpenRouter (Claude, ChatGPT, DeepSeek, Qwen and
+  // 300+ models behind one key). ChatGPT and Claude can also be connected
+  // directly: ChatGPT via sign-in (codex), Claude via an Anthropic API key.
   const PROVIDERS = {
-    pollinations: {
-      name: 'Pollinations',
-      tag: 'No key needed · slow free model (about 1 reply / 45 s)',
-      needsKey: false,
-      chatUrl: 'https://text.pollinations.ai/openai',
-      modelsUrl: 'https://text.pollinations.ai/models',
-      keyUrl: '',
-      fallbackModels: ['openai-fast', 'openai'],
-    },
     openrouter: {
       name: 'OpenRouter',
-      tag: 'Free key · many free models',
+      tag: 'One key · Claude, ChatGPT, DeepSeek, Qwen + free models',
       needsKey: true,
       chatUrl: 'https://openrouter.ai/api/v1/chat/completions',
       modelsUrl: 'https://openrouter.ai/api/v1/models',
       keyUrl: 'https://openrouter.ai/keys',
       freeOnly: true,
-      fallbackModels: ['openrouter/free', 'qwen/qwen3-coder:free', 'deepseek/deepseek-chat-v3.1:free', 'meta-llama/llama-3.3-70b-instruct:free'],
-    },
-    groq: {
-      name: 'Groq',
-      tag: 'Free key · very fast',
-      needsKey: true,
-      chatUrl: 'https://api.groq.com/openai/v1/chat/completions',
-      modelsUrl: 'https://api.groq.com/openai/v1/models',
-      keyUrl: 'https://console.groq.com/keys',
-      fallbackModels: ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'moonshotai/kimi-k2-instruct', 'llama-3.1-8b-instant'],
-    },
-    gemini: {
-      name: 'Google Gemini',
-      tag: 'Free key · large context',
-      needsKey: true,
-      chatUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-      modelsUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/models',
-      keyUrl: 'https://aistudio.google.com/apikey',
-      fallbackModels: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'],
-    },
-    nvidia: {
-      name: 'NVIDIA NIM',
-      tag: 'NVIDIA API key · billing/credits depend on your NVIDIA account',
-      needsKey: true,
-      paid: true,
-      paidByDefault: true,
-      keyPlaceholder: 'Paste your NVIDIA API key (nvapi-…)',
-      costNote: 'NVIDIA model pricing/credits depend on your account. Requests stay blocked until you turn on Allow paid models in Settings → General.',
-      chatUrl: 'https://integrate.api.nvidia.com/v1/chat/completions',
-      modelsUrl: 'https://integrate.api.nvidia.com/v1/models',
-      keyUrl: 'https://build.nvidia.com/settings/api-keys',
-      fallbackModels: ['meta/llama-3.3-70b-instruct'],
+      fallbackModels: ['openrouter/free', 'anthropic/claude-sonnet-4', 'anthropic/claude-haiku-4.5', 'openai/gpt-4o', 'openai/gpt-4o-mini', 'deepseek/deepseek-chat-v3.1:free', 'qwen/qwen3-coder:free', 'google/gemini-2.5-flash', 'meta-llama/llama-3.3-70b-instruct:free'],
     },
     codex: {
       name: 'Codex (ChatGPT sign-in)',
@@ -89,16 +52,6 @@
       keyUrl: 'https://console.anthropic.com/settings/keys',
       fallbackModels: [],
     },
-    custom: {
-      name: 'Custom',
-      tag: 'Any OpenAI-compatible server (e.g. Ollama)',
-      needsKey: false,
-      custom: true,
-      chatUrl: '',
-      modelsUrl: '',
-      keyUrl: '',
-      fallbackModels: [],
-    },
   };
 
   /** Normalise the many shapes a /models endpoint can return into a list of ids. */
@@ -106,14 +59,8 @@
     let arr = Array.isArray(json) ? json : (json && (json.data || json.models)) || [];
     let ids = arr.map((m) => (typeof m === 'string' ? m : m.id || m.name || '')).filter(Boolean);
     ids = ids.map((id) => id.replace(/^models\//, ''));
-    if (provider && provider.freeOnly) {
-      const free = arr.filter((m) => {
-        const id = m.id || '';
-        const p = m.pricing || {};
-        return /:free$/.test(id) || id === 'openrouter/free' || (p.prompt === '0' && p.completion === '0');
-      }).map((m) => m.id);
-      if (free.length) ids = free;
-    }
+    // Paid models stay listed (Claude, GPT, …); the picker labels them PAID and
+    // the free-check blocks them until the user allows paid models.
     ids = ids.filter((id) => !/embed|whisper|tts|guard|imagen|veo|aqa|audio|image/i.test(id));
     return Array.from(new Set(ids));
   }
