@@ -79,7 +79,8 @@
 **Acceptance:** reproducible build, documented test results and explicit list of remaining production blockers.
 
 ## Current status
-- Day 1 started on `work/10-day-platform-sprint`.
+- Day 1 completed and verified on `work/10-day-platform-sprint` (2026-11-21: `npm ci` exit 0, `npm test` exit 0 — core, safety, router UI, project inventory and plugin registry suites passed).
+- Day 2 implemented and verified (2026-11-21): catalogue metadata (`publisher`, `official`), stable version pins (`pinnedVersion`, prerelease pins rejected), compatibility (`minAppVersion`/`maxAppVersion` with rejection), deterministic listing, `byCategory`/`filter`/`compatibleWith`/`catalogue` APIs, and install state kept separate from connection state. `npm test` exit 0 after the change.
 - Existing backend OAuth PKCE and encrypted token storage identified; provider support currently includes Google and GitHub.
 - Existing app has an Integrations entry point; plugin marketplace is not yet implemented.
 - No production deployment or paid service activated.

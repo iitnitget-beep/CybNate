@@ -10,6 +10,11 @@ This tracker is a working plan, not a statement that the items are implemented. 
 - [ ] Enforce real per-user execution isolation before public multi-user use.
 - [ ] Review cleartext policy, URL allowlists, redirects, SSRF protections and preview origin separation.
 
+## Plugin platform (10-day sprint)
+- [x] Day 1: declarative plugin manifest registry with validation and unit tests (verified 2026-11-21, `npm test` exit 0).
+- [x] Day 2: plugin catalogue metadata, stable version pins, compatibility/min-app-version checks, deterministic search/filter/category APIs, install state separate from connection state (verified 2026-11-21, `npm test` exit 0).
+- [ ] Day 3: OAuth connection lifecycle.
+
 ## P1 — Coding engine foundations
 - [ ] Define typed agent manifest schema (ID, version, role, model policy, tools, permissions, output schema).
 - [ ] Add agent-manifest validation and version pinning.
