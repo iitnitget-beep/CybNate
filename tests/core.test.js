@@ -26,6 +26,13 @@ const AUTO = { mode: 'auto' }; // these older tests exercise the tools themselve
   assert.strictEqual(C.parseToolCalls('<think><delete_file path="index.html"/></think>ok', allowed).length, 0, 'tool tags inside hidden reasoning are ignored');
   assert.strictEqual(C.parseToolCalls(reply, C.AGENTS.chat.tools).length, 0);
 
+  // --- native tool-call JSON repair (weak models send almost-JSON)
+  assert.ok(C.nativeCallToText('write_file', '{"path":"a.txt","content":"hi",}').includes('<write_file path="a.txt">'), 'trailing comma repaired');
+  assert.ok(C.nativeCallToText('write_file', '```json\n{"path":"b.txt","content":"x"}\n```').includes('<write_file path="b.txt">'), 'code fence stripped');
+  assert.ok(C.nativeCallToText('write_file', 'Here you go: {"path":"c.txt","content":"y"} done').includes('<write_file path="c.txt">'), 'object extracted from prose');
+  assert.ok(C.nativeCallToText('write_file', JSON.stringify(JSON.stringify({ path: 'd.txt', content: 'z' }))).includes('<write_file path="d.txt">'), 'double-encoded JSON parsed');
+  assert.ok(C.nativeCallToText('write_file', 'not json at all').includes('malformed call'), 'hopeless args still reported malformed');
+
   // --- edit_file exact + whitespace tolerant + failure
   ws.set('a.js', 'function f() {\n    return 1;\n}\nconst x = 2;\n');
   calls = C.parseToolCalls('<edit_file path="a.js">\n<search>const x = 2;</search>\n<replace>const x = 3;</replace>\n<search>\n  return 1;\n</search>\n<replace>\n    return 42;\n</replace>\n</edit_file>', allowed);

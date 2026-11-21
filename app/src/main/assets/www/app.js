@@ -832,7 +832,7 @@
   function tlDraw() {
     if (!task || !task.tl) return;
     task.tl.used = task.budget.used; task.tl.max = task.budget.max;
-    if (task.tlNode && task.tlNode.parentNode) { const open = task.tlNode.querySelector('details'); const n = timelineNode(task.tl, open && open.open); task.tlNode.parentNode.replaceChild(n, task.tlNode); task.tlNode = n; }
+    if (task.tlNode && task.tlNode.parentNode && task.tlNode.isConnected) { const open = task.tlNode.querySelector('details'); const n = timelineNode(task.tl, open && open.open); task.tlNode.parentNode.replaceChild(n, task.tlNode); task.tlNode = n; }
   }
   const TL_ICON = { run: '…', ok: '✓', fail: '✗', skip: '–', stop: '■' };
   function timelineNode(m, open) {
@@ -1016,6 +1016,7 @@
       let pending = false, latest = '';
       const paint = () => {
         pending = false;
+        if (!node.isConnected || !node.lastChild) return; // chat switched or node already replaced
         const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
         node.replaceChild(renderMd(latest), node.lastChild);
         if (stick) box.scrollTop = box.scrollHeight;
@@ -1028,12 +1029,13 @@
         }, abortCtl.signal, toolsFor(agent), via);
       } catch (e) {
         if (latest) { msg.content = latest; current.messages.push(msg); }
-        node.remove(); if (latest) box.appendChild(msgNode(msg));
+        const wasShown = node.isConnected;
+        node.remove(); if (latest && wasShown) box.appendChild(msgNode(msg));
         throw e;
       }
       if (stepRow && stepRow.model) msg.model = stepRow.model;
       msg.content = full; current.messages.push(msg);
-      box.replaceChild(msgNode(msg), node);
+      if (node.parentNode) node.parentNode.replaceChild(msgNode(msg), node); // node may be detached if the user switched chats mid-stream
       saveSessions(); tlDraw();
 
       if (!agent.tools.length) break;

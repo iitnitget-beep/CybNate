@@ -653,13 +653,27 @@
   const pick = (o, keys) => { for (const k of keys) if (o[k] != null) return o[k]; return undefined; };
   const attrsOf = (o, skip) => Object.keys(o).filter((k) => skip.indexOf(k) < 0 && o[k] != null && typeof o[k] !== 'object').map((k) => ' ' + k + '="' + attrEsc(o[k]) + '"').join('');
 
+  // Weak models often send almost-JSON tool arguments: code fences, trailing
+  // commas, prose around the object, or double-encoded JSON. Try light repairs
+  // before declaring the call malformed.
+  function parseArgsJson(s) {
+    s = String(s || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+    if (!s) return {};
+    try { const v = JSON.parse(s); return typeof v === 'string' ? JSON.parse(v) : v; } catch (e) { /* repair below */ }
+    const fixed = s.replace(/,\s*([}\]])/g, '$1');
+    try { return JSON.parse(fixed); } catch (e) { /* extract the object below */ }
+    const m = fixed.match(/\{[\s\S]*\}/);
+    if (m) { try { return JSON.parse(m[0].replace(/,\s*([}\]])/g, '$1')); } catch (e) { /* give up */ } }
+    return null;
+  }
+
   function nativeCallToText(name, args) {
     name = String(name || '').trim();
     const ns = /[.:\/]/.test(name);
     name = name.split(/[.:\/]/).pop();
     if (ns && name === 'search') name = 'search_files';
     name = TOOL_ALIASES[name] || name;
-    if (typeof args === 'string') { try { args = JSON.parse(args || '{}'); } catch (e) { return '\n(The model sent a malformed call to ' + name + '.)\n'; } }
+    if (typeof args === 'string') { const parsed = parseArgsJson(args); if (parsed == null) return '\n(The model sent a malformed call to ' + name + '.)\n'; args = parsed; }
     args = args && typeof args === 'object' ? args : {};
     if (args.file_path != null && args.path == null) args.path = args.file_path;
     if (args.filename != null && args.path == null) args.path = args.filename;
