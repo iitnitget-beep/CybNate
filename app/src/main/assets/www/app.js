@@ -766,6 +766,8 @@
     }
     const conn = Integrations.promptBlock(connectedIds(), (n) => secretEnv()[n] != null);
     if (conn) t += '\n\n' + conn;
+    const mem = AgentMemory.promptBlock(settings.agentMemory || []);
+    if (mem) t += '\n\n' + mem;
     return t;
   }
   /** Shell for a helper agent: file changes it is not allowed to make are put back afterwards. */
@@ -1643,6 +1645,38 @@
       draw();
     });
   }
+  // ---- Memory: explicit, reviewable, removable agent memory (Day 8). Entries live in
+  // settings.agentMemory; only active ones reach the agent prompt (see extraPrompt).
+  function openMemory() {
+    closeDrawer();
+    const store = () => AgentMemory.createStore(settings.agentMemory || []);
+    const persist = (st) => { settings.agentMemory = st.list().slice(); saveSettings(); };
+    openSheet('Memory', (body) => {
+      const st = store();
+      body.appendChild(el('p', 'intsub', 'What the agent remembers between chats. You can review, edit, delete or export everything here. Suggestions from the agent wait for your approval.'));
+      const list = st.list();
+      if (!list.length) body.appendChild(el('p', '', 'Nothing saved yet.'));
+      list.forEach((e) => {
+        const row = el('div', 'skill'); row.dataset.id = e.id;
+        const info = el('div', 'sinfo'); info.appendChild(el('b', '', e.kind + (e.status === 'pending' ? ' · waiting for approval' : ''))); info.appendChild(el('small', '', e.text));
+        row.appendChild(info);
+        if (e.status === 'pending') { const ok = el('button', 'lite', 'Approve'); ok.onclick = () => { st.approve(e.id); persist(st); drawSheet(); }; row.appendChild(ok); }
+        const ed = el('button', 'lite', 'Edit'); ed.onclick = () => { const t = prompt('Edit memory', e.text); if (t == null) return; try { st.update(e.id, t); persist(st); drawSheet(); } catch (err) { toast(err.message); } }; row.appendChild(ed);
+        const rm = el('button', 'lite', 'Delete'); rm.onclick = () => { st.remove(e.id); persist(st); drawSheet(); }; row.appendChild(rm);
+        body.appendChild(row);
+      });
+      const kind = el('select', 'field'); ['preference', 'fact', 'outcome'].forEach((k) => { const o = el('option', '', k); o.value = k; kind.appendChild(o); });
+      const text = el('input', 'field'); text.type = 'text'; text.placeholder = 'Something to remember, e.g. I prefer short answers'; text.id = 'memText';
+      const add = el('button', 'wide', 'Remember this');
+      add.onclick = () => { try { st.add({ kind: kind.value, text: text.value, source: 'user' }); persist(st); drawSheet(); } catch (err) { toast(err.message); } };
+      const exp = el('button', 'wide ghost', 'Export as JSON');
+      const out = el('textarea', 'field'); out.rows = 6; out.readOnly = true; out.hidden = true; out.id = 'memExport';
+      exp.onclick = () => { out.value = st.exportJson(); out.hidden = false; };
+      const clear = el('button', 'wide ghost', 'Delete all memory');
+      clear.onclick = () => { if (!confirm('Delete all saved memory?')) return; st.clear(); persist(st); drawSheet(); };
+      [kind, text, add, exp, out, clear].forEach((x) => body.appendChild(x));
+    });
+  }
   // ---- Google sign-in (Gmail, Drive / Docs / Sheets, Calendar). Play services recognise the app by its package and signing key.
   let gaSeq = 0; const gaReqs = {};
   window.__ga = (id, res) => { const r = gaReqs[id]; if (r) { delete gaReqs[id]; r(res); } };
@@ -2198,9 +2232,10 @@
     return repoTrees[repo];
   }
   function saveSkill(k, source) {
-    const list = settings.skills || (settings.skills = []);
-    const i = list.findIndex((x) => x.name === k.name); if (i >= 0) list.splice(i, 1);
-    list.push({ name: k.name, description: k.description, body: k.body.slice(0, 20000), source: source || '', on: true }); saveSettings();
+    // Day 8: installs go through the skills lifecycle (validation + version rules). A downgrade
+    // or an invalid skill from a repository is refused instead of silently replacing what works.
+    const entry = { name: k.name, description: k.description, body: k.body.slice(0, 20000), source: source || '', on: true, version: k.version || '1.0.0' };
+    settings.skills = Skills.install(settings.skills || [], entry).list.slice(); saveSettings();
   }
   async function installSkill(name, repo, path) {
     if (!path) { path = C.findSkillPath(await repoSkillPaths(repo), name); if (!path) throw new Error('No skill named "' + name + '" in ' + repo + ' any more. Browse the repository below to see what it has.'); }
@@ -2257,6 +2292,12 @@
         b.onclick = async () => { b.textContent = '…'; b.disabled = true; try { const k = await installSkill(name, repo, path); toast('Added ' + k.name); drawSheet(); } catch (e) { b.textContent = 'Add'; b.disabled = false; alert(e.message); } };
         row.appendChild(info); row.appendChild(b); row.hidden = !!q && row.textContent.toLowerCase().indexOf(q) < 0; dcard.appendChild(row);
       };
+      Skills.discover(q).forEach((s) => {
+        const row = el('div', 'skill'); const info = el('div', 'sinfo'); info.appendChild(el('b', '', s.name)); info.appendChild(el('small', '', 'built-in · v' + s.version + ' · ' + s.description));
+        const b = el('button', 'lite', have(s.name) ? 'Added' : 'Add'); b.disabled = have(s.name);
+        b.onclick = () => { try { saveSkill(s, 'built-in'); toast('Added ' + s.name); drawSheet(); } catch (e) { alert(e.message); } };
+        row.appendChild(info); row.appendChild(b); row.hidden = !!q && row.textContent.toLowerCase().indexOf(q) < 0; dcard.appendChild(row);
+      });
       SKILL_CATALOG.forEach((x) => addRow(x[0], x[1]));
       body.appendChild(dcard);
       const bcard = el('div', 'card'); bcard.appendChild(el('div', 'ctitle', 'Browse a repository'));
@@ -2455,7 +2496,7 @@
   $('dNew').onclick = () => { if (busy) return; closeDrawer(); newSession(); };
   $('btnFiles').onclick = openFiles; $('dFiles').onclick = () => { closeDrawer(); openFiles(); };
   $('dSettings').onclick = openSettings;
-  $('btnTerm').onclick = openTerminal; $('dTerm').onclick = openTerminal; $('dGit').onclick = openGitHub; $('dInt').onclick = () => openIntegrations(); $('dMarket').onclick = () => openMarketplace();
+  $('btnTerm').onclick = openTerminal; $('dTerm').onclick = openTerminal; $('dGit').onclick = openGitHub; $('dInt').onclick = () => openIntegrations(); $('dMarket').onclick = () => openMarketplace(); $('dMemory').onclick = () => openMemory();
   $('btnModel').onclick = () => openModels();
   $('btnMode').onclick = openModeMenu;
   $('dSearch').onclick = () => { const f = $('dFilter'); f.hidden = !f.hidden; if (f.hidden) { f.value = ''; openDrawer(); } else f.focus(); };
@@ -2485,7 +2526,7 @@
 
   if (!C.PROVIDERS[settings.provider]) { settings.provider = 'pollinations'; settings.model = 'openai-fast'; }
   $('ver').textContent = Native ? 'v' + Native.version() : 'web';
-  window.__cyb = { backend, openServer, secretsUp, setSecret, wireCall, codexSignIn, codexFresh, setCodex, googleConnect, googleToken, freshGoogle, fetchModels, openProviders, chatStream, openIntegrations, openMarketplace, testIntegration, saveIntegration, removeIntegration, connectedIds, extraPrompt, cli, testWebapp, slashCommand, attachMentions, compactChat, kv, Native, nativeStream, fetchModels, C, ws, settings, limiter, health, usageReport, openUsage, freeCheck, metaOf, apiHistory, modelPool, spawnAgent, helperExec, rerunAs, get task() { return task; }, askApproval, openPreview, offerUndo, namedSecrets, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
+  window.__cyb = { backend, openServer, secretsUp, setSecret, wireCall, codexSignIn, codexFresh, setCodex, googleConnect, googleToken, freshGoogle, fetchModels, openProviders, chatStream, openIntegrations, openMarketplace, openMemory, testIntegration, saveIntegration, removeIntegration, connectedIds, extraPrompt, cli, testWebapp, slashCommand, attachMentions, compactChat, kv, Native, nativeStream, fetchModels, C, ws, settings, limiter, health, usageReport, openUsage, freeCheck, metaOf, apiHistory, modelPool, spawnAgent, helperExec, rerunAs, get task() { return task; }, askApproval, openPreview, offerUndo, namedSecrets, installSkill, loadSkill, caps, runCommand, chatStream, fetchModels, webSearch, readUrl, parseSearchResults, htmlToText, spawnAgent, saveSettings };
   window.addEventListener('error', (e) => { console.log('CYBERR ' + e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno); });
   window.addEventListener('unhandledrejection', (e) => { console.log('CYBERR promise ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)); });
 

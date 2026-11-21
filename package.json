@@ -4,7 +4,7 @@
   "private": true,
   "description": "Tests and verification for CybNate, an Android AI coding agent",
   "scripts": {
-    "test": "node tests/core.test.js && node tests/safety.test.js && node tests/router.ui.test.js && node tests/project-index.test.js && node tests/plugin-registry.test.js && node tests/oauth-lifecycle.test.js && node tests/credential-security.test.js && node tests/tool-gateway.test.js && node tests/mcp-adapter.test.js && node tests/marketplace.test.js",
+    "test": "node tests/core.test.js && node tests/safety.test.js && node tests/router.ui.test.js && node tests/project-index.test.js && node tests/plugin-registry.test.js && node tests/oauth-lifecycle.test.js && node tests/credential-security.test.js && node tests/tool-gateway.test.js && node tests/mcp-adapter.test.js && node tests/marketplace.test.js && node tests/memory-skills.test.js",
     "test:ui": "node tests/ui.smoke.js",
     "test:preview": "node tests/preview.test.js",
     "test:browser": "node tests/browser.test.js",
