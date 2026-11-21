@@ -2561,7 +2561,8 @@
   // TEST ONLY — the production build signs in with an account instead of a baked key.
   const DEFAULT_BACKEND = { url: 'https://511a5baf0d5e42.app.lhr.life', key: 'c6d86b1900e58c07afaf99020f4e477e' };
   try {
-    if (!settings.backend && DEFAULT_BACKEND.url && !localStorage.getItem('cyb.defaultBackendTried')) {
+    // only inside the real Android app (appassets origin), never in a browser or a test harness
+    if (/appassets\.androidplatform\.net$/.test(location.hostname) && !settings.backend && DEFAULT_BACKEND.url && !localStorage.getItem('cyb.defaultBackendTried')) {
       localStorage.setItem('cyb.defaultBackendTried', '1');
       pairBackend(DEFAULT_BACKEND.url, DEFAULT_BACKEND.key, true);
     }
