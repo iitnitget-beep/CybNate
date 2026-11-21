@@ -13,7 +13,7 @@ const www = path.join(__dirname, '..', 'app', 'src', 'main', 'assets', 'www');
     runScripts: 'dangerously', resources: 'usable', pretendToBeVisual: true,
     beforeParse(w) {
       w.TextEncoder = TextEncoder; w.TextDecoder = TextDecoder;
-      const store = { 'cyb.settings': JSON.stringify({ provider: 'openrouter', model: 'openrouter/free', keys: { openrouter: 'sk-test' } }) };
+      const store = { 'cyb.settings': JSON.stringify({ provider: 'openrouter', model: 'openrouter/free', keys: { openrouter: 'sk-test' } }), 'cyb.defaultBackendTried': '1' };
       Object.defineProperty(w, 'localStorage', { value: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } } });
       const stream = (s) => { const chunks = [new TextEncoder().encode(s)]; return { getReader: () => ({ read: async () => (chunks.length ? { done: false, value: chunks.shift() } : { done: true }) }) }; };
       w.fetch = async (url, opt) => {

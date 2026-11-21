@@ -2359,12 +2359,13 @@
     return serverUi;
   }
 
-  /** One-tap pairing (cybnate://pair?url=..&key=..): connect, then show the Server sheet with the result. */
-  async function pairBackend(url, key) {
-    if (backend.on()) { toast('A server is already connected'); openServer(); return; }
-    openServer();
+  /** One-tap pairing (cybnate://pair?url=..&key=..): connect, then show the Server sheet with the result.
+      Quiet mode (first-launch built-in server) connects in the background without opening a sheet. */
+  async function pairBackend(url, key, quiet) {
+    if (backend.on()) { if (!quiet) { toast('A server is already connected'); openServer(); } return; }
+    if (!quiet) openServer();
     await connectServer(url, key);
-    if (sheetStack.length && sheetStack[sheetStack.length - 1].title === 'Server') drawSheet();
+    if (!quiet && sheetStack.length && sheetStack[sheetStack.length - 1].title === 'Server') drawSheet();
   }
 
   function openServer() {
@@ -2556,6 +2557,15 @@
       pairBackend(q.get('pairurl'), q.get('pairkey'));
     }
   } catch (e) { /* pairing is best-effort */ }
+  // Built-in test server: on first launch, connect by itself so installing the app is all it takes.
+  // TEST ONLY — the production build signs in with an account instead of a baked key.
+  const DEFAULT_BACKEND = { url: 'https://511a5baf0d5e42.app.lhr.life', key: 'c6d86b1900e58c07afaf99020f4e477e' };
+  try {
+    if (!settings.backend && DEFAULT_BACKEND.url && !localStorage.getItem('cyb.defaultBackendTried')) {
+      localStorage.setItem('cyb.defaultBackendTried', '1');
+      pairBackend(DEFAULT_BACKEND.url, DEFAULT_BACKEND.key, true);
+    }
+  } catch (e) { /* first-launch connect is best-effort */ }
   console.log('CYBUI ready agents=' + $('agents').children.length + ' model=' + settings.model);
   // Safety net: if the page still has no size after a few seconds, reload it once.
   setTimeout(() => {
