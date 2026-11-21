@@ -1,9 +1,9 @@
-FOCUS1   mCurrentFocus=Window{4c010ab u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{bd4f19f u0 com.cybnate.app/.MainActivity t8} 
-  mCurrentFocus=Window{4c010ab u0 com.cybnate.app/com.cybnate.app.MainActivity}
-  mFocusedApp=ActivityRecord{bd4f19f u0 com.cybnate.app/.MainActivity t8}
-11-21 04:53:30.985   524   544 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +3s799ms
+FOCUS1   mCurrentFocus=Window{9ee369f u0 com.cybnate.app/com.cybnate.app.MainActivity}   mFocusedApp=ActivityRecord{f69b159 u0 com.cybnate.app/.MainActivity t8} 
+  mCurrentFocus=Window{9ee369f u0 com.cybnate.app/com.cybnate.app.MainActivity}
+  mFocusedApp=ActivityRecord{f69b159 u0 com.cybnate.app/.MainActivity t8}
+11-21 05:05:11.285   517   536 I ActivityTaskManager: Displayed com.cybnate.app/.MainActivity for user 0: +2s517ms
 CybNateJS: CYBUI ready agents=6 model=openai-fast (https://appassets.androidplatform.net/assets/www/app.js:2441)
-CybNateJS: CYBUI layout t=1500 header=56 welcome=504 frames=25 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
-CybNateJS: CYBUI layout t=6000 header=56 welcome=504 frames=295 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
-CybNateJS: CYBUI layout t=12000 header=56 welcome=504 frames=387 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
-CybNateJS: CYBUI layout t=25000 header=56 welcome=504 frames=387 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
+CybNateJS: CYBUI layout t=1500 header=56 welcome=504 frames=43 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
+CybNateJS: CYBUI layout t=6000 header=56 welcome=504 frames=313 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
+CybNateJS: CYBUI layout t=12000 header=56 welcome=504 frames=414 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
+CybNateJS: CYBUI layout t=25000 header=56 welcome=504 frames=414 win=320x616 vis=visible (https://appassets.androidplatform.net/assets/www/app.js:2459)
