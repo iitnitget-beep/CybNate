@@ -137,7 +137,8 @@ function create(cfg) {
   on('POST', '/v1/oauth/codex/device', async (c) => ok(await oauth.codexStart(c.user)));
   on('GET', '/v1/oauth/codex/status', async (c) => ok(oauth.codexStatus(c.user)));
   on('DELETE', '/v1/oauth/codex/device', async (c) => { oauth.codexCancel(c.user); return ok({ ok: true }); });
-  on('POST', '/v1/oauth/:provider/start', async (c) => ok(oauth.start(c.user, c.params.provider, Array.isArray(c.body.scopes) ? c.body.scopes.map(String) : [])));
+  on('GET', '/v1/oauth/:provider/status', async (c) => ok(oauth.status(c.user, c.params.provider)));
+  on('POST', '/v1/oauth/:provider/start', async (c) => ok(oauth.start(c.user, c.params.provider, Array.isArray(c.body.scopes) ? c.body.scopes.map(String) : [], { reconsent: c.body.reconsent === true })));
   on('DELETE', '/v1/oauth/:provider', async (c) => { if (c.params.provider === 'codex') oauth.codexCancel(c.user); return ok({ ok: await oauth.disconnect(c.user, c.params.provider) }); });
   on('GET', '/v1/oauth/callback', async (c) => {
     const r = await oauth.callback(c.query);

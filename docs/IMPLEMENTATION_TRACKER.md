@@ -13,7 +13,7 @@ This tracker is a working plan, not a statement that the items are implemented. 
 ## Plugin platform (10-day sprint)
 - [x] Day 1: declarative plugin manifest registry with validation and unit tests (verified 2026-11-21, `npm test` exit 0).
 - [x] Day 2: plugin catalogue metadata, stable version pins, compatibility/min-app-version checks, deterministic search/filter/category APIs, install state separate from connection state (verified 2026-11-21, `npm test` exit 0).
-- [ ] Day 3: OAuth connection lifecycle.
+- [x] Day 3: OAuth connection lifecycle — provider scope allowlists (Google/GitHub defaults), connect/status/disconnect (`status()` + `GET /v1/oauth/:provider/status`), explicit re-consent (409 `needsReconsent`) for added scopes on existing connections, PKCE-verifier-required callback guard (verified 2026-11-21, `npm test` exit 0 incl. new `tests/oauth-lifecycle.test.js`; `VERIFY_JS_ONLY=1` exit 0; Android/Gradle gate NOT run — java/gradle missing in this environment; `server/test/server.test.js` fails pre-existing at register step in this environment, verified identical on clean HEAD via stash, unrelated to Day 3).
 
 ## P1 — Coding engine foundations
 - [ ] Define typed agent manifest schema (ID, version, role, model policy, tools, permissions, output schema).

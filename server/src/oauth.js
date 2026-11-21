@@ -16,12 +16,14 @@ function defaults(env) {
     google: {
       name: 'Google', authUrl: 'https://accounts.google.com/o/oauth2/v2/auth', tokenUrl: 'https://oauth2.googleapis.com/token', revokeUrl: 'https://oauth2.googleapis.com/revoke',
       clientId: env.GOOGLE_CLIENT_ID || '', clientSecret: env.GOOGLE_CLIENT_SECRET || '', baseScopes: ['openid', 'email'], scopeSep: ' ',
+      allowedScopes: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/drive.readonly'],
       extra: { access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true' },
       who: { url: 'https://openidconnect.googleapis.com/v1/userinfo', field: 'email' }, secrets: ['GOOGLE_ACCESS_TOKEN', 'GMAIL_ACCESS_TOKEN', 'GCAL_ACCESS_TOKEN'],
     },
     github: {
       name: 'GitHub', authUrl: 'https://github.com/login/oauth/authorize', tokenUrl: 'https://github.com/login/oauth/access_token',
       clientId: env.GITHUB_CLIENT_ID || '', clientSecret: env.GITHUB_CLIENT_SECRET || '', baseScopes: [], scopeSep: ' ', extra: {},
+      allowedScopes: ['read:user', 'user:email', 'repo', 'read:org'],
       who: { url: 'https://api.github.com/user', field: 'login' }, secrets: ['GITHUB_TOKEN'],
     },
   };
@@ -47,23 +49,41 @@ function create(store, cfg) {
     rows.push({ id: 'codex', name: 'Codex (ChatGPT)', configured: true, connected: !!c, who: (c && c.email) || '', plan: (c && c.plan) || '', secrets: [] });
     return rows;
   }
-  /** Step 1: the address the user's browser must open. */
-  function start(user, id, scopes) {
+  /** Connection state for one provider and one user. Never includes tokens or secrets. */
+  function status(user, id) {
+    if (id === 'codex') { const s = store.oauthGet(user.id, 'codex'); return { id, name: 'Codex (ChatGPT)', configured: true, connected: !!s, who: (s && s.email) || '', scopes: [], at: (s && s.at) || 0, expired: !!(s && s.exp && s.exp < Date.now()) }; }
+    const p = providers[id];
+    if (!p) throw Object.assign(new Error('Unknown sign-in provider: ' + id), { status: 404 });
+    const s = store.oauthGet(user.id, id);
+    return { id, name: p.name, configured: configured(id), connected: !!s, who: (s && s.who) || '', scopes: (s && s.scopes) || [], at: (s && s.at) || 0, expired: !!(s && s.exp && s.exp < Date.now()) };
+  }
+  /** Step 1: the address the user's browser must open. Added scopes on an existing connection need explicit re-consent. */
+  function start(user, id, scopes, opts) {
     const p = providers[id];
     if (!p) throw Object.assign(new Error('Unknown sign-in provider: ' + id), { status: 404 });
     if (!configured(id)) throw Object.assign(new Error(p.name + ' sign-in is not set up on this server (client id or public address missing).'), { status: 409 });
+    const asked = [...new Set((scopes || []).map((s) => String(s).trim()).filter(Boolean))];
+    if (Array.isArray(p.allowedScopes)) {
+      const bad = asked.filter((s) => !p.allowedScopes.includes(s));
+      if (bad.length) throw Object.assign(new Error('Scope not allowed for ' + p.name + ': ' + bad.join(', ')), { status: 400 });
+    }
     const have = store.oauthGet(user.id, id);
-    const all = [...new Set([].concat(p.baseScopes, (have && have.scopes) || [], scopes || []))];
+    const granted = (have && have.scopes) || [];
+    const addedScopes = asked.filter((s) => !granted.includes(s) && !p.baseScopes.includes(s));
+    const reconsent = !!(opts && opts.reconsent);
+    if (have && addedScopes.length && !reconsent) throw Object.assign(new Error(p.name + ' is already connected. New scopes need explicit re-consent: ' + addedScopes.join(', ')), { status: 409, needsReconsent: true, addedScopes });
+    const all = [...new Set([].concat(p.baseScopes, granted, asked))];
     const state = b64u(crypto.randomBytes(24)), verifier = b64u(crypto.randomBytes(32));
-    store.cachePut('oauth-state:' + state, { user: user.id, provider: id, verifier, scopes: all }, 10 * 60 * 1000);
+    store.cachePut('oauth-state:' + state, { user: user.id, provider: id, verifier, scopes: all, reconsent }, 10 * 60 * 1000);
     const q = Object.assign({ response_type: 'code', client_id: p.clientId, redirect_uri: redirectUri, scope: all.join(p.scopeSep), state, code_challenge: b64u(crypto.createHash('sha256').update(verifier).digest()), code_challenge_method: 'S256' }, p.extra);
-    return { url: p.authUrl + '?' + form(q), state };
+    return { url: p.authUrl + '?' + form(q), state, scopes: all, addedScopes, reconsent };
   }
   /** Step 2: the provider sent the browser back with a code. Exchange it and store the session. Returns a line for the page. */
   async function callback(query) {
     const st = query.state ? store.cacheGet('oauth-state:' + query.state) : null;
     if (!st) return { ok: false, message: 'This sign-in link has expired or was already used. Start again from the app.' };
     store.cachePut('oauth-state:' + query.state, null, 1); // one use only
+    if (!st.verifier) return { ok: false, message: 'This sign-in could not be verified (PKCE verifier missing). Start again from the app.' };
     const p = providers[st.provider];
     if (query.error) return { ok: false, message: p.name + ' did not allow it: ' + (query.error_description || query.error) };
     if (!query.code) return { ok: false, message: 'No code came back from ' + p.name + '.' };
@@ -154,7 +174,7 @@ function create(store, cfg) {
   const codexHeaders = (s) => Object.assign({ Authorization: 'Bearer ' + s.access, originator: 'cybnate' }, s.account ? { 'ChatGPT-Account-ID': s.account } : {});
   const stop = () => devices.forEach((d) => { d.cancelled = true; clearTimeout(d.timer); });
 
-  return { providers, codex, redirectUri, configured, list, start, callback, accessToken, providerOfSecret, disconnect, codexStart, codexStatus, codexCancel, codexSession, codexHeaders, stop };
+  return { providers, codex, redirectUri, configured, list, status, start, callback, accessToken, providerOfSecret, disconnect, codexStart, codexStatus, codexCancel, codexSession, codexHeaders, stop };
 }
 
 module.exports = { create };
