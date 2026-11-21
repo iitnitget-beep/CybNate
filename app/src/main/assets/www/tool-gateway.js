@@ -25,16 +25,26 @@
     const rateWindowMs = Number.isInteger(rate.windowMs) && rate.windowMs > 0 ? rate.windowMs : 60000;
     const buckets = new Map(); // "plugin:tool" -> recent authorize timestamps
     const seenKeys = new Map(); // "plugin:tool:key" -> first invocation (idempotency)
+    /* Day 6: MCP plugins additionally need a trusted, allowlisted server. Fail closed without a registry. */
+    const mcpRegistry = opts.mcpRegistry && typeof opts.mcpRegistry.checkTool === 'function' ? opts.mcpRegistry : null;
+    const isMcp = (m) => !!m && m.auth && m.auth.type === 'mcp';
+    const mcpAllowed = (m, toolId) => {
+      if (!isMcp(m)) return true;
+      if (!mcpRegistry) return false;
+      try { mcpRegistry.checkTool(m.auth.serverId, toolId); return true; } catch (e) { return false; }
+    };
 
     const grantedSet = (granted) => new Set(Array.isArray(granted) ? granted : []);
     const usable = (m) => !!m && m.installState === 'installed' && CONNECTED_STATES.has(m.connectionState);
 
-    /** Tools the user may see: installed + connected plugins only, and only tools whose permission was granted. */
+    /** Tools the user may see: installed + connected plugins only, granted permissions only, trusted MCP servers only. */
     function discover(request) {
       const granted = grantedSet(request && request.grantedPermissions);
       return registry.listTools().filter((t) => {
-        if (!usable(registry.get(t.pluginId))) return false;
+        const m = registry.get(t.pluginId);
+        if (!usable(m)) return false;
         if (t.permission && !granted.has(t.permission)) return false;
+        if (!mcpAllowed(m, t.id)) return false;
         return true;
       });
     }
@@ -52,6 +62,10 @@
       if (!CONNECTED_STATES.has(manifest.connectionState)) throw deny('not_connected', 'Plugin is not connected: ' + manifest.id);
       const tool = manifest.tools.find((t) => t.id === req.toolId);
       if (!tool) throw deny('unknown_tool', 'Unknown tool ' + String(req.toolId || '') + ' for plugin ' + manifest.id);
+      if (isMcp(manifest)) {
+        if (!mcpRegistry) throw deny('mcp_unverified', 'MCP plugin needs a server registry to verify trust: ' + manifest.id);
+        mcpRegistry.checkTool(manifest.auth.serverId, tool.id); // throws 403: untrusted/disabled/unhealthy/not_allowlisted
+      }
       const granted = grantedSet(req.grantedPermissions);
       if (tool.permission && !granted.has(tool.permission)) throw deny('missing_permission', 'Permission not granted for ' + manifest.id + '/' + tool.id + ': ' + tool.permission);
       if (tool.requiresApproval && req.approved !== true) throw deny('approval_required', 'User approval is required for ' + tool.access + ' tool ' + manifest.id + '/' + tool.id);
