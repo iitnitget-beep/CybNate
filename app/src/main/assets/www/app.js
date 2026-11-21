@@ -2011,8 +2011,8 @@
   // -------------------------------------------------------------- settings
   // name, light?, bg, panel, panel2, line, text, dim, accent, accent-dark
   const THEMES = {
-    dark: ['Dark', 0, '#1c1c1c', '#232524', '#2d2f2d', '#363836', '#ededeb', '#9b9d98', '#b9d4a8', '#7f9a70'],
-    light: ['Light', 1, '#f6f6f3', '#ffffff', '#ecece8', '#dcdcd6', '#1b1c1a', '#6b6d67', '#b9d4a8', '#6f8a60'],
+    dark: ['Dark', 0, '#0f1117', '#171a24', '#1f2333', '#2b3044', '#eceef6', '#9aa1b8', '#7c6cf0', '#45d5e8'],
+    light: ['Light', 1, '#f4f5fb', '#ffffff', '#e8eaf4', '#d5d8ea', '#171a26', '#666d85', '#6a56e8', '#0e9db8'],
     shine: ['OG Shine', 0, '#080808', '#111211', '#1b1d1c', '#2a2d2b', '#f0f2f0', '#8f9591', '#5eecb5', '#3fbf8e'],
     peach: ['Peach', 1, '#fbeeea', '#fff8f5', '#f3dfd9', '#e6cdc5', '#3a2622', '#8a6a62', '#d9644a', '#b54a33'],
     midnight: ['Midnight', 0, '#12121f', '#191a2b', '#23243a', '#30324c', '#e6e7f5', '#9193b3', '#7f8fc9', '#6272b0'],
